@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.3165974,
+          48.4309387
+        ]
+      },
+      "properties": {
+        "id": "example-bowker-creek",
+        "kind": "example-place",
+        "title": "Bowker Creek",
+        "summary": "An urban creek in Saanich, Victoria and Oak Bay. The Bowker Creek Blueprint (2012) says 3.4 km of its 9.4 km length is open channel and the rest runs underground in pipes and culverts. This pin marks one representative point on the creek in Oak Bay. It is not the whole creek or its watershed.",
+        "date": null,
+        "place_name": "Bowker Creek, Oak Bay",
+        "url": "https://www.crd.ca/environment/stormwater-watersheds-harbours/local-stewardship-groups/bowker-creek-initiative",
+        "url_label": "Capital Regional District: Bowker Creek Initiative",
+        "source_url": "https://www.crd.ca/media/file/bowker-creek-blueprint-2011pdf",
+        "status": "approved"
+      }
+    }
+  ]
+}

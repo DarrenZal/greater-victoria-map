@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Greater Victoria open map (demo)</title>
+  <meta name="description" content="A demo map of Greater Victoria (watersheds, creeks with flow direction, parks, ecosystem zones) from open data, as an open-source, self-hostable alternative to embedded Google Maps.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main>
+    <div id="map" aria-label="Map of Greater Victoria. Use the Layers button to choose what to show."></div>
+  </main>
+
+  <div id="chrome">
+    <div id="demo-banner" role="note">
+      <strong>Demo.</strong> A test of what an open, self-hostable map can do. It is not an official map of any group.
+    </div>
+
+    <div id="toolbar">
+      <aside id="panel" aria-label="Map layers">
+        <details id="panel-details" open>
+          <summary>Layers</summary>
+          <fieldset>
+            <legend>Places and events</legend>
+            <label><input type="checkbox" data-group="pins" checked> <span>Example place <span class="count" id="pins-count"></span></span></label>
+            <p class="empty" id="pins-empty">No events listed yet.</p>
+          </fieldset>
+          <fieldset>
+            <legend>Water</legend>
+            <label><input type="checkbox" data-group="watersheds"> <span>Watersheds (named creeks)</span></label>
+            <label><input type="checkbox" data-group="water" checked> <span>Creeks, lakes and wetlands</span></label>
+            <label class="sub"><input type="checkbox" id="flow" checked> <span>Flow</span></label>
+            <p class="empty sub" id="flow-note">Dashes show which way creeks drain, from the Province's stream lines. They do not show how much water is flowing. Reaches mapped as pipes or canals have no dashes.</p>
+            <p class="empty sub" id="flow-paused" hidden>Flow is off because your device asks for less motion.</p>
+          </fieldset>
+          <fieldset>
+            <legend>Land</legend>
+            <label><input type="checkbox" data-group="parks" checked> <span>Parks and green spaces</span></label>
+            <label><input type="checkbox" data-group="terrain"> <span>Terrain shading</span></label>
+            <label><input type="checkbox" data-group="bec"> <span>Ecosystem zones (BEC)</span></label>
+            <label><input type="checkbox" data-group="muni" checked> <span>Municipal boundaries</span></label>
+          </fieldset>
+          <div class="actions"><button type="button" id="fit">Fit to Greater Victoria</button></div>
+        </details>
+      </aside>
+      <button type="button" id="credits-btn" class="pill" aria-controls="credits" aria-expanded="false">Data and credits</button>
+    </div>
+  </div>
+
+  <section id="credits" hidden role="dialog" aria-labelledby="credits-title">
+    <button type="button" id="credits-close">Close</button>
+    <h2 id="credits-title">Data and credits</h2>
+    <p><strong>Basemap.</strong> <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">&copy; OpenMapTiles</a>, data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors (ODbL).</p>
+    <p><strong>Province of British Columbia data.</strong> Contains information licensed under the <a href="https://www2.gov.bc.ca/gov/content?id=A519A56BC2BF44E4A008B33FCF527F61" target="_blank" rel="noopener">Open Government Licence &ndash; British Columbia</a>. Retrieved 2026-10-21 from the BC Data Catalogue:</p>
+    <ul>
+      <li><a href="https://catalogue.data.gov.bc.ca/dataset/municipalities-legally-defined-administrative-areas-of-bc" target="_blank" rel="noopener">Municipalities - Legally Defined Administrative Areas of BC</a></li>
+      <li><a href="https://catalogue.data.gov.bc.ca/dataset/bc-parks-ecological-reserves-and-protected-areas" target="_blank" rel="noopener">BC Parks, Ecological Reserves, and Protected Areas</a></li>
+      <li><a href="https://catalogue.data.gov.bc.ca/dataset/local-and-regional-greenspaces" target="_blank" rel="noopener">Local and Regional Greenspaces</a></li>
+      <li><a href="https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-stream-network" target="_blank" rel="noopener">Freshwater Atlas - Stream Network</a>, <a href="https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-lakes" target="_blank" rel="noopener">Lakes</a>, <a href="https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-wetlands" target="_blank" rel="noopener">Wetlands</a>, <a href="https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-named-watersheds" target="_blank" rel="noopener">Named Watersheds</a></li>
+      <li><a href="https://catalogue.data.gov.bc.ca/dataset/bec-map" target="_blank" rel="noopener">BEC Map</a> (biogeoclimatic zones)</li>
+    </ul>
+    <p><strong>Parks and green spaces.</strong> Boundaries come from the Province's Local and Regional Greenspaces dataset, which collects them from municipal and regional websites. Rows from these providers carry their own Open Government Licence statements, shown again when you click a park:</p>
+    <ul>
+      <li>Contains information licensed under the <a href="https://opendata.victoria.ca/pages/open-data-licence" target="_blank" rel="noopener">Open Government Licence &ndash; City of Victoria</a>.</li>
+      <li>Contains information licenced under the <a href="https://www.saanich.ca/assets/Local~Government/Documents/SaanichDataCatalogueLicence.pdf" target="_blank" rel="noopener">Open Government Licence &ndash; District of Saanich</a>.</li>
+    </ul>
+    <p>Rows with no provider statement are covered by the Province's licence above. Parks run by the Capital Regional District are not on this map yet.</p>
+    <p><strong>Flow.</strong> The moving dashes show the direction creeks drain, taken from the Province's stream lines. They do not show how much water is flowing or how fast. Reaches the Province maps as underground pipes, canals or connections have no dashes.</p>
+    <p><strong>Terrain shading</strong> (off until you switch it on). Hillshade drawn in your browser from <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a>. Canada terrain data contains information licensed under the <a href="https://open.canada.ca/en/open-government-licence-canada" target="_blank" rel="noopener">Open Government Licence &ndash; Canada</a>. United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey. Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration. The full list of sources is in the <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">tile attribution notes</a>.</p>
+    <p><strong>Example place.</strong> The Bowker Creek pin is an example, not an event. Its figures are from the 2012 Bowker Creek Blueprint, linked in the pin. Its position is a point on the creek from OpenStreetMap.</p>
+    <p><strong>Please note.</strong> Boundaries are for orientation. They are simplified for the web and are not survey or legal boundaries. Creeks that run in pipes may be missing or partly mapped. It is not endorsed by the Province of British Columbia or any data provider.</p>
+    <p><strong>Privacy.</strong> This page uses no analytics and no cookies. Map tiles load from OpenFreeMap (tiles.openfreemap.org), so that service receives your browser's tile requests. If you switch on Terrain shading, its tiles load from Amazon Web Services (s3.amazonaws.com), which then receives those requests too.</p>
+    <p><strong>Software.</strong> <a href="vendor/MAPLIBRE-LICENSE.txt">MapLibre GL JS 6.9.0</a> (BSD-3-Clause), included in this site.</p>
+  </section>
+
+  <noscript><p class="noscript">This map needs JavaScript.</p></noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
