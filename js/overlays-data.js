@@ -906,17 +906,17 @@ export function seabirdInfo(p) {
 export function marineMessage(id, features) {
   const n = features.length, plural = (one, many) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`
   const years = (key) => features.map((f) => f.properties?.[key]).filter((y) => Number.isInteger(y) && y > 0)
-  if (id === 'protected') return `${plural('marine zone', 'marine zones')} of protected areas in the area this map reaches. Click one for its owner, its year and whether it is no-take.`
-  if (id === 'srkw') return 'Southern Resident killer whale critical habitat in the area this map reaches. A mapped boundary, not a sighting.'
-  if (id === 'kelp') return `${plural('kelp bed', 'kelp beds')} from a survey that began in 1979. Old data, not a current record.`
+  if (id === 'protected') return `${plural('marine zone', 'marine zones')} of protected areas in the area this map reaches.`
+  if (id === 'srkw') return 'Shown for the area this map reaches.'
+  if (id === 'kelp') return `${plural('kelp bed', 'kelp beds')}.`
   if (id === 'eelgrass') {
     const y = years('year')
-    return `${plural('eelgrass bed', 'eelgrass beds')}${y.length ? `, mapped in ${Math.min(...y) === Math.max(...y) ? Math.min(...y) : `${Math.min(...y)} to ${Math.max(...y)}`}` : ''}. Old data, not a current record.`
+    return `${plural('eelgrass bed', 'eelgrass beds')}${y.length ? `, mapped in ${Math.min(...y) === Math.max(...y) ? Math.min(...y) : `${Math.min(...y)} to ${Math.max(...y)}`}` : ''}.`
   }
   if (id === 'herring') {
     const a = years('first_year'), b = years('last_year')
-    return `${plural('stretch of shore', 'stretches of shore')} with herring spawn recorded${a.length && b.length ? ` between ${Math.min(...a)} and ${Math.max(...b)}` : ''}. Old records, not this year’s spawn.`
+    return `${plural('stretch of shore', 'stretches of shore')} with herring spawn recorded${a.length && b.length ? ` between ${Math.min(...a)} and ${Math.max(...b)}` : ''}.`
   }
-  if (id === 'seabirds') return `${plural('seabird colony', 'seabird colonies')} from a survey that began in 1979. Old data. Keep well back from nesting birds.`
+  if (id === 'seabirds') return `${plural('seabird colony', 'seabird colonies')}. Keep well back from nesting birds.`
   throw new Error('unknown marine layer')
 }

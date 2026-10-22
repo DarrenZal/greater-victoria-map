@@ -1261,13 +1261,13 @@ async function checkSeafloor(page, requests, t, name, shot) {
 // species picker and its key, the panel on a phone, and a popup built from text only. On the desktop run the pixels are also read: the colour
 // of each density cell is the colour of its class, and the areas leave the land alone.
 const MARINE = {
-  protected: { file: 'data/marine-protected.geojson', layers: ['protected-fill', 'protected-line'], credit: 'Protected areas: CPCAD', status: (n) => new RegExp(`^${n} marine zones of protected areas in the area this map reaches\\. Click one for its owner, its year and whether it is no-take\\.$`) },
-  srkw: { file: 'data/srkw-habitat.geojson', layers: ['srkw-fill', 'srkw-line'], credit: 'Killer whale critical habitat: Fisheries and Oceans Canada', status: () => /^Southern Resident killer whale critical habitat in the area this map reaches\. A mapped boundary, not a sighting\.$/ },
+  protected: { file: 'data/marine-protected.geojson', layers: ['protected-fill', 'protected-line'], credit: 'Protected areas: CPCAD', status: (n) => new RegExp(`^${n} marine zones of protected areas in the area this map reaches\\.$`) },
+  srkw: { file: 'data/srkw-habitat.geojson', layers: ['srkw-fill', 'srkw-line'], credit: 'Killer whale critical habitat: Fisheries and Oceans Canada', status: () => /^Shown for the area this map reaches\.$/ },
   cetaceans: { file: 'data/whale-density.geojson', layers: ['cetaceans-fill', 'cetaceans-line'], credit: 'Whale and porpoise model: Fisheries and Oceans Canada', status: (n) => new RegExp(`^Humpback whale: modelled summer density from the 2018 ship surveys, not where animals are now\\. ${n} cells in Canadian waters\\.$`) },
-  kelp: { file: 'data/kelp.geojson', layers: ['kelp-fill', 'kelp-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n.toLocaleString('en-CA')} kelp beds from a survey that began in 1979\\. Old data, not a current record\\.$`) },
-  eelgrass: { file: 'data/eelgrass.geojson', layers: ['eelgrass-fill', 'eelgrass-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} eelgrass beds, mapped in 1998\\. Old data, not a current record\\.$`) },
-  herring: { file: 'data/herring-spawn.geojson', layers: ['herring-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} stretches of shore with herring spawn recorded between 1937 and 1986\\. Old records, not this year’s spawn\\.$`) },
-  seabirds: { file: 'data/seabird-colonies.geojson', layers: ['seabirds-dot'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} seabird colonies from a survey that began in 1979\\. Old data\\. Keep well back from nesting birds\\.$`) },
+  kelp: { file: 'data/kelp.geojson', layers: ['kelp-fill', 'kelp-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n.toLocaleString('en-CA')} kelp beds\\.$`) },
+  eelgrass: { file: 'data/eelgrass.geojson', layers: ['eelgrass-fill', 'eelgrass-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} eelgrass beds, mapped in 1998\\.$`) },
+  herring: { file: 'data/herring-spawn.geojson', layers: ['herring-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} stretches of shore with herring spawn recorded between 1937 and 1986\\.$`) },
+  seabirds: { file: 'data/seabird-colonies.geojson', layers: ['seabirds-dot'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} seabird colonies\\. Keep well back from nesting birds\\.$`) },
 }
 const WHALE_RULES_TEXT = 'Vessels must stay at least 1,000 m from Southern Resident killer whales from June 1, 2026 to May 31, 2027, at least 200 m from all other killer whales and at least 100 m from all other whales, dolphins and porpoises. Some exceptions apply.'
 const OGL_CANADA_STATEMENT = 'Contains information licensed under the Open Government Licence – Canada.'
