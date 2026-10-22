@@ -37,10 +37,11 @@ const ALLOWED_HOSTS = [
   'api.weather.gc.ca', 'geo.weather.gc.ca', 'eccc-msc.github.io', 'wateroffice.ec.gc.ca',
   'earthquake.usgs.gov', 'www.usgs.gov', 'api.gbif.org', 'www.gbif.org', 'creativecommons.org',
   'ecoregions.appspot.com', 'www.hydrosheds.org', 'doi.org', 'datasets.wri.org',
+  'www.opengis.net', // names the coordinate system in a sea currents request (EPSG 4326). It is an identifier, not fetched
 ]
 // Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
 const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org']
-const OVERLAY_IDS = ['radar', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
+const OVERLAY_IDS = ['radar', 'currents', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
 const LIVE_SENTENCE = 'These load from outside services when ticked. Nothing loads until you tick one.'
 // Credit text the new layers must carry, word for word, in the credits panel.
 const OVERLAY_STATEMENTS = [
@@ -211,6 +212,22 @@ function ruleEcccLicence(html) {
   return out
 }
 
+// Sea currents carry the same Environment and Climate Change Canada credit on the map as the other live
+// layers, and say in the panel, the status line and the credits that the model is experimental and not
+// for navigation.
+function ruleCurrentsCredit(html, js) {
+  const out = []
+  const para = html.split(/<\/p>|<\/li>/).filter((p) => p.includes('<strong>Sea currents</strong>')).map(textOf)[0]
+  if (!para) out.push('the credits have no Sea currents paragraph')
+  else {
+    if (!/experimental/i.test(para)) out.push('the Sea currents credit does not say the model is experimental')
+    if (!/not for navigation/i.test(para)) out.push('the Sea currents credit does not say it is not for navigation')
+  }
+  if (!/src\('ov-currents-credit', ECCC_ATTRIB\)/.test(js)) out.push('the sea currents credit source does not carry ECCC_ATTRIB')
+  if (!/experimental, not for navigation\)/.test(js)) out.push('the sea currents status line does not say experimental, not for navigation')
+  return out
+}
+
 // Every third-party host the page fetches from once a box is ticked is named in the privacy note.
 function rulePrivacyHosts(html) {
   const privacy = textOf(html.slice(html.indexOf('<strong>Privacy.</strong>'), html.indexOf('<strong>Software.</strong>')))
@@ -248,7 +265,7 @@ function ruleIndustry(files) {
   return out
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -264,6 +281,8 @@ function selftest() {
   const bowker = (n) => JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[FLOW_MOUTHS[1].at[0] - n / (111320 * Math.cos(FLOW_MOUTHS[1].at[1] * Math.PI / 180)), FLOW_MOUTHS[1].at[1]], FLOW_MOUTHS[1].at] }, properties: { name: 'Bowker Creek' } }] })
   const boxes = (checked, terrainOn = true) => OVERLAY_IDS.map((id) => `<input type="checkbox" data-overlay="${id}"${checked ? ' checked' : ''}>`).join('') + `<input type="checkbox" id="terrain3d"${terrainOn ? ' checked' : ''}> <p>${LIVE_SENTENCE}</p>`
   const industry = (over) => JSON.stringify({ features: [{ geometry: { type: 'Point', coordinates: [-123.4, 48.5] }, properties: { name: 'Plant', kind: 'wastewater', src: 'hydrowaste', ...over } }] })
+  const currentsHtml = '<p><strong>Sea currents</strong> (off until you switch it on). This is an experimental model and is not for navigation.</p>'
+  const currentsJs = "src('ov-currents-credit', ECCC_ATTRIB); const m = `(experimental, not for navigation).`"
   const cases = [
     ['ruleForbiddenNames', ruleForbiddenNames, [f('data/native-land.geojson', '{}')], [f('data/streams.geojson', '{}')]],
     ['ruleForbiddenNames (rush)', ruleForbiddenNames, [f('data/rush-map.geojson', '{}')], [f('data/bec.geojson', '{}')]],
@@ -286,6 +305,9 @@ function selftest() {
     ['ruleFlowCanals (canals missing)', ruleFlowCanals, [f('data/streams-flow.geojson', bowker(480))], [f('data/streams-flow.geojson', bowker(1420))]],
     ['ruleFlowCanals (pipes included)', ruleFlowCanals, [f('data/streams-flow.geojson', bowker(2110))], [f('data/streams-flow.geojson', bowker(1420))]],
     ['ruleEcccLicence', (files) => ruleEcccLicence(files[0].text), [f('x.html', '<p>Data Source: Environment and Climate Change Canada. Contains information licensed under the Open Government Licence &ndash; Canada.</p>')], [f('x.html', '<p>Data Source: Environment and Climate Change Canada. Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.</p><p>Canada terrain data contains information licensed under the Open Government Licence &ndash; Canada.</p>')]],
+    ['ruleCurrentsCredit (no experimental, no navigation line)', (files) => ruleCurrentsCredit(files[0].text, files[1].text), [f('x.html', '<p>Sea currents (off until you switch it on). Modelled.</p>'), f('x.js', currentsJs)], [f('x.html', currentsHtml), f('x.js', currentsJs)]],
+    ['ruleCurrentsCredit (credit source missing)', (files) => ruleCurrentsCredit(files[0].text, files[1].text), [f('x.html', currentsHtml), f('x.js', currentsJs.replace('ECCC_ATTRIB', 'USGS_ATTRIB'))], [f('x.html', currentsHtml), f('x.js', currentsJs)]],
+    ['ruleCurrentsCredit (status line)', (files) => ruleCurrentsCredit(files[0].text, files[1].text), [f('x.html', currentsHtml), f('x.js', currentsJs.replace('experimental, not for navigation)', 'a model)'))], [f('x.html', currentsHtml), f('x.js', currentsJs)]],
     ['rulePrivacyHosts', (files) => rulePrivacyHosts(files[0].text), [f('x.html', '<strong>Privacy.</strong> tiles.openfreemap.org <strong>Software.</strong>')], [f('x.html', `<strong>Privacy.</strong> ${FETCH_HOSTS.join(' ')} <strong>Software.</strong>`)]],
     ['ruleOverlayBoxes (on by default)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(true))], [f('x.html', boxes(false))]],
     ['ruleOverlayBoxes (3D terrain off)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(false, false))], [f('x.html', boxes(false))]],
@@ -423,7 +445,9 @@ function checkTree() {
   report(...pair(ruleOverlayBoxes(html), 'every new layer has a box, all are off by default, 3D terrain is on, and the Live data sentence is present'))
   report(...pair(ruleEcccLicence(html), 'Environment and Climate Change Canada data is not credited to the Open Government Licence'))
   report(...pair(rulePrivacyHosts(html), 'the privacy note names every third-party host the page fetches from after a box is ticked'))
-  const overlaysJs = byPath['js/overlays.js']?.text || ''
+  const overlaysJs = byPath['js/overlays.js']?.text || '', currentsJs = byPath['js/currents.js']?.text || ''
+  report(...pair(ruleCurrentsCredit(html, overlaysJs), 'sea currents carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
+  report(currentsJs.includes('motionQuery') && currentsJs.includes('visibilitychange') && currentsJs.includes('cancelAnimationFrame') && currentsJs.includes("'movestart'"), 'sea currents loop honours reduced motion, stops when the tab is hidden and while the map moves')
   report(overlaysJs.includes('Contains information licenced under the <a href="${ECCC_LICENCE}" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada.') && overlaysJs.includes("const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'"), 'on-map attribution carries the Environment and Climate Change Canada licence statement and a link to the licence')
   const missingOverlay = OVERLAY_STATEMENTS.filter((t) => !creditsText.includes(t))
   report(missingOverlay.length === 0, 'credits carry the Environment Canada, USGS, ecoregion and industry source statements word for word', missingOverlay.join(' | '))
@@ -450,6 +474,32 @@ function textOf(html) {
 
 function pair(findings, name) {
   return [findings.length === 0, name, findings.slice(0, 5).join('; ')]
+}
+
+// A one-band GeoTIFF of 32-bit floats in strips, built the way the sea currents service sends one, in
+// either byte order. The options let a test break one thing at a time.
+function tiff({ w, h, values, le = true, compression = 1, bits = 32, format = 3, rows = 2, scale = [0.5, 0.25], tie = [-124, 49], strips = true }) {
+  const spans = []
+  for (let r = 0; r < h; r += rows) spans.push([r, Math.min(h, r + rows)])
+  const entries = [[256, 3, [w]], [257, 3, [h]], [258, 3, [bits]], [259, 3, [compression]], [273, 4, null], [277, 3, [1]], [278, 3, [rows]], [279, 4, spans.map(([a, b]) => (b - a) * w * 4)], [339, 3, [format]], [33550, 12, [...scale, 0]], [33922, 12, [0, 0, 0, ...tie, 0]]]
+  const size = { 3: 2, 4: 4, 12: 8 }
+  let extra = 8 + 2 + entries.length * 12 + 4 // the first byte after the directory
+  const offsets = []
+  const place = (type, vals) => { if (size[type] * vals.length <= 4) return null; const at = extra; extra += size[type] * vals.length; return at }
+  const at = entries.map(([tag, type, vals]) => (tag === 273 ? place(4, spans) : place(type, vals)))
+  const dataStart = extra
+  spans.forEach(([a], i) => offsets.push(dataStart + a * w * 4))
+  const buf = new ArrayBuffer(dataStart + w * h * 4), dv = new DataView(buf)
+  dv.setUint8(0, le ? 0x49 : 0x4d); dv.setUint8(1, le ? 0x49 : 0x4d); dv.setUint16(2, 42, le); dv.setUint32(4, 8, le); dv.setUint16(8, entries.length, le)
+  const put = (o, type, v) => (type === 3 ? dv.setUint16(o, v, le) : type === 4 ? dv.setUint32(o, v, le) : dv.setFloat64(o, v, le))
+  entries.forEach(([tag, type, vals], i) => {
+    const list = tag === 273 ? offsets : vals, o = 10 + i * 12
+    dv.setUint16(o, tag, le); dv.setUint16(o + 2, type, le); dv.setUint32(o + 4, list.length, le)
+    if (at[i] == null) list.forEach((v, k) => put(o + 8 + k * size[type], type, v))
+    else { dv.setUint32(o + 8, at[i], le); list.forEach((v, k) => put(at[i] + k * size[type], type, v)) }
+  })
+  values.forEach((v, i) => dv.setFloat32(dataStart + i * 4, v, le))
+  return strips ? new Uint8Array(buf) : new Uint8Array(buf, 0, dataStart)
 }
 
 // js/overlays-data.js turns the replies of outside services into map data. It has no DOM code, so
@@ -500,6 +550,70 @@ async function checkOverlayData() {
     const urls = D.lifeUrls(now)
     report(urls.length === 3 && urls.every((u) => u.includes('license=CC0_1_0') && u.includes('license=CC_BY_4_0') && u.includes('limit=100') && u.startsWith('https://api.gbif.org/')), 'life observations: three requests of 100 records, each asking for CC0 and CC BY 4.0 only')
     report(D.quakesUrl(now).includes('eventtype=earthquake') && D.quakesUrl(now).includes('starttime=2026-10-14T20:00:00'), 'earthquakes: request covers the last 7 days')
+
+    // sea currents
+    const vals = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] // 4 wide, 3 high: row 0 is the north row
+    const sameValues = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
+    const readOk = (le) => { const t = D.readGeoTiff(tiff({ w: 4, h: 3, values: vals, le })); return t.width === 4 && t.height === 3 && sameValues(t.bbox.map((x) => +x.toFixed(6)), [-124, 48.25, -122, 49]) && sameValues([...t.data], vals) }
+    report(readOk(true) && readOk(false), 'sea currents: the GeoTIFF reader reads little- and big-endian files in strips, row 0 at the north (49 N) and the box from the tie point and pixel scale')
+    const refused = (opts) => threw(() => D.readGeoTiff(tiff({ w: 4, h: 3, values: vals, ...opts })))
+    report(refused({ compression: 5 }) && refused({ compression: 8 }), 'sea currents: a compressed GeoTIFF is refused, not misread')
+    report(refused({ bits: 16 }) && refused({ format: 1 }) && refused({ strips: false }) && refused({ scale: [0.5, -0.25] }) && threw(() => D.readGeoTiff(new TextEncoder().encode('<?xml version="1.0"?><ServiceExceptionReport>no such time</ServiceExceptionReport>'))) && threw(() => D.readGeoTiff(new Uint8Array(4))), 'sea currents: integer or 16-bit values, missing data, a southward-growing scale, an XML error reply and a short file are refused')
+    const whole = tiff({ w: 4, h: 3, values: vals })
+    report(threw(() => D.readGeoTiff(whole.slice(0, whole.length - 8))), 'sea currents: a file cut short is refused')
+    const hours = '2026-10-21T19:00:00Z/2026-10-23T18:00:00Z/PT1H'
+    const ct = D.currentsTimes(xml('CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m', hours))
+    report(ct.length === 48 && ct[0] === '2026-10-21T19:00:00Z' && ct.at(-1) === '2026-10-23T18:00:00Z' && threw(() => D.currentsTimes(xml('RADAR_1KM_RRAI', hours))) && threw(() => D.currentsTimes(xml('CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m', '2026-10-21T19:00:00Z/2026-10-23T18:00:00Z/P1D'))), 'sea currents: the 48 hours are read from the currents layer and not from a sibling, and an unreadable step is refused')
+    const w1 = D.currentsWindow(ct, Date.parse('2026-10-22T04:20:00Z'))
+    report(w1.times.length === 13 && w1.times[w1.at] === '2026-10-22T04:00:00Z' && w1.at === 0 && w1.times.at(-1) === '2026-10-22T16:00:00Z', 'sea currents: the first hour is the latest one not after now, and Play covers the 13 hours from there', JSON.stringify(w1))
+    const wEarly = D.currentsWindow(ct, Date.parse('2026-10-20T00:00:00Z')), wLate = D.currentsWindow(ct, Date.parse('2026-10-25T00:00:00Z'))
+    report(wEarly.times[0] === ct[0] && wEarly.at === 0 && wLate.times.length === 13 && wLate.times[wLate.at] === ct.at(-1) && wLate.times.at(-1) === ct.at(-1), 'sea currents: before the range it starts at the first hour, after it the window moves back to end at the last hour')
+    const cu = D.currentsUrl('X', '2026-10-22T05:00:00Z'), cv = D.currentsUrl('Y', '2026-10-22T05:00:00Z')
+    report(cu.startsWith('https://geo.weather.gc.ca/geomet?') && cu.includes('request=GetCoverage') && cu.includes('coverageid=CIOPS-SalishSea_500m_SeaWaterVelocityX_0.5m') && cv.includes('coverageid=CIOPS-SalishSea_500m_SeaWaterVelocityY_0.5m') && cu.includes('format=image%2Ftiff') && cu.includes('subset=x%28-124.5%2C-122.6%29') && cu.includes('subset=y%2847.8%2C49.2%29') && cu.includes('time=2026-10-22T05%3A00%3A00Z') && threw(() => D.currentsUrl('Z', '2026-10-22T05:00:00Z')) && threw(() => D.currentsUrl('X', 'soon')), 'sea currents: a request names the velocity layer, the time and the box, and refuses an unknown axis or a bad time')
+    report(D.CURRENTS_BOX[0] < D.REGION[0] && D.CURRENTS_BOX[1] < D.REGION[1] && D.CURRENTS_BOX[2] > D.REGION[2] && D.CURRENTS_BOX[3] > D.REGION[3], 'sea currents: the box asked for covers everywhere the map can go, with a margin')
+    report(D.pacificHour('2026-10-22T04:00:00Z') === 'Oct 21, 9 p.m. PDT' && D.pacificHour('nonsense') === null, 'sea currents: the hour is named in Pacific time, whatever the visitor\'s zone is')
+
+    // A 5 x 4 grid of cells 1 degree wide, 52 N to 48 N, 0 to 5 E, with a land column and the three ways land is marked.
+    const cells = (f) => Array.from({ length: 20 }, (_, i) => f(i % 5, Math.floor(i / 5)))
+    const east = tiff({ w: 5, h: 4, values: cells((x, y) => (x === 2 ? [0, 1e20, NaN, 0][y] : 1 + x)), scale: [1, 1], tie: [0, 52], rows: 4 })
+    const north = tiff({ w: 5, h: 4, values: cells((x, y) => (x === 2 ? [0, 1e20, NaN, 0][y] : 0.5)), scale: [1, 1], tie: [0, 52], rows: 4 })
+    const grid = D.currentsGrid(D.readGeoTiff(east), D.readGeoTiff(north))
+    report(sameValues([...grid.sea], cells((x, y) => (x === 2 ? 0 : 1))) && threw(() => D.currentsGrid(D.readGeoTiff(east), D.readGeoTiff(tiff({ w: 5, h: 4, values: cells(() => 1), scale: [1, 1], tie: [0, 51], rows: 4 })))), 'sea currents: zero in both components, a fill value and NaN all mark land, and two grids that do not match are refused')
+    const near = (a, b) => Math.abs(a - b) < 1e-9
+    const at = (lng, lat) => D.seaVelocity(grid, lng, lat)
+    // Cell centres are at 0.5, 1.5 ... east. The east velocity of a sea cell is 1 + its column.
+    const mid = at(0.5, 51.5), halfway = at(1, 51.5), nearLand = at(2.3, 51.5)
+    report(near(mid[0], 1) && near(mid[1], 0.5) && near(halfway[0], 1.5) && nearLand === null, 'sea currents: bilinear between sea cells, no flow where the nearest cell is land', JSON.stringify({ mid, halfway, nearLand }))
+    report(at(2.5, 51.5) === null && at(2.5, 50.5) === null && at(2.5, 49.5) === null && at(2.5, 48.5) === null, 'sea currents: land cells have no flow, whichever way they are marked')
+    // Next to land the flow keeps its full value: the land cell is left out and the weights of the rest are scaled to add up to one.
+    report(near(at(1.9, 51.5)[0], 2) && at(-0.4, 51.5) === null && at(5.2, 51.5) === null && at(1.5, 52.2) === null && at(1.5, 47.8) === null && at(NaN, 51) === null, 'sea currents: next to land the flow is not thinned by the land, and a place outside the grid has no flow')
+
+    // The screen field. A north-up view, 10 px = 0.1 degree east and 0.05 degree south, then the same view turned so that east is up.
+    const lattice = (cols, rows, spacing, at) => { const lng = new Float64Array(cols * rows), lat = new Float64Array(cols * rows); for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) [lng[j * cols + i], lat[j * cols + i]] = at(i * spacing, j * spacing); return { cols, rows, spacing, lng, lat } }
+    // 0.5 m/s one way and next to nothing the other (exactly zero in both would be land).
+    const eastAll = D.currentsGrid(D.readGeoTiff(tiff({ w: 5, h: 4, values: cells(() => 0.5), scale: [1, 1], tie: [0, 52], rows: 4 })), D.readGeoTiff(tiff({ w: 5, h: 4, values: cells(() => 1e-9), scale: [1, 1], tie: [0, 52], rows: 4 })))
+    const northAll = D.currentsGrid(D.readGeoTiff(tiff({ w: 5, h: 4, values: cells(() => 1e-9), scale: [1, 1], tie: [0, 52], rows: 4 })), D.readGeoTiff(tiff({ w: 5, h: 4, values: cells(() => 0.5), scale: [1, 1], tie: [0, 52], rows: 4 })))
+    const flat = lattice(5, 5, 20, (x, y) => [0.2 + x * 0.01, 51 - y * 0.0025 * 2]) // 20 px: 0.2 degree east, 0.05 degree south
+    const perPixelLng = 0.01, perPixelLat = 0.005
+    const fe = D.screenField(eastAll, 80, 80, 10, flat), fn = D.screenField(northAll, 80, 80, 10, flat)
+    const wantX = 0.5 / (111320 * Math.cos(51 * Math.PI / 180) * perPixelLng) // px per second for 0.5 m/s east
+    const o = 1 * fe.cols + 1
+    report(fe.list.length === 81 && Math.abs(fe.vx[o] / wantX - 1) < 0.01 && Math.abs(fe.vy[o]) < 1e-3 * wantX && Math.abs(fe.speed[o] - 0.5) < 1e-6, 'sea currents: east flow moves right on a north-up screen, by the right number of pixels per second', JSON.stringify([fe.vx[o], wantX, fe.vy[o], fe.speed[o], fe.list.length]))
+    const wantY = -0.5 / (111320 * perPixelLat)
+    report(Math.abs(fn.vy[o] / wantY - 1) < 0.01 && Math.abs(fn.vx[o]) < 1e-3 * Math.abs(wantY), 'sea currents: north flow moves up the screen (y gets smaller), by the right number of pixels per second', JSON.stringify([fn.vy[o], wantY, fn.vx[o]]))
+    // Turned a quarter turn (bearing 90, so east is at the top of the screen and south at the right).
+    const turned = lattice(5, 5, 20, (x, y) => [0.5 - y * 0.01, 51 - x * 0.005])
+    const ft = D.screenField(eastAll, 80, 80, 10, turned)
+    report(ft.vy[o] < 0 && Math.abs(ft.vx[o]) < 1e-3 * Math.abs(ft.vy[o]) && Math.abs(Math.abs(ft.vy[o]) / (0.5 / (111320 * Math.cos(51 * Math.PI / 180) * 0.01)) - 1) < 0.01, 'sea currents: with the map turned so east is up, east flow moves up the screen, not right (the screen slope is applied, not assumed)', JSON.stringify([ft.vx[o], ft.vy[o]]))
+    // No data: places over land, off the model or in the sky leave no flow, and the field is empty there.
+    const sky = lattice(5, 5, 20, (x, y) => (y < 20 ? [NaN, NaN] : [0.2 + x * 0.01, 51 - y * 0.005]))
+    const fs = D.screenField(eastAll, 80, 80, 10, sky)
+    const landOnly = D.screenField(grid, 80, 80, 10, lattice(5, 5, 20, () => [2.5, 51.5])) // every point over a land cell
+    const faraway = D.screenField(eastAll, 80, 80, 10, lattice(5, 5, 20, (x, y) => [20 + x, 10 + y]))
+    report(fs.sea[0] === 0 && Number.isNaN(fs.vx[0]) && fs.sea[2 * fs.cols + 1] === 1 && fs.list.length < 81 && landOnly.list.length === 0 && faraway.list.length === 0, 'sea currents: points under the sky, over land or off the model have no flow', JSON.stringify([fs.list.length, landOnly.list.length, faraway.list.length]))
+    report(Math.abs(D.horizonRow(800, 36.87, 75) - 78.46) < 0.1 && D.horizonRow(800, 36.87, 60) < 0 && D.horizonRow(800, 36.87, 0) === -Infinity && Math.abs(D.horizonRow(800, 36.87, 90) - 400) < 1e-6, 'sea currents: the horizon row of a tilted view (pitch 75 puts it 78 px below the top of an 800 px screen, pitch 60 puts it off the screen)', String(D.horizonRow(800, 36.87, 75)))
+    const sample = [0, 0, 0]
+    report(D.fieldAt(fe, 25, 25, sample) && Math.abs(sample[0] / wantX - 1) < 0.01 && !D.fieldAt(fs, 5, 5, sample) && !D.fieldAt(fe, -20, 10, sample) && !D.fieldAt(fe, 500, 10, sample), 'sea currents: a particle gets the velocity of the field around it, and none outside or where there is no flow')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 

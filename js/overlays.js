@@ -1,6 +1,6 @@
 // Optional overlays for the Greater Victoria demo map. Plain ES module, no build step.
 //
-// Seven live layers load from outside services straight from the visitor's browser, and two
+// Eight live layers load from outside services straight from the visitor's browser, and two
 // static layers (ecoregions, industry and waste sites) load their own data file. Every one is
 // off by default and makes no request until its box is ticked. Each shows a plain status line,
 // and a plain failure line if its request fails. Parsing and filtering live in
@@ -11,7 +11,9 @@ import {
   alertsUrl, normaliseAlerts, aqhiUrl, normaliseAqhi, quakesUrl, normaliseQuakes,
   conditionsUrl, normaliseConditions, waterStationsUrl, waterReadingUrl, nearestGauges, gaugeFeature,
   lifeUrls, normaliseLife,
+  CURRENTS_PLAY_HOURS, currentsCapabilitiesUrl, currentsTimes, currentsWindow, currentsUrl, currentsGrid, readGeoTiff, pacificHour,
 } from './overlays-data.js'
+import { createCurrents, SPEED_UP } from './currents.js'
 
 const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'
 // The statement the Environment and Climate Change Canada licence requires when the server names
@@ -57,6 +59,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
   // ---- layer definitions. 'ids' are the map layers each box shows and hides.
   const DEFS = {
     radar: { label: 'Precipitation radar', ids: ['radar', 'radar-credit'], ttl: 5 * 60e3, load: loadRadar },
+    currents: { label: 'Sea currents', ids: ['currents-credit'], ttl: 30 * 60e3, load: loadCurrents },
     alerts: { label: 'Weather alerts', ids: ['alerts-fill', 'alerts-line'], source: 'ov-alerts', ttl: 5 * 60e3, load: loadAlerts },
     aqhi: { label: 'Air quality', ids: ['aqhi-dot', 'aqhi-label'], source: 'ov-aqhi', ttl: 15 * 60e3, load: loadAqhi },
     quakes: { label: 'Earthquakes', ids: ['quakes-dot', 'quakes-label'], source: 'ov-quakes', ttl: 5 * 60e3, load: loadQuakes },
@@ -76,6 +79,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     if (!st.on) return // unticked while waiting
     setVisible(def, true)
     if (id === 'radar') $('radar-controls').hidden = false
+    if (id === 'currents') showCurrentsControls(true)
     if (st.loading) { showStatus(id); return }
     if (st.loadedAt && Date.now() - st.loadedAt < def.ttl) { showStatus(id); return }
     st.loading = true
@@ -118,6 +122,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       stopRadar()
       radar.playing = false; radar.frames = []; radar.shown = -1; st.loadedAt = 0
       syncPlayButton()
+    }
+    if (id === 'currents') {
+      // Free the canvas and the hours kept in memory, and start fresh next time.
+      stopSea()
+      sea.playing = false; sea.hours = []; sea.at = -1; sea.cache.clear(); st.loadedAt = 0
+      currents.hide()
+      showCurrentsControls(false)
+      syncSeaPlay()
     }
   }
   const boxes = document.querySelectorAll('input[data-overlay]')
@@ -311,6 +323,85 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     if (e.target.open && !img.src) { img.src = radarLegendUrl(); img.onerror = () => { $('radar-legend-note').hidden = false } }
   })
 
+  // ---- sea currents: modelled hourly surface currents, drawn as moving particles (js/currents.js)
+  // Each hour is two small images from the GeoMet WCS, one for each component of the velocity. Only the
+  // hour shown is fetched, and while Play runs the one after it. The last few hours are kept for the next loop.
+  const currents = createCurrents({ map, motionQuery })
+  const sea = { hours: [], at: -1, cache: new Map(), playing: false, timer: 0 }
+  const SEA_CACHE_HOURS = 14, SEA_STEP_MS = 1500
+  const seaSignal = () => state.currents.abort?.signal
+  const stopSea = () => { clearTimeout(sea.timer); sea.timer = 0 }
+  const showCurrentsControls = (on) => { $('currents-controls').hidden = !on; $('currents-note').hidden = !on }
+  async function tiff(axis, time, signal) {
+    const r = await fetch(currentsUrl(axis, time), { signal })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    // Out of range, the service answers HTTP 200 with a description of the error.
+    if (!/image\/tiff/i.test(r.headers.get('content-type') || '')) throw new Error('the service sent no image')
+    return readGeoTiff(await r.arrayBuffer())
+  }
+  async function seaGrid(time, signal) {
+    const kept = sea.cache.get(time)
+    if (kept) { sea.cache.delete(time); sea.cache.set(time, kept); return kept } // most recently used last
+    const grid = currentsGrid(...(await Promise.all([tiff('X', time, signal), tiff('Y', time, signal)])))
+    sea.cache.set(time, grid)
+    while (sea.cache.size > SEA_CACHE_HOURS) sea.cache.delete(sea.cache.keys().next().value)
+    return grid
+  }
+  const seaMessage = (time) => `Modelled surface currents for ${pacificHour(time)}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`
+  function syncSeaPlay() {
+    const b = $('currents-play'), reduced = motionQuery.matches
+    b.textContent = sea.playing ? 'Pause' : 'Play'
+    b.setAttribute('aria-pressed', String(sea.playing))
+    b.disabled = reduced || sea.hours.length < 2
+    $('currents-paused').hidden = !reduced || !state.currents.on
+    // A line that changes every hour is not read out while Play runs.
+    $('status-currents').setAttribute('aria-live', sea.playing ? 'off' : 'polite')
+  }
+  async function seaStep() {
+    stopSea()
+    if (!sea.playing || !state.currents.on || document.hidden) return
+    const next = (sea.at + 1) % sea.hours.length, signal = seaSignal()
+    if (!sea.cache.has(sea.hours[next])) setStatus('currents', 'loading', `Loading sea currents for ${pacificHour(sea.hours[next])}…`)
+    try {
+      const grid = await seaGrid(sea.hours[next], signal)
+      if (!sea.playing || !state.currents.on) return
+      sea.at = next
+      currents.show(grid)
+      setStatus('currents', 'ok', seaMessage(sea.hours[next]))
+      seaGrid(sea.hours[(next + 1) % sea.hours.length], signal).catch(() => {}) // the next hour, ready before it is wanted
+    } catch (e) {
+      if (signal?.aborted || !state.currents.on) return
+      setSeaPlaying(false)
+      setStatus('currents', 'fail', `The next hour of sea currents could not be loaded just now. The map still shows ${pacificHour(sea.hours[sea.at])}.`)
+      return
+    }
+    sea.timer = setTimeout(seaStep, SEA_STEP_MS)
+  }
+  function setSeaPlaying(on) {
+    sea.playing = on
+    syncSeaPlay()
+    if (on) seaStep(); else stopSea()
+  }
+  $('currents-play').addEventListener('click', () => setSeaPlaying(!sea.playing))
+  document.addEventListener('visibilitychange', () => { if (sea.playing) seaStep() })
+  motionQuery.addEventListener('change', () => { if (motionQuery.matches && sea.playing) setSeaPlaying(false); syncSeaPlay() })
+  $('currents-note').textContent = `Particles move ${SPEED_UP.toLocaleString('en-CA')} times faster than the water. Play steps through the next ${CURRENTS_PLAY_HOURS} hours.`
+
+  async function loadCurrents(signal) {
+    const { times, at } = currentsWindow(currentsTimes(await text(currentsCapabilitiesUrl(), signal)))
+    const grid = await seaGrid(times[at], signal)
+    return {
+      data: null,
+      message: seaMessage(times[at]),
+      after() {
+        if (!state.currents.on) return
+        sea.hours = times; sea.at = at
+        currents.show(grid)
+        syncSeaPlay()
+      },
+    }
+  }
+
   // ---- add the map layers (called once, when the basemap style is in)
   function addLayers({ before, ecoBefore, water }) {
     const src = (id, attribution, data = EMPTY) => map.addSource(id, { type: 'geojson', data, ...(attribution ? { attribution } : {}) })
@@ -318,6 +409,9 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     // The image source of the radar cannot carry an attribution, so an empty point source does.
     src('ov-radar-credit', ECCC_ATTRIB)
     map.addLayer({ id: 'radar-credit', type: 'circle', source: 'ov-radar-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
+
+    src('ov-currents-credit', ECCC_ATTRIB)
+    map.addLayer({ id: 'currents-credit', type: 'circle', source: 'ov-currents-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
 
     src('ov-ecoregions', ECO_ATTRIB)
     map.addLayer({ id: 'ecoregions-fill', type: 'fill', source: 'ov-ecoregions', layout: hidden, paint: { 'fill-color': '#4f8a5b', 'fill-opacity': 0.22 } }, ecoBefore)
@@ -455,5 +549,5 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
   const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot']
   const POPUP_LAYERS = [...QUERY_LAYERS, 'ecoregions-fill']
 
-  return { addLayers, addLabels, popupFor, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, enable, disable, showFrame }
+  return { addLayers, addLabels, popupFor, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, sea, currents, enable, disable, showFrame }
 }

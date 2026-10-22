@@ -46,22 +46,25 @@ const mercator = (lng, lat) => [lng * 20037508.34 / 180, Math.log(Math.tan((90 +
 export function radarCapabilitiesUrl() {
   return `${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&LAYERS=${RADAR_LAYER}`
 }
-// The frame times the service offers for the radar layer: "start/end/PT6M" in its time dimension.
-export function radarTimes(xml, count = RADAR_FRAMES) {
+// The times the service offers for a layer: "start/end/PT6M" in its time dimension, every one of them.
+function layerTimes(xml, layer, what) {
   const text = String(xml)
-  const at = text.indexOf(`<Name>${RADAR_LAYER}</Name>`)
-  if (at < 0) throw new Error('the radar layer is not in the service description')
+  const at = text.indexOf(`<Name>${layer}</Name>`)
+  if (at < 0) throw new Error(`the ${what} layer is not in the service description`)
   const block = text.slice(at, text.indexOf('</Layer>', at))
   const dim = block.match(/<Dimension\s+name="time"[^>]*>\s*([^<]+?)\s*<\/Dimension>/)
-  if (!dim) throw new Error('the radar layer has no time dimension')
+  if (!dim) throw new Error(`the ${what} layer has no time dimension`)
   const [start, end, step, extra] = dim[1].split('/')
   const m = step?.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/)
   const stepMs = m ? ((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0)) * 1000 : 0
   const first = Date.parse(start), last = Date.parse(end)
-  if (extra || !stepMs || !Number.isFinite(first) || !Number.isFinite(last) || last < first || (last - first) / stepMs > 300) throw new Error('the radar time range could not be read')
+  if (extra || !stepMs || !Number.isFinite(first) || !Number.isFinite(last) || last < first || (last - first) / stepMs > 300) throw new Error(`the ${what} time range could not be read`)
   const n = Math.floor((last - first) / stepMs) + 1
-  const all = Array.from({ length: n }, (_, i) => new Date(first + i * stepMs).toISOString().replace('.000Z', 'Z'))
-  return all.slice(-count)
+  return Array.from({ length: n }, (_, i) => new Date(first + i * stepMs).toISOString().replace('.000Z', 'Z'))
+}
+// The frame times the service offers for the radar layer, the newest ones.
+export function radarTimes(xml, count = RADAR_FRAMES) {
+  return layerTimes(xml, RADAR_LAYER, 'radar').slice(-count)
 }
 // The image corners (top left, top right, bottom right, bottom left) for the region, and the
 // size of the image asked for, which keeps the shape of the region in web Mercator.
@@ -237,4 +240,177 @@ export function normaliseLife(results) {
     }))
   }
   return collection(out)
+}
+
+// ---- sea currents (ECCC GeoMet WCS, CIOPS-SalishSea model)
+export const CURRENTS_LAYER = 'CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m' // the layer whose time dimension lists the hours
+export const CURRENTS_BOX = [-124.5, 47.8, -122.6, 49.2] // west, south, east, north: the map's reach (REGION) and a margin
+export const CURRENTS_PLAY_HOURS = 13 // Play steps through this many hours, a little more than one tide cycle
+const NO_FLOW = 100 // m/s. A value above this is the service's fill value, not a current
+const M_PER_DEGREE = 111320
+
+export function currentsCapabilitiesUrl() {
+  return `${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&LAYER=${CURRENTS_LAYER}`
+}
+export const currentsTimes = (xml) => layerTimes(xml, CURRENTS_LAYER, 'sea currents')
+// The hours Play steps through, and the one shown first: the latest hour not after `now`, then the
+// hours after it. If the service ends sooner than that, the window is moved back to fit.
+export function currentsWindow(times, now = Date.now(), hours = CURRENTS_PLAY_HOURS) {
+  let start = 0
+  times.forEach((t, i) => { if (Date.parse(t) <= now) start = i })
+  const from = Math.max(0, Math.min(start, times.length - hours))
+  return { times: times.slice(from, from + hours), at: start - from }
+}
+// One component of the velocity for one hour (X or Y), on the grid of CURRENTS_BOX.
+export function currentsUrl(axis, time) {
+  if (axis !== 'X' && axis !== 'Y') throw new Error('the velocity axis must be X or Y')
+  if (!Number.isFinite(Date.parse(time))) throw new Error('an hour is needed')
+  const [w, s, e, n] = CURRENTS_BOX
+  const p = new URLSearchParams({ service: 'WCS', version: '2.0.1', request: 'GetCoverage', coverageid: `CIOPS-SalishSea_500m_SeaWaterVelocity${axis}_0.5m`, format: 'image/tiff', subsettingcrs: 'http://www.opengis.net/def/crs/EPSG/0/4326', time })
+  p.append('subset', `x(${w},${e})`); p.append('subset', `y(${s},${n})`)
+  return `${GEOMET}?${p}`
+}
+// Pacific time to the hour, whatever the visitor's own zone is, e.g. "Oct 21, 9 p.m. PDT".
+export function pacificHour(isoText) {
+  const t = Date.parse(isoText)
+  if (!Number.isFinite(t)) return null
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', hour: 'numeric', timeZoneName: 'short' }).format(t)
+}
+
+// A reader for the one kind of GeoTIFF the service sends: one band of 32-bit floats, not
+// compressed, in strips. Anything else is refused. It returns the size, the bounding box
+// [west, south, east, north] in degrees and the values, row 0 at the north.
+export function readGeoTiff(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  const order = bytes.length >= 8 ? String.fromCharCode(bytes[0], bytes[1]) : ''
+  if (order !== 'II' && order !== 'MM') throw new Error('the reply is not a TIFF image')
+  const le = order === 'II', dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (dv.getUint16(2, le) !== 42) throw new Error('only classic TIFF is read')
+  const ifd = dv.getUint32(4, le)
+  if (ifd + 2 > bytes.length) throw new Error('the TIFF directory is outside the file')
+  const entries = dv.getUint16(ifd, le)
+  if (ifd + 2 + entries * 12 > bytes.length) throw new Error('the TIFF directory is outside the file')
+  // Byte, short, long and double values. Other types are not needed and are skipped.
+  const readers = { 1: [1, (o) => dv.getUint8(o)], 3: [2, (o) => dv.getUint16(o, le)], 4: [4, (o) => dv.getUint32(o, le)], 12: [8, (o) => dv.getFloat64(o, le)] }
+  const tags = {}
+  for (let i = 0; i < entries; i++) {
+    const at = ifd + 2 + i * 12, type = dv.getUint16(at + 2, le), count = dv.getUint32(at + 4, le), r = readers[type]
+    if (!r) continue
+    const start = r[0] * count <= 4 ? at + 8 : dv.getUint32(at + 8, le)
+    if (start + r[0] * count > bytes.length) throw new Error('a TIFF tag points outside the file')
+    tags[dv.getUint16(at, le)] = Array.from({ length: count }, (_, k) => r[1](start + k * r[0]))
+  }
+  const [width, height] = [tags[256]?.[0], tags[257]?.[0]]
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 2 || height < 2 || width * height > 4e6) throw new Error('the TIFF size is not usable')
+  if (tags[258]?.length !== 1 || tags[258][0] !== 32 || tags[339]?.[0] !== 3) throw new Error('the TIFF does not hold 32-bit floating point values')
+  if ((tags[259]?.[0] ?? 1) !== 1) throw new Error('the TIFF is compressed')
+  if ((tags[277]?.[0] ?? 1) !== 1 || tags[322] || tags[324]) throw new Error('the TIFF is not one band in strips')
+  const offsets = tags[273], lengths = tags[279]
+  if (!offsets || !lengths || offsets.length !== lengths.length) throw new Error('the TIFF has no strips')
+  const scale = tags[33550], tie = tags[33922]
+  if (!scale || scale.length < 2 || !tie || tie.length < 6 || !(scale[0] > 0) || !(scale[1] > 0)) throw new Error('the TIFF has no position')
+  // The scale is degrees per pixel, east and south. The tie point gives the position of one pixel corner.
+  const west = tie[3] - tie[0] * scale[0], north = tie[4] + tie[1] * scale[1]
+  const data = new Float32Array(width * height)
+  let n = 0
+  for (let s = 0; s < offsets.length; s++) {
+    if (offsets[s] + lengths[s] > bytes.length || lengths[s] % 4) throw new Error('a TIFF strip is outside the file')
+    for (let k = 0; k < lengths[s] && n < data.length; k += 4) data[n++] = dv.getFloat32(offsets[s] + k, le)
+  }
+  if (n < data.length) throw new Error('the TIFF holds fewer values than its size')
+  return { width, height, bbox: [west, north - height * scale[1], west + width * scale[0], north], data }
+}
+
+// The east and north components for one hour, on one grid. A cell is sea where both hold a
+// number: NaN, a fill value and exactly zero in both (how the model marks land) are no data.
+export function currentsGrid(east, north) {
+  if (east.width !== north.width || east.height !== north.height || east.bbox.some((x, i) => Math.abs(x - north.bbox[i]) > 1e-9)) throw new Error('the two velocity grids differ')
+  const sea = new Uint8Array(east.data.length)
+  for (let i = 0; i < sea.length; i++) {
+    const u = east.data[i], v = north.data[i]
+    sea[i] = Math.abs(u) <= NO_FLOW && Math.abs(v) <= NO_FLOW && (u !== 0 || v !== 0) ? 1 : 0
+  }
+  return { width: east.width, height: east.height, bbox: east.bbox, u: east.data, v: north.data, sea }
+}
+
+// Bilinear interpolation of `layers` (arrays of cols x rows values, cell centres at whole numbers)
+// at (fx, fy). The cell nearest the point must be sea. Neighbours that are not sea are left out and
+// the weights of the rest are scaled to add up to one, so the flow stops at the coast and does not
+// fade into it. Writes the result to `out` and returns true, or returns false for no flow.
+function bilinear(layers, sea, cols, rows, fx, fy, out) {
+  if (!(fx >= -0.5 && fy >= -0.5 && fx <= cols - 0.5 && fy <= rows - 0.5)) return false
+  const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0
+  const nx = tx < 0.5 ? x0 : x0 + 1, ny = ty < 0.5 ? y0 : y0 + 1
+  if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || !sea[ny * cols + nx]) return false
+  out.fill(0)
+  let total = 0
+  for (let k = 0; k < 4; k++) {
+    const x = x0 + (k & 1), y = y0 + (k >> 1)
+    if (x < 0 || y < 0 || x >= cols || y >= rows || !sea[y * cols + x]) continue
+    const w = (k & 1 ? tx : 1 - tx) * (k >> 1 ? ty : 1 - ty), i = y * cols + x
+    for (let l = 0; l < layers.length; l++) out[l] += layers[l][i] * w
+    total += w
+  }
+  for (let l = 0; l < layers.length; l++) out[l] /= total
+  return true
+}
+
+// The water's velocity [east, north] in m/s at a place, or null where the model has no sea.
+export function seaVelocity(g, lng, lat) {
+  const [w, s, e, n] = g.bbox, out = [0, 0]
+  const ok = bilinear([g.u, g.v], g.sea, g.width, g.height, (lng - w) / (e - w) * g.width - 0.5, (n - lat) / (n - s) * g.height - 0.5, out)
+  return ok ? out : null
+}
+
+// The screen row of the horizon in a map tilted `pitch` degrees, for a camera with this vertical field of
+// view. The rows above it show sky. It is negative when the horizon lies above the top of the screen.
+export function horizonRow(height, fov, pitch) {
+  if (!(pitch > 0)) return -Infinity
+  return height / 2 - (height / 2) / Math.tan(fov * Math.PI / 360) * Math.tan((90 - pitch) * Math.PI / 180)
+}
+
+// The currents as they look on the screen, on a grid of points `step` pixels apart (x = i * step).
+// `places` says which place is under the screen: a lattice of `cols` x `rows` points `spacing`
+// pixels apart, as { cols, rows, spacing, lng, lat } (arrays, NaN where the map shows no ground).
+// It comes from map.unproject, which follows pitch and 3D terrain. The lattice is coarser than the
+// field to keep the number of calls down, so the place under a point is interpolated between its
+// four lattice points. The pixels the water travels in one second come from the same lattice: the
+// slope of longitude and latitude over the screen is turned around and applied to the velocity.
+// Each point holds that screen velocity (px per second of water travel) and the speed (m/s).
+export function screenField(g, width, height, step, places) {
+  const cols = Math.ceil(width / step) + 1, rows = Math.ceil(height / step) + 1, n = cols * rows
+  const vx = new Float32Array(n).fill(NaN), vy = new Float32Array(n).fill(NaN), speed = new Float32Array(n).fill(NaN)
+  const sea = new Uint8Array(n), list = []
+  const { spacing } = places, lng = new Float64Array(4), lat = new Float64Array(4)
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const cx = Math.min(i * step / spacing, places.cols - 1.0001), cy = Math.min(j * step / spacing, places.rows - 1.0001)
+      const ci = Math.floor(cx), cj = Math.floor(cy), tx = cx - ci, ty = cy - cj
+      for (let k = 0; k < 4; k++) {
+        const at = (cj + (k >> 1)) * places.cols + ci + (k & 1)
+        lng[k] = places.lng[at]; lat[k] = places.lat[at]
+      }
+      if (!(Number.isFinite(lng[0] + lng[1] + lng[2] + lng[3]) && Number.isFinite(lat[0] + lat[1] + lat[2] + lat[3]))) continue
+      const mix = (q) => (1 - ty) * ((1 - tx) * q[0] + tx * q[1]) + ty * ((1 - tx) * q[2] + tx * q[3])
+      const uv = seaVelocity(g, mix(lng), mix(lat))
+      if (!uv) continue
+      // Slopes of the same patch, in degrees per pixel.
+      const slopeX = (q) => ((1 - ty) * (q[1] - q[0]) + ty * (q[3] - q[2])) / spacing
+      const slopeY = (q) => ((1 - tx) * (q[2] - q[0]) + tx * (q[3] - q[1])) / spacing
+      const a = slopeX(lng), b = slopeY(lng), c = slopeX(lat), d = slopeY(lat)
+      const det = a * d - b * c
+      if (!Number.isFinite(det) || Math.abs(det) < 1e-18) continue
+      const dLng = uv[0] / (M_PER_DEGREE * Math.cos(mix(lat) * Math.PI / 180)), dLat = uv[1] / M_PER_DEGREE // degrees per second
+      const x = (d * dLng - b * dLat) / det, y = (a * dLat - c * dLng) / det
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      const o = j * cols + i
+      vx[o] = x; vy[o] = y; speed[o] = Math.hypot(uv[0], uv[1]); sea[o] = 1
+      list.push(o)
+    }
+  }
+  return { cols, rows, step, vx, vy, speed, sea, list: Int32Array.from(list) }
+}
+// The screen velocity [px/s, px/s, m/s] at a pixel, or false where there is no flow.
+export function fieldAt(f, x, y, out) {
+  return bilinear([f.vx, f.vy, f.speed], f.sea, f.cols, f.rows, x / f.step, y / f.step, out)
 }
