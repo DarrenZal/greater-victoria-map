@@ -391,22 +391,33 @@ function popupFor(f, layer, group = [f]) {
   return box
 }
 
+// Area layers that cover water as well as land. A click on the sea that reaches one of these and nothing
+// else also gets the sea readout, above the area's own popup. Every other popup is shown alone.
+const AREA_LAYERS = ['bec-fill', 'ecoregions-fill', 'muni-fill']
+
 map.on('click', (e) => {
   const r = 8 // 16 px box around the click, not a single pixel
   const hitBox = [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]]
   const present = QUERY_ORDER.filter((id) => map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== 'none')
-  if (!present.length) return
-  const hits = map.queryRenderedFeatures(hitBox, { layers: present })
+  const hits = present.length ? map.queryRenderedFeatures(hitBox, { layers: present }) : []
+  let content = null, from = null
   for (const id of QUERY_ORDER) {
     let group = hits.filter((h) => h.layer.id === id)
     if (!group.length) continue
     // Watersheds nest, so show the smallest one under the click.
     if (id === 'watersheds-fill') group = [group.sort((a, b) => a.properties.area_ha - b.properties.area_ha)[0]]
-    const content = popupFor(group[0], id, group)
+    content = popupFor(group[0], id, group)
     if (!content) continue
-    new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
-    return
+    from = id
+    break
   }
+  const reading = !content || AREA_LAYERS.includes(from) ? overlays.seaReadout(e.lngLat) : null
+  if (reading) {
+    if (content) { reading.append(el('hr')); reading.append(content) }
+    content = reading
+  }
+  if (!content) return
+  new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
 })
 for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })

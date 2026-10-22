@@ -27,7 +27,7 @@ const PIN_STATUS = ['draft', 'approved']
 // Hosts the page may name. Most appear only as credit links. The page fetches from
 // tiles.openfreemap.org (basemap) on load. After the matching box is ticked it also fetches from
 // s3.amazonaws.com (elevation tiles for Terrain shading and 3D terrain), api.weather.gc.ca and
-// geo.weather.gc.ca (Environment and Climate Change Canada: radar, alerts, air quality,
+// geo.weather.gc.ca (Environment and Climate Change Canada: radar, sea currents, wind, alerts, air quality,
 // conditions, river gauges), earthquake.usgs.gov (earthquakes) and api.gbif.org (life observations).
 const ALLOWED_HOSTS = [
   'tiles.openfreemap.org', 'openfreemap.org', 'www2.gov.bc.ca', 'www.openstreetmap.org',
@@ -41,7 +41,7 @@ const ALLOWED_HOSTS = [
 ]
 // Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
 const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org']
-const OVERLAY_IDS = ['radar', 'currents', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
+const OVERLAY_IDS = ['radar', 'currents', 'wind', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
 const LIVE_SENTENCE = 'These load from outside services when ticked. Nothing loads until you tick one.'
 // Credit text the new layers must carry, word for word, in the credits panel.
 const OVERLAY_STATEMENTS = [
@@ -228,6 +228,24 @@ function ruleCurrentsCredit(html, js) {
   return out
 }
 
+// Wind carries the same Environment and Climate Change Canada credit on the map, says in the credits and
+// in the status line that it is a forecast model and not for navigation, and is named in the privacy note.
+function ruleWindCredit(html, js) {
+  const out = []
+  const para = html.split(/<\/p>|<\/li>/).filter((p) => p.includes('<strong>Wind</strong>')).map(textOf)[0]
+  if (!para) out.push('the credits have no Wind paragraph')
+  else {
+    if (!/HRDPS/.test(para)) out.push('the Wind credit does not name the HRDPS model')
+    if (!/forecast/i.test(para)) out.push('the Wind credit does not say it is a forecast')
+    if (!/not for navigation/i.test(para)) out.push('the Wind credit does not say it is not for navigation')
+  }
+  if (!/src\('ov-wind-credit', ECCC_ATTRIB\)/.test(js)) out.push('the wind credit source does not carry ECCC_ATTRIB')
+  if (!/forecast, not for navigation\)/.test(js)) out.push('the wind status line does not say forecast, not for navigation')
+  const privacy = textOf(html.slice(html.indexOf('<strong>Privacy.</strong>'), html.indexOf('<strong>Software.</strong>')))
+  if (!/\bwind\b/i.test(privacy)) out.push('the privacy note does not name wind')
+  return out
+}
+
 // Every third-party host the page fetches from once a box is ticked is named in the privacy note.
 function rulePrivacyHosts(html) {
   const privacy = textOf(html.slice(html.indexOf('<strong>Privacy.</strong>'), html.indexOf('<strong>Software.</strong>')))
@@ -265,7 +283,7 @@ function ruleIndustry(files) {
   return out
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -283,6 +301,8 @@ function selftest() {
   const industry = (over) => JSON.stringify({ features: [{ geometry: { type: 'Point', coordinates: [-123.4, 48.5] }, properties: { name: 'Plant', kind: 'wastewater', src: 'hydrowaste', ...over } }] })
   const currentsHtml = '<p><strong>Sea currents</strong> (off until you switch it on). This is an experimental model and is not for navigation.</p>'
   const currentsJs = "src('ov-currents-credit', ECCC_ATTRIB); const m = `(experimental, not for navigation).`"
+  const windHtml = '<p><strong>Wind</strong> (off until you switch it on). The HRDPS model. It is a forecast model and is not for navigation.</p><p><strong>Privacy.</strong> Environment and Climate Change Canada for radar, sea currents, wind and alerts. <strong>Software.</strong></p>'
+  const windJs = "src('ov-wind-credit', ECCC_ATTRIB); const m = `(forecast, not for navigation).`"
   const cases = [
     ['ruleForbiddenNames', ruleForbiddenNames, [f('data/native-land.geojson', '{}')], [f('data/streams.geojson', '{}')]],
     ['ruleForbiddenNames (rush)', ruleForbiddenNames, [f('data/rush-map.geojson', '{}')], [f('data/bec.geojson', '{}')]],
@@ -308,6 +328,10 @@ function selftest() {
     ['ruleCurrentsCredit (no experimental, no navigation line)', (files) => ruleCurrentsCredit(files[0].text, files[1].text), [f('x.html', '<p>Sea currents (off until you switch it on). Modelled.</p>'), f('x.js', currentsJs)], [f('x.html', currentsHtml), f('x.js', currentsJs)]],
     ['ruleCurrentsCredit (credit source missing)', (files) => ruleCurrentsCredit(files[0].text, files[1].text), [f('x.html', currentsHtml), f('x.js', currentsJs.replace('ECCC_ATTRIB', 'USGS_ATTRIB'))], [f('x.html', currentsHtml), f('x.js', currentsJs)]],
     ['ruleCurrentsCredit (status line)', (files) => ruleCurrentsCredit(files[0].text, files[1].text), [f('x.html', currentsHtml), f('x.js', currentsJs.replace('experimental, not for navigation)', 'a model)'))], [f('x.html', currentsHtml), f('x.js', currentsJs)]],
+    ['ruleWindCredit (no forecast, no navigation line)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml.replace('It is a forecast model and is not for navigation.', 'Modelled.')), f('x.js', windJs)], [f('x.html', windHtml), f('x.js', windJs)]],
+    ['ruleWindCredit (credit source missing)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml), f('x.js', windJs.replace('ECCC_ATTRIB', 'USGS_ATTRIB'))], [f('x.html', windHtml), f('x.js', windJs)]],
+    ['ruleWindCredit (status line)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml), f('x.js', windJs.replace('forecast, not for navigation)', 'a model)'))], [f('x.html', windHtml), f('x.js', windJs)]],
+    ['ruleWindCredit (privacy note)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml.replace('sea currents, wind and alerts', 'sea currents and alerts')), f('x.js', windJs)], [f('x.html', windHtml), f('x.js', windJs)]],
     ['rulePrivacyHosts', (files) => rulePrivacyHosts(files[0].text), [f('x.html', '<strong>Privacy.</strong> tiles.openfreemap.org <strong>Software.</strong>')], [f('x.html', `<strong>Privacy.</strong> ${FETCH_HOSTS.join(' ')} <strong>Software.</strong>`)]],
     ['ruleOverlayBoxes (on by default)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(true))], [f('x.html', boxes(false))]],
     ['ruleOverlayBoxes (3D terrain off)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(false, false))], [f('x.html', boxes(false))]],
@@ -445,9 +469,11 @@ function checkTree() {
   report(...pair(ruleOverlayBoxes(html), 'every new layer has a box, all are off by default, 3D terrain is on, and the Live data sentence is present'))
   report(...pair(ruleEcccLicence(html), 'Environment and Climate Change Canada data is not credited to the Open Government Licence'))
   report(...pair(rulePrivacyHosts(html), 'the privacy note names every third-party host the page fetches from after a box is ticked'))
-  const overlaysJs = byPath['js/overlays.js']?.text || '', currentsJs = byPath['js/currents.js']?.text || ''
+  const overlaysJs = byPath['js/overlays.js']?.text || '', flowJs = byPath['js/flow.js']?.text || ''
   report(...pair(ruleCurrentsCredit(html, overlaysJs), 'sea currents carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
-  report(currentsJs.includes('motionQuery') && currentsJs.includes('visibilitychange') && currentsJs.includes('cancelAnimationFrame') && currentsJs.includes("'movestart'"), 'sea currents loop honours reduced motion, stops when the tab is hidden and while the map moves')
+  report(...pair(ruleWindCredit(html, overlaysJs), 'wind carries the Environment and Climate Change Canada credit on the map, says it is a forecast and not for navigation, and is named in the privacy note'))
+  report(flowJs.includes('motionQuery') && flowJs.includes('visibilitychange') && flowJs.includes('cancelAnimationFrame') && flowJs.includes("'movestart'"), 'the particle loop of sea currents and wind honours reduced motion, stops when the tab is hidden and while the map moves')
+  report(!byPath['js/currents.js'] && /createFlow/.test(overlaysJs) && (overlaysJs.match(/createFlow\(/g) || []).length === 1 && !/new Path2D/.test(overlaysJs), 'sea currents and wind use one particle engine (js/flow.js), made once, with no second copy of it in overlays.js')
   report(overlaysJs.includes('Contains information licenced under the <a href="${ECCC_LICENCE}" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada.') && overlaysJs.includes("const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'"), 'on-map attribution carries the Environment and Climate Change Canada licence statement and a link to the licence')
   const missingOverlay = OVERLAY_STATEMENTS.filter((t) => !creditsText.includes(t))
   report(missingOverlay.length === 0, 'credits carry the Environment Canada, USGS, ecoregion and industry source statements word for word', missingOverlay.join(' | '))
@@ -508,8 +534,12 @@ function tiff({ w, h, values, le = true, compression = 1, bits = 32, format = 3,
 async function checkOverlayData() {
   const dir = mkdtempSync(join(tmpdir(), 'gv-ov-'))
   try {
-    copyFileSync(join(ROOT, 'js/overlays-data.js'), join(dir, 'data.mjs'))
-    const D = await import(pathToFileURL(join(dir, 'data.mjs')).href)
+    // Both modules are copied under their own names into a folder that says they are ES modules, because flow.js imports overlays-data.js.
+    writeFileSync(join(dir, 'package.json'), '{"type":"module"}')
+    copyFileSync(join(ROOT, 'js/overlays-data.js'), join(dir, 'overlays-data.js'))
+    copyFileSync(join(ROOT, 'js/flow.js'), join(dir, 'flow.js'))
+    const D = await import(pathToFileURL(join(dir, 'overlays-data.js')).href)
+    const F = await import(pathToFileURL(join(dir, 'flow.js')).href)
     const now = Date.parse('2026-10-21T20:00:00Z')
     const threw = (fn) => { try { fn(); return false } catch { return true } }
     const pt = (x, y) => ({ type: 'Point', coordinates: [x, y] })
@@ -564,12 +594,12 @@ async function checkOverlayData() {
     const hours = '2026-10-21T19:00:00Z/2026-10-23T18:00:00Z/PT1H'
     const ct = D.currentsTimes(xml('CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m', hours))
     report(ct.length === 48 && ct[0] === '2026-10-21T19:00:00Z' && ct.at(-1) === '2026-10-23T18:00:00Z' && threw(() => D.currentsTimes(xml('RADAR_1KM_RRAI', hours))) && threw(() => D.currentsTimes(xml('CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m', '2026-10-21T19:00:00Z/2026-10-23T18:00:00Z/P1D'))), 'sea currents: the 48 hours are read from the currents layer and not from a sibling, and an unreadable step is refused')
-    const w1 = D.currentsWindow(ct, Date.parse('2026-10-22T04:20:00Z'))
+    const w1 = D.hourWindow(ct, Date.parse('2026-10-22T04:20:00Z'))
     report(w1.times.length === 13 && w1.times[w1.at] === '2026-10-22T04:00:00Z' && w1.at === 0 && w1.times.at(-1) === '2026-10-22T16:00:00Z', 'sea currents: the first hour is the latest one not after now, and Play covers the 13 hours from there', JSON.stringify(w1))
-    const wEarly = D.currentsWindow(ct, Date.parse('2026-10-20T00:00:00Z')), wLate = D.currentsWindow(ct, Date.parse('2026-10-25T00:00:00Z'))
+    const wEarly = D.hourWindow(ct, Date.parse('2026-10-20T00:00:00Z')), wLate = D.hourWindow(ct, Date.parse('2026-10-25T00:00:00Z'))
     report(wEarly.times[0] === ct[0] && wEarly.at === 0 && wLate.times.length === 13 && wLate.times[wLate.at] === ct.at(-1) && wLate.times.at(-1) === ct.at(-1), 'sea currents: before the range it starts at the first hour, after it the window moves back to end at the last hour')
     const cu = D.currentsUrl('X', '2026-10-22T05:00:00Z'), cv = D.currentsUrl('Y', '2026-10-22T05:00:00Z')
-    report(cu.startsWith('https://geo.weather.gc.ca/geomet?') && cu.includes('request=GetCoverage') && cu.includes('coverageid=CIOPS-SalishSea_500m_SeaWaterVelocityX_0.5m') && cv.includes('coverageid=CIOPS-SalishSea_500m_SeaWaterVelocityY_0.5m') && cu.includes('format=image%2Ftiff') && cu.includes('subset=x%28-124.5%2C-122.6%29') && cu.includes('subset=y%2847.8%2C49.2%29') && cu.includes('time=2026-10-22T05%3A00%3A00Z') && threw(() => D.currentsUrl('Z', '2026-10-22T05:00:00Z')) && threw(() => D.currentsUrl('X', 'soon')), 'sea currents: a request names the velocity layer, the time and the box, and refuses an unknown axis or a bad time')
+    report(cu.startsWith('https://geo.weather.gc.ca/geomet?') && cu.includes('request=GetCoverage') && cu.includes('coverageid=CIOPS-SalishSea_500m_SeaWaterVelocityX_0.5m') && cv.includes('coverageid=CIOPS-SalishSea_500m_SeaWaterVelocityY_0.5m') && cu.includes('format=image%2Ftiff') && cu.includes('scalefactor=0.5') && cv.includes('scalefactor=0.5') && cu.includes('subset=x%28-124.5%2C-122.6%29') && cu.includes('subset=y%2847.8%2C49.2%29') && cu.includes('time=2026-10-22T05%3A00%3A00Z') && threw(() => D.currentsUrl('Z', '2026-10-22T05:00:00Z')) && threw(() => D.currentsUrl('X', 'soon')), 'sea currents: a request names the velocity layer, the time and the box, asks for every second cell of the grid (scalefactor 0.5, a quarter of the bytes), and refuses an unknown axis or a bad time')
     report(D.CURRENTS_BOX[0] < D.REGION[0] && D.CURRENTS_BOX[1] < D.REGION[1] && D.CURRENTS_BOX[2] > D.REGION[2] && D.CURRENTS_BOX[3] > D.REGION[3], 'sea currents: the box asked for covers everywhere the map can go, with a margin')
     report(D.pacificHour('2026-10-22T04:00:00Z') === 'Oct 21, 9 p.m. PDT' && D.pacificHour('nonsense') === null, 'sea currents: the hour is named in Pacific time, whatever the visitor\'s zone is')
 
@@ -614,6 +644,57 @@ async function checkOverlayData() {
     report(Math.abs(D.horizonRow(800, 36.87, 75) - 78.46) < 0.1 && D.horizonRow(800, 36.87, 60) < 0 && D.horizonRow(800, 36.87, 0) === -Infinity && Math.abs(D.horizonRow(800, 36.87, 90) - 400) < 1e-6, 'sea currents: the horizon row of a tilted view (pitch 75 puts it 78 px below the top of an 800 px screen, pitch 60 puts it off the screen)', String(D.horizonRow(800, 36.87, 75)))
     const sample = [0, 0, 0]
     report(D.fieldAt(fe, 25, 25, sample) && Math.abs(sample[0] / wantX - 1) < 0.01 && !D.fieldAt(fs, 5, 5, sample) && !D.fieldAt(fe, -20, 10, sample) && !D.fieldAt(fe, 500, 10, sample), 'sea currents: a particle gets the velocity of the field around it, and none outside or where there is no flow')
+
+    // The same speed on the screen at every zoom: the field of the same current over a view twice as close has twice the
+    // pixels for each metre, and scaling each field by its own typical pixels per metre gives the same pixels per second.
+    const fz = D.screenField(eastAll, 80, 80, 10, lattice(5, 5, 20, (x, y) => [0.2 + x * 0.005, 51 - y * 0.0025]))
+    const k1 = 60 / D.fieldScale(fe), k2 = 60 / D.fieldScale(fz)
+    report(Math.abs(D.fieldScale(fz) / D.fieldScale(fe) - 2) < 0.02 && Math.abs(fe.vx[o] * k1 - 30) < 0.5 && Math.abs(fz.vx[o] * k2 - 30) < 0.5 && Number.isNaN(D.fieldScale(landOnly)), 'sea currents: scaled by the typical pixels per metre of the view, 0.5 m/s moves at 30 px a second at two zooms that differ by a factor of two, and a field with no flow has no scale', JSON.stringify([D.fieldScale(fe), D.fieldScale(fz), fe.vx[o] * k1, fz.vx[o] * k2]))
+    // The tilt is kept: where the screen shows more ground for each pixel (far away) the picture still moves slower than near.
+    const far = (y) => 1 + (80 - y) / 80 // degrees for a pixel: twice as many at the top of the screen as at the bottom
+    const ftl = D.screenField(eastAll, 80, 80, 10, lattice(5, 5, 20, (x, y) => [0.2 + x * 0.01 * far(y), 51 - y * 0.005 * far(y)]))
+    const rowSpeed = (row) => Math.hypot(ftl.vx[row * ftl.cols + 4], ftl.vy[row * ftl.cols + 4])
+    report(rowSpeed(7) > rowSpeed(1) * 1.2 && Number.isFinite(D.fieldScale(ftl)), 'sea currents: with a tilted view, ground far away gives a slower picture than ground near, and one scale is still found', JSON.stringify([rowSpeed(1), rowSpeed(7), D.fieldScale(ftl)]))
+
+    // The readout for a click on the sea
+    const cw = D.compassWord
+    report(cw(0) === 'north' && cw(44) === 'north-east' && cw(90) === 'east' && cw(135) === 'south-east' && cw(180) === 'south' && cw(225) === 'south-west' && cw(270) === 'west' && cw(315) === 'north-west' && cw(359) === 'north' && cw(-45) === 'north-west' && cw(22.4) === 'north' && cw(22.6) === 'north-east' && cw(405) === 'north-east', 'sea currents readout: a bearing in degrees is named by its nearest compass point, with wrap-around', [0, 44, 90, 135, 180, 225, 270, 315, 359, -45, 405].map(cw).join(','))
+    const ro = D.currentReadout([0.3, 0.4]), re = D.currentReadout([0.5, 0]), rs = D.currentReadout([0, -0.5]), rq = D.currentReadout([0.01, -0.01])
+    report(near(ro.ms, 0.5) && Math.abs(ro.knots - 0.9719) < 0.001 && ro.toward === 'north-east' && re.toward === 'east' && rs.toward === 'south' && rq.still && rq.toward === null && !ro.still && threw(() => D.currentReadout([NaN, 0])), 'sea currents readout: speed in m/s and knots (1 knot is 1852 m an hour), the point the water flows toward, almost still has no direction, and a value that is not a number is refused', JSON.stringify([ro, re, rs, rq]))
+
+    // wind
+    const wh = '2026-10-22T06:00:00Z/2026-10-24T06:00:00Z/PT1H'
+    const wtimes = D.windTimes(xml('HRDPS.CONTINENTAL_WSPD', wh))
+    report(wtimes.length === 49 && wtimes[0] === '2026-10-22T06:00:00Z' && wtimes.at(-1) === '2026-10-24T06:00:00Z' && threw(() => D.windTimes(xml('CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m', wh))) && threw(() => D.windTimes(xml('HRDPS.CONTINENTAL_WSPD', '2026-10-22T06:00:00Z/2026-10-24T06:00:00Z/P1D'))), 'wind: the 49 hours are read from the wind speed layer and not from a sibling, and an unreadable step is refused')
+    const wwin = D.hourWindow(wtimes, Date.parse('2026-10-22T11:20:00Z'))
+    report(wwin.times.length === 13 && wwin.times[wwin.at] === '2026-10-22T11:00:00Z' && wwin.times[0] === '2026-10-22T11:00:00Z' && wwin.times.at(-1) === '2026-10-22T23:00:00Z' && D.hourWindow(wtimes, Date.parse('2026-10-22T04:00:00Z')).times[0] === '2026-10-22T06:00:00Z', 'wind: Play covers the 13 hours from the latest hour not after now, and starts at the first hour on offer if now is before it')
+    const wsU = D.windUrl('speed', '2026-10-22T11:00:00Z'), wdU = D.windUrl('direction', '2026-10-22T11:00:00Z')
+    report(wsU.startsWith('https://geo.weather.gc.ca/geomet?') && wsU.includes('request=GetCoverage') && wsU.includes('coverageid=HRDPS.CONTINENTAL_WSPD') && wdU.includes('coverageid=HRDPS.CONTINENTAL_WD&') && wsU.includes('format=image%2Ftiff') && wsU.includes('scalesize=x%2857%29%2Cy%2862%29') && wsU.includes('subset=x%28-124.5%2C-122.6%29') && wsU.includes('subset=y%2847.8%2C49.2%29') && wsU.includes('time=2026-10-22T11%3A00%3A00Z') && threw(() => D.windUrl('u', '2026-10-22T11:00:00Z')) && threw(() => D.windUrl('speed', 'soon')), 'wind: a request names the speed or direction layer, the time, the box and the number of cells, and refuses an unknown part or a bad time')
+    // The direction is where the wind blows FROM, clockwise from north: a wind from 270 (west) blows east. Columns: from 270, 0, 90, 180 and 45, at 5 m/s.
+    const fromDeg = [270, 0, 90, 180, 45]
+    const windTiff = (f) => tiff({ w: 5, h: 4, values: cells(f), scale: [1, 1], tie: [0, 52], rows: 4 })
+    const speedTiff = windTiff((x, y) => (y === 0 ? 5 : [NaN, 1e20, 5, 0, -1][x]))
+    const directionTiff = windTiff((x, y) => (y === 0 ? fromDeg[x] : [90, 90, 1e20, 0, 90][x]))
+    const wg = D.windGrid(D.readGeoTiff(speedTiff), D.readGeoTiff(directionTiff))
+    const wc = (x, y) => [wg.u[y * 5 + x], wg.v[y * 5 + x]]
+    const s45 = 5 * Math.sin(Math.PI / 4)
+    report(near(wc(0, 0)[0], 5) && Math.abs(wc(0, 0)[1]) < 1e-5 && Math.abs(wc(1, 0)[0]) < 1e-5 && near(wc(1, 0)[1], -5) && near(wc(2, 0)[0], -5) && near(wc(3, 0)[1], 5) && near(wc(4, 0)[0], -s45) && near(wc(4, 0)[1], -s45), 'wind: a wind from the west (270) blows east, from the north (0) blows south, from the east (90) blows west, from the south (180) blows north, from the north-east (45) blows south-west', JSON.stringify([0, 1, 2, 3, 4].map((x) => wc(x, 0).map((v) => +v.toFixed(3)))))
+    report(sameValues([...wg.sea], cells((x, y) => (y === 0 ? 1 : [0, 0, 0, 1, 0][x]))) && wc(3, 1)[0] === 0 && wc(3, 1)[1] === 0 && threw(() => D.windGrid(D.readGeoTiff(speedTiff), D.readGeoTiff(tiff({ w: 5, h: 4, values: cells(() => 1), scale: [1, 1], tie: [0, 51], rows: 4 })))), 'wind: no number, a fill value, a missing direction and a negative speed are no data, an exactly calm cell is data (wind blows over land, so zero is not land), and two grids that do not match are refused')
+    const gridAt = (lng, lat) => D.seaVelocity(wg, lng, lat)
+    report(near(gridAt(0.5, 51.5)[0], 5) && near(gridAt(2.5, 51.5)[0], -5) && gridAt(2.5, 49.5) === null && gridAt(7, 51.5) === null && near(gridAt(1, 51.5)[0], 2.5) && near(gridAt(1, 51.5)[1], -2.5), 'wind: the same bilinear lookup serves the wind, the components are blended (not the directions), and a place outside the grid has none', JSON.stringify([gridAt(0.5, 51.5), gridAt(1, 51.5)]))
+    const westWind = D.windGrid(D.readGeoTiff(windTiff(() => 5)), D.readGeoTiff(windTiff(() => 270)))
+    const fw = D.screenField(westWind, 80, 80, 10, flat)
+    report(fw.list.length === 81 && fw.vx[o] > 0 && Math.abs(fw.vy[o]) < 1e-3 * fw.vx[o] && Math.abs(fw.speed[o] - 5) < 1e-3 && Math.abs(fw.vx[o] / (5 / (111320 * Math.cos(51 * Math.PI / 180) * perPixelLng)) - 1) < 0.01, 'wind: a wind from the west moves right on a north-up screen at the wind speed', JSON.stringify([fw.vx[o], fw.vy[o], fw.speed[o], fw.list.length]))
+
+    // The look of the particles: dark enough to read on the pale sea of the basemap, darker where the flow is faster
+    const SEA = [194, 200, 202]
+    const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]) }
+    const rgba = (t) => t.match(/[\d.]+/g).map(Number)
+    const contrastOn = (colour) => { const [r, g, b, a] = rgba(colour), c = [r, g, b].map((v, i) => v * a + SEA[i] * (1 - a)), [hi, lo] = [lum(c), lum(SEA)].sort((p, q) => q - p); return (hi + 0.05) / (lo + 0.05) }
+    const ramp = (kind) => F.FLOW_PROFILES[kind].bands.map((b) => contrastOn(b.colour))
+    const readable = (kind) => { const r = ramp(kind), b = F.FLOW_PROFILES[kind].bands; return r.every((c) => c >= 3.5) && r.every((c, i) => i === 0 || c > r[i - 1]) && b[0].from === 0 && b.every((x, i) => i === 0 || x.from > b[i - 1].from) }
+    report(readable('currents') && readable('wind') && contrastOn('rgba(214, 240, 248, 0.45)') < 3.5 && contrastOn('rgba(255, 255, 255, 1)') < 3.5, 'particles: every speed band of the currents and the wind has a contrast of at least 3.5 to 1 against the basemap sea (the old white and pale cyan had 1.2 to 1.9) and the bands get darker with speed', JSON.stringify([ramp('currents').map((x) => +x.toFixed(1)), ramp('wind').map((x) => +x.toFixed(1))]))
+    report(F.FLOW_PROFILES.currents.pxPerMs === 60 && F.FLOW_PROFILES.wind.pxPerMs > 0 && F.FLOW_PROFILES.currents.bands[0].colour !== F.FLOW_PROFILES.wind.bands[0].colour && rgba(F.FLOW_PROFILES.currents.bands[0].colour)[2] > rgba(F.FLOW_PROFILES.currents.bands[0].colour)[0] && rgba(F.FLOW_PROFILES.wind.bands[0].colour)[0] > rgba(F.FLOW_PROFILES.wind.bands[0].colour)[1], 'particles: the currents are drawn in blue and the wind in purple, so the two are not mixed up, and a current of 0.5 m/s moves at 30 px a second')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 

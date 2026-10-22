@@ -79,8 +79,8 @@ body {
 /* Status line under an overlay box. A failure is shown plainly, with a tint. */
 #panel .empty[data-state=fail] { background: var(--warn); padding: 4px 8px; border-radius: 6px; opacity: 1; }
 #panel button.small { min-height: 36px; padding: 4px 14px; }
-#radar-controls, #currents-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px 30px; font-size: 13px; }
-#radar-controls[hidden], #currents-controls[hidden], #alerts-list:empty { display: none; }
+#radar-controls, #currents-controls, #wind-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px 30px; font-size: 13px; }
+#radar-controls[hidden], #currents-controls[hidden], #wind-controls[hidden], #alerts-list:empty { display: none; }
 #radar-legend { flex-basis: 100%; }
 #radar-legend summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; }
 #radar-legend img { display: block; max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); }

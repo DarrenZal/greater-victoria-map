@@ -9,7 +9,7 @@
 // The page loads map tiles from tiles.openfreemap.org and, since Terrain shading and 3D terrain
 // are on by default, elevation tiles from s3.amazonaws.com, and the desktop run ticks each live layer against its real service
 // (api.weather.gc.ca, geo.weather.gc.ca, earthquake.usgs.gov, api.gbif.org), so this needs network. Sea currents are
-// checked on both screen sizes, in 2D and 3D and under reduced motion, against geo.weather.gc.ca.
+// checked on both screen sizes, in 2D and 3D and under reduced motion, against geo.weather.gc.ca, and so is Wind (same host).
 // The failure lines are checked separately with those four hosts blocked.
 //
 // The page is declared ready by window.__ready, not map.loaded() or the 'idle'
@@ -23,10 +23,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.geojson': 'application/geo+json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8' }
 const BOWKER = [-123.3165974, 48.4309387]
 // Map layers of the optional overlays that exist from the start, all hidden. The radar layer is made on first use.
-const OVERLAY_LAYERS = ['radar-credit', 'currents-credit', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label']
+const OVERLAY_LAYERS = ['radar-credit', 'currents-credit', 'wind-credit', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label']
 // What each box asks of the network when ticked: [host, ...] and the file it loads from this site.
 const OVERLAY_NET = {
-  radar: { hosts: ['geo.weather.gc.ca'] }, currents: { hosts: ['geo.weather.gc.ca'] }, alerts: { hosts: ['api.weather.gc.ca'] }, aqhi: { hosts: ['api.weather.gc.ca'] },
+  radar: { hosts: ['geo.weather.gc.ca'] }, currents: { hosts: ['geo.weather.gc.ca'] }, wind: { hosts: ['geo.weather.gc.ca'] }, alerts: { hosts: ['api.weather.gc.ca'] }, aqhi: { hosts: ['api.weather.gc.ca'] },
   conditions: { hosts: ['api.weather.gc.ca'] }, water: { hosts: ['api.weather.gc.ca'] }, quakes: { hosts: ['earthquake.usgs.gov'] },
   life: { hosts: ['api.gbif.org'] }, ecoregions: { hosts: [], file: 'data/ecoregions.geojson' }, industry: { hosts: [], file: 'data/industry-waste.geojson' },
 }
@@ -34,7 +34,7 @@ const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.g
 const ECCC_STATEMENT = 'Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.'
 // Text the map's attribution must carry while each layer is on.
 const OVERLAY_ATTRIB = {
-  radar: ECCC_STATEMENT, currents: ECCC_STATEMENT, alerts: ECCC_STATEMENT, aqhi: ECCC_STATEMENT, conditions: ECCC_STATEMENT, water: ECCC_STATEMENT,
+  radar: ECCC_STATEMENT, currents: ECCC_STATEMENT, wind: ECCC_STATEMENT, alerts: ECCC_STATEMENT, aqhi: ECCC_STATEMENT, conditions: ECCC_STATEMENT, water: ECCC_STATEMENT,
   quakes: 'U.S. Geological Survey', life: 'GBIF', ecoregions: 'Ecoregions 2017 \u00a9 Resolve', industry: 'HydroWASTE',
 }
 
@@ -116,7 +116,7 @@ async function checkViewport(browser, base, name, vp, shots) {
       view3d: { terrain: m.getTerrain(), pitch: m.getPitch(), maxPitch: m.getMaxPitch(), rotate: m.dragRotate.isEnabled(), box: document.getElementById('terrain3d').checked, sky: !!(m.getSky && m.getSky()?.['sky-color']), note: !document.getElementById('terrain3d-note').hidden },
       overlayBoxes: [...document.querySelectorAll('input[data-overlay]')].map((b) => b.checked),
       overlayRadarLayer: !!m.getLayer('radar'),
-      currentsCanvas: !!document.getElementById('currents-canvas'),
+      flowCanvas: !!document.getElementById('flow-canvas'),
       flowBox: { checked: document.getElementById('flow').checked, disabled: document.getElementById('flow').disabled },
       terrainChecked: document.querySelector('input[data-group=terrain]').checked,
       flowRunning: window.__flow.running(),
@@ -136,7 +136,7 @@ async function checkViewport(browser, base, name, vp, shots) {
   report(info.layers.length === 0, t('all map layers present'), 'missing: ' + info.layers.join(', '))
   report(JSON.stringify(info.defaults) === JSON.stringify({ 'bec-fill': 'none', hillshade: 'visible', 'watersheds-line': 'none', 'parks-local': 'visible', 'parks-bc': 'visible', streams: 'visible', 'streams-flow': 'visible', 'muni-line': 'visible', pins: 'visible' }), t('default layer visibility as specified'), JSON.stringify(info.defaults))
   report(info.flowBox.checked && !info.flowBox.disabled && info.flowRunning && info.terrainChecked, t('Flow box is on and the flow loop is running; Terrain shading box is on'), JSON.stringify({ flowBox: info.flowBox, running: info.flowRunning, terrain: info.terrainChecked, zoom: info.zoom }))
-  report(Object.values(info.overlayDefaults).every((v) => v === 'none') && info.overlayBoxes.length === 10 && info.overlayBoxes.every((b) => !b) && !info.overlayRadarLayer && !info.currentsCanvas, t('every new layer exists, is hidden and unticked at load, and the sea currents canvas does not exist yet (ecoregions, industry, radar, sea currents, alerts, air quality, conditions, river gauges, earthquakes, life observations)'), JSON.stringify([info.overlayDefaults, info.overlayBoxes, info.overlayRadarLayer]))
+  report(Object.values(info.overlayDefaults).every((v) => v === 'none') && info.overlayBoxes.length === 11 && info.overlayBoxes.every((b) => !b) && !info.overlayRadarLayer && !info.flowCanvas, t('every new layer exists, is hidden and unticked at load, and the particle canvas does not exist yet (ecoregions, industry, radar, sea currents, wind, alerts, air quality, conditions, river gauges, earthquakes, life observations)'), JSON.stringify([info.overlayDefaults, info.overlayBoxes, info.overlayRadarLayer]))
   const v = info.view3d
   report(v.box && v.terrain?.source === 'terrain-dem' && v.terrain.exaggeration === 2 && Math.abs(v.pitch - 60) < 1 && v.maxPitch >= 60 && v.rotate && v.sky && v.note, t('3D terrain is on at load: terrain from the elevation tiles, tilted to 60 degrees, rotation unlocked, sky and note shown'), JSON.stringify(v))
   const hosts = [...new Set(requests.map((u) => new URL(u).host))].filter((h) => !h.startsWith('127.0.0.1'))
@@ -180,6 +180,7 @@ async function checkViewport(browser, base, name, vp, shots) {
   await checkTerrain3d(page, requests, t, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
   if (name === 'desktop') await checkOverlays(page, requests, t, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
   await checkCurrents(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
+  await checkWind(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
   await page.waitForTimeout(1200)
   if (shots) await page.screenshot({ timeout: 120000, path: join(shots, `${name}-2-bec-watersheds.png`) })
 
@@ -409,10 +410,10 @@ async function checkTerrain3d(page, requests, t, shot) {
 }
 
 // ---- sea currents
-const currentsStats = (page) => page.evaluate(() => window.__overlays.currents.stats())
+const currentsStats = (page) => page.evaluate(() => window.__overlays.flow.stats())
 // A number that changes when the overlay canvas changes: its alpha values, weighted by position.
 const canvasSignature = (page) => page.evaluate(() => {
-  const c = document.getElementById('currents-canvas')
+  const c = document.getElementById('flow-canvas')
   if (!c) return null
   const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
   let sum = 0
@@ -421,19 +422,61 @@ const canvasSignature = (page) => page.evaluate(() => {
 })
 // This machine draws in software and a map that has just stopped moving can take a second or two to give the loop a frame,
 // so a check that reads the canvas waits until something has been drawn on it.
-const waitDrawn = (page) => page.waitForFunction(() => window.__overlays.currents.stats().drawn > 300, null, { timeout: 45000 }).catch(() => {})
+const waitDrawn = (page) => page.waitForFunction(() => window.__overlays.flow.stats().drawn > 300, null, { timeout: 45000 }).catch(() => {})
 const seaHour = (text) => text.match(/for (.+?), Environment Canada/)?.[1] || null
 const SEA_STATUS = /^Modelled surface currents for [A-Z][a-z]{2} \d{1,2}, \d{1,2}\s[ap]\.m\. P[SD]T, Environment Canada’s CIOPS Salish Sea model \(experimental, not for navigation\)\.$/
 // Particles are drawn, and almost none of them over land (a drawn pixel more than two field points
 // from any sea point). The pixel count is a sample of every other pixel.
 const drawnOverSea = (st) => st.drawn > 300 && st.land / st.drawn < 0.01
+const WIND_STATUS = /^Modelled wind for [A-Z][a-z]{2} \d{1,2}, \d{1,2}\s[ap]\.m\. P[SD]T, Environment Canada’s HRDPS model \(forecast, not for navigation\)\.$/
+const SEA_COLOUR = [194, 200, 202] // the basemap's sea, as drawn (#c2c8ca)
+
+// The size of each coverage image the page receives, read as the replies arrive.
+function watchWcs(page) {
+  const pending = [], list = []
+  page.on('response', (r) => { if (r.url().includes('service=WCS')) pending.push(r.body().then((b) => list.push({ url: r.url(), bytes: b.length }), () => {})) })
+  return { settled: async () => { await Promise.all(pending); return [...list] } }
+}
+// How readable the particles are: the contrast, against the sea colour, of each pixel drawn with at least half
+// opacity (a pale drawing on the pale sea scores 1.2 to 1.9, a dark one 3 or more).
+const canvasContrast = (page) => page.evaluate((SEA) => {
+  const c = document.getElementById('flow-canvas')
+  if (!c) return null
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+  const lum = (r, g, b) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b) }
+  const ls = lum(...SEA), ratios = []
+  for (let i = 0; i < d.length; i += 16) {
+    const a = d[i + 3] / 255
+    if (a < 0.5) continue
+    const l = lum(d[i] * a + SEA[0] * (1 - a), d[i + 1] * a + SEA[1] * (1 - a), d[i + 2] * a + SEA[2] * (1 - a))
+    ratios.push((Math.max(l, ls) + 0.05) / (Math.min(l, ls) + 0.05))
+  }
+  ratios.sort((x, y) => x - y)
+  return { n: ratios.length, median: ratios[Math.floor(ratios.length / 2)] ?? 0, p10: ratios[Math.floor(ratios.length * 0.1)] ?? 0 }
+}, SEA_COLOUR)
+// Drawn pixels over the basemap's water and over land, told apart by asking the map what it shows in each 24 px square.
+const drawnOverWaterAndLand = (page) => page.evaluate(() => {
+  const m = window.__map, c = document.getElementById('flow-canvas')
+  const wl = m.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))
+  if (!c || !wl) return null
+  const ratio = c.width / c.clientWidth, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+  const out = { water: 0, land: 0, waterSquares: 0, landSquares: 0 }
+  for (let y = 0; y + 24 <= c.clientHeight; y += 24) {
+    for (let x = 0; x + 24 <= c.clientWidth; x += 24) {
+      const key = m.queryRenderedFeatures([x + 12, y + 12], { layers: [wl.id] }).length ? 'water' : 'land'
+      out[key + 'Squares']++
+      for (let py = y; py < y + 24; py += 2) for (let px = x; px < x + 24; px += 2) if (d[((Math.round(py * ratio)) * c.width + Math.round(px * ratio)) * 4 + 3] > 40) out[key]++
+    }
+  }
+  return out
+})
 
 // With 3D terrain on (pitch 60) the particles still draw, over the sea only. Run while the page is as it opened.
 async function checkCurrents3d(page, requests, t, shot) {
   // The creek dashes redraw the whole map and slow a headless browser to a crawl, so they are off meanwhile.
   await setBox(page, '#flow', false)
   const idle = LIVE_HOSTS.map((h) => hostCount(requests, h))
-  report(idle.every((n) => n === 0), t('nothing is requested from Environment Canada, USGS or GBIF before a box is ticked'), JSON.stringify(idle))
+  report(idle.every((n) => n === 0) && !requests.some((u) => u.includes('HRDPS')), t('nothing is requested from Environment Canada (sea currents and wind included), USGS or GBIF before a box is ticked'), JSON.stringify(idle))
   // The relief matters here: unproject must hit the mountains, not the flat plane.
   const relief = await page.waitForFunction(() => window.__map.queryTerrainElevation([-123.3466, 48.4906]) > 50, null, { timeout: 120000 }).then(() => true, () => false)
   await setBox(page, 'input[data-overlay=currents]', true)
@@ -454,12 +497,30 @@ async function checkCurrents3d(page, requests, t, shot) {
   const edge = await page.evaluate(() => {
     const m = window.__map; let prev = -90, flip = 0
     for (let y = innerHeight - 1; y >= 0; y -= 2) { const q = m.unproject([innerWidth / 2, y]); if (!q || q.lat < prev - 1 || q.lat > 70) { flip = y; break } prev = q.lat }
-    return { flip, formula: window.__overlays.currents.horizon() }
+    return { flip, formula: window.__overlays.flow.horizon() }
   })
   // The answers turn wild a little below the horizon row (the ground there is thousands of kilometres away), never above it.
   report(edge.flip >= edge.formula - 2 && edge.flip - edge.formula <= 15 && steep.top >= edge.formula && drawnOverSea(steep), t('currents: at pitch 75 the horizon row used by the layer is where unproject starts answering with places behind the camera, and nothing is drawn above it'), JSON.stringify({ edge, top: steep.top, drawn: steep.drawn, land: steep.land }))
   if (shot) await shot('currents-3d-steep')
-  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // Wind in 3D: ticking it switches the currents off, the particles are drawn over the relief, and nothing is drawn above the horizon.
+  await page.evaluate(() => window.__map.jumpTo({ pitch: 60 }))
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await setBox(page, 'input[data-overlay=wind]', true)
+  await waitStatus(page, 'wind').catch(() => {})
+  await page.waitForTimeout(2500)
+  await waitDrawn(page)
+  const w3 = await currentsStats(page), w3view = await page.evaluate(() => ({ pitch: window.__map.getPitch(), terrain: !!window.__map.getTerrain(), currentsBox: document.querySelector('input[data-overlay=currents]').checked }))
+  report(w3.kind === 'wind' && w3.running && w3view.terrain && Math.abs(w3view.pitch - 60) < 1 && !w3view.currentsBox && w3.drawn > 300, t('wind: with 3D terrain on (pitch 60) the particles are drawn and the sea currents are off'), JSON.stringify({ ...w3, w3view }))
+  if (shot) await shot('wind-3d')
+  await page.evaluate(() => window.__map.jumpTo({ pitch: 75 }))
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(2500)
+  await waitDrawn(page)
+  const w3steep = await currentsStats(page), w3horizon = await page.evaluate(() => window.__overlays.flow.horizon())
+  report(w3steep.kind === 'wind' && w3steep.drawn > 300 && w3steep.top >= w3horizon, t('wind: at pitch 75 nothing is drawn above the horizon row'), JSON.stringify({ top: w3steep.top, horizon: w3horizon, drawn: w3steep.drawn }))
+  if (shot) await shot('wind-3d-steep')
+  await setBox(page, 'input[data-overlay=wind]', false)
   await setBox(page, '#flow', true)
 }
 
@@ -476,6 +537,7 @@ async function checkCurrents(page, requests, t, name, shot) {
   const start = requests.length
   const wcs = () => requests.slice(start).filter((u) => u.includes('service=WCS'))
   const timesOf = (list) => [...new Set(list.map((u) => new URL(u).searchParams.get('time')))].sort()
+  const images = watchWcs(page)
 
   await setBox(page, 'input[data-overlay=currents]', true)
   await waitStatus(page, 'currents').catch(() => {})
@@ -484,7 +546,11 @@ async function checkCurrents(page, requests, t, name, shot) {
   const ui = await page.evaluate(() => ({ controls: !document.getElementById('currents-controls').hidden, play: document.getElementById('currents-play').disabled, note: document.getElementById('currents-note').textContent, noteShown: !document.getElementById('currents-note').hidden }))
   report(st0.state === 'ok' && SEA_STATUS.test(st0.text), t('currents: the status line names the model hour in Pacific time and the model, and says experimental and not for navigation'), st0.text)
   report(caps === 1 && first.length === 2 && first.some((u) => u.includes('VelocityX_0.5m')) && first.some((u) => u.includes('VelocityY_0.5m')) && timesOf(first).length === 1, t('currents: ticking requests the hours on offer once and the two components of one hour, and nothing else'), JSON.stringify({ caps, first: first.map((u) => u.slice(70, 150)) }))
-  report(ui.controls && !ui.play && ui.noteShown && /Particles move 3,000 times faster than the water/.test(ui.note), t('currents: Play is on offer and a note says how much faster than the water the particles move'), JSON.stringify(ui))
+  report(ui.controls && !ui.play && ui.noteShown && /^Particles are sped up so you can see them: 0\.5 m\/s shows as about 30 px a second at any zoom\. The real water moves much slower than it looks\. Play steps through the next 13 hours\./.test(ui.note) && !/times faster/.test(ui.note), t('currents: Play is on offer and the note gives the pace on the screen (30 px a second for 0.5 m/s at any zoom), not a factor that is false at other zooms'), JSON.stringify(ui))
+  const got = await images.settled()
+  const total = got.reduce((a, x) => a + x.bytes, 0)
+  console.log(`      (${t(`currents: one hour is ${got.length} images, ${got.map((x) => x.bytes.toLocaleString('en-CA')).join(' + ')} bytes, ${total.toLocaleString('en-CA')} bytes in all`)})`)
+  report(got.length === 2 && got.every((x) => x.bytes > 50e3 && x.bytes < 100e3) && total < 160e3, t('currents: one hour is two images of about 73 KB each, under 160 KB in all (a quarter of the full 500 m grid, which was 586 KB)'), JSON.stringify(got.map((x) => x.bytes)))
 
   await page.waitForTimeout(2000)
   await waitDrawn(page)
@@ -495,8 +561,28 @@ async function checkCurrents(page, requests, t, name, shot) {
   let sigB = sigA
   for (let i = 0; i < 20 && sigB === sigA; i++) { await page.waitForTimeout(500); sigB = await canvasSignature(page) }
   report(sigA !== null && sigA !== sigB, t('currents: the picture keeps changing while it runs'))
+  const con = await canvasContrast(page)
+  report(!!con && con.n > 100 && con.median >= 3 && con.p10 >= 2.2, t('currents: the particles are dark enough to read on the pale sea (the pixels drawn at half opacity or more have a median contrast of 3 to 1 or better against the sea colour, and nearly all 2.2 or better)'), JSON.stringify(con))
+  // The same pace on the screen at every zoom: the particles really move the same px a second for each m/s of current.
+  const view = { center: [-123.43, 48.48], zoom: 10.4 }
+  const paceAt = [-123.28, 48.37] // open water south of Oak Bay, so that there is sea in view even on a phone at zoom 12.5
+  const pace = {}
+  for (const z of [8.6, 10.4, 12.5]) {
+    await page.evaluate(([c, z]) => window.__map.jumpTo({ center: c, zoom: z }), [paceAt, z])
+    await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+    await page.waitForTimeout(1200)
+    await waitDrawn(page)
+    await page.evaluate(() => window.__overlays.flow.pace())
+    await page.waitForTimeout(3000)
+    pace[z] = await page.evaluate(() => window.__overlays.flow.pace())
+  }
+  report(Object.values(pace).every((p) => p.samples > 200 && Math.abs(p.pxPerMs - 60) <= 6), t('currents: the particles move at the same pace on the screen at zoom 8.6, 10.4 and 12.5 (60 px a second for each m/s, within 10%)'), JSON.stringify(Object.fromEntries(Object.entries(pace).map(([z, p]) => [z, [+p.pxPerMs.toFixed(1), p.samples]]))))
+  await page.evaluate(([c, z]) => window.__map.jumpTo({ center: c, zoom: z }), [view.center, view.zoom])
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(1500)
+  await waitDrawn(page)
   const dom = await page.evaluate(() => {
-    const c = document.getElementById('currents-canvas'), cs = getComputedStyle(c), ratio = Math.min(devicePixelRatio, 2)
+    const c = document.getElementById('flow-canvas'), cs = getComputedStyle(c), ratio = Math.min(devicePixelRatio, 2)
     return { events: cs.pointerEvents, z: cs.zIndex, inContainer: c.parentElement === window.__map.getCanvasContainer(), sized: c.width === Math.round(innerWidth * ratio) && c.height === Math.round(innerHeight * ratio), hidden: c.getAttribute('aria-hidden') }
   })
   report(dom.events === 'none' && dom.z === 'auto' && dom.inContainer && dom.sized && dom.hidden === 'true', t('currents: the canvas sits in the map under its popups and the panel, lets every touch through and matches the window size'), JSON.stringify(dom))
@@ -521,7 +607,7 @@ async function checkCurrents(page, requests, t, name, shot) {
   report(!hid.running && shown.running, t('currents: the loop stops while the tab is hidden and resumes when it is shown'), JSON.stringify([hid.running, shown.running]))
   // Read at the first 'move' event, while the map is moving, so a slow machine cannot let the move finish first.
   const moving = await page.evaluate(() => new Promise((resolve) => {
-    window.__map.once('move', () => resolve(window.__overlays.currents.stats()))
+    window.__map.once('move', () => resolve(window.__overlays.flow.stats()))
     window.__map.easeTo({ center: [-123.3, 48.5], duration: 1800 })
   }))
   await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
@@ -549,6 +635,25 @@ async function checkCurrents(page, requests, t, name, shot) {
   report(pausedBtn === 'Play' && still.at === paused.at && wcs().length === heldAt, t('currents: Pause stops the hours and the button says Play again, with no more requests'), JSON.stringify({ pausedBtn, paused: paused.at, still: still.at, heldAt, now: wcs().length }))
   report(asked[0] === h0.time && latest <= Date.parse(paused.time) + 3600000 && wcs().length === asked.length * 2, t('currents: each hour is two requests, and only the hour shown and the one after it were asked for'), JSON.stringify({ asked, shown: paused.time, requests: wcs().length }))
 
+  // the readout: a click on the sea shows the modelled current of the hour shown, read from the grid already loaded
+  await panel(false)
+  await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z }) }, [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(1500)
+  const hourNow = seaHour((await statusOf(page, 'currents')).text)
+  const reqBefore = hostCount(requests, 'geo.weather.gc.ca')
+  const open = await readoutAt(page, READOUT_SEA)
+  const seaLine = open.want ? (open.want.still ? `Almost still: ${open.want.knots.toFixed(2)} knots (${open.want.ms.toFixed(2)} m/s).` : `${open.want.knots.toFixed(1)} knots (${open.want.ms.toFixed(2)} m/s), flowing toward the ${open.want.toward}.`) : null
+  report(!!open.text && !!open.want && open.text.startsWith('Modelled sea current') && open.text.includes(seaLine) && open.text.includes(`Surface current for ${hourNow}.`) && open.text.includes('Model estimate, not for navigation.') && /\d\.\d knots \(\d\.\d\d m\/s\), flowing toward the (north|south|east|west|north-east|north-west|south-east|south-west)\./.test(open.text), t('currents: a click on the sea opens a popup with the speed in knots and m/s, the compass point it flows toward, the hour shown and the not-for-navigation line, the same as the grid says at that place'), JSON.stringify(open))
+  report(hostCount(requests, 'geo.weather.gc.ca') === reqBefore, t('currents: the readout makes no request (it reads the grid already loaded)'))
+  const onMuni = await readoutAt(page, READOUT_MUNI)
+  // The area popup that follows is the municipality, or the ecosystem zone when that box has been left ticked by an earlier check (it comes first in the popup order).
+  const areaAt = onMuni.text ? onMuni.text.search(/Legal boundary\. It includes adjacent water\.|A biogeoclimatic zone groups land/) : -1
+  report(!!onMuni.text && onMuni.text.startsWith('Modelled sea current') && areaAt > onMuni.text.indexOf('Model estimate, not for navigation.'), t('currents: on water inside an area (municipal boundary or ecosystem zone) the popup shows the current first and then the area popup, unchanged'), JSON.stringify(onMuni.text))
+  const onLand = await readoutAt(page, READOUT_LAND)
+  report(!!onLand.text && !onLand.want && !onLand.text.includes('Modelled sea current'), t('currents: a click on land opens the same popup as before, with no current in it'), JSON.stringify(onLand.text))
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+
   // a click goes through the canvas, and the popup is above it (the panel is shut so it cannot be in the way on a phone)
   await panel(false)
   await page.evaluate((b) => window.__map.jumpTo({ center: b, zoom: 13.2 }), BOWKER)
@@ -564,9 +669,173 @@ async function checkCurrents(page, requests, t, name, shot) {
   // unticking stops the loop, frees the canvas and takes the credit off the map
   await setBox(page, 'input[data-overlay=currents]', false)
   await page.waitForTimeout(1200)
-  const off = await page.evaluate(() => ({ stats: window.__overlays.currents.stats(), canvas: !!document.getElementById('currents-canvas'), status: !document.getElementById('status-currents').hidden, controls: !document.getElementById('currents-controls').hidden, note: !document.getElementById('currents-note').hidden, play: document.getElementById('currents-play').textContent, playing: window.__overlays.sea.playing, kept: window.__overlays.sea.cache.size, layer: window.__map.getLayoutProperty('currents-credit', 'visibility'), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
+  const off = await page.evaluate(() => ({ stats: window.__overlays.flow.stats(), canvas: !!document.getElementById('flow-canvas'), status: !document.getElementById('status-currents').hidden, controls: !document.getElementById('currents-controls').hidden, note: !document.getElementById('currents-note').hidden, play: document.getElementById('currents-play').textContent, playing: window.__overlays.sea.playing, kept: window.__overlays.sea.cache.size, layer: window.__map.getLayoutProperty('currents-credit', 'visibility'), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
   const sigOff = await canvasSignature(page)
   report(!off.stats.on && !off.stats.running && !off.canvas && sigOff === null && !off.status && !off.controls && !off.note && off.play === 'Play' && !off.playing && off.kept === 0 && off.layer === 'none' && !off.attrib.includes('Data Server End-use Licence'), t('currents: unticking stops the loop, removes the canvas and the hours kept in memory, hides the status line and controls and takes the credit off the map'), JSON.stringify({ ...off, attrib: undefined }))
+  // with the layer off a click on the sea shows no current
+  await page.evaluate(([c, z]) => { window.__map.jumpTo({ center: c, zoom: z }) }, [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(800)
+  const offClick = await readoutAt(page, READOUT_SEA)
+  report(!offClick.text || !offClick.text.includes('Modelled sea current'), t('currents: with the layer off a click on the sea shows no current'), JSON.stringify(offClick.text))
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+  await setBox(page, '#flow', true)
+  await panel(panelWas)
+}
+
+// Click a place on the flat map (the view is north-up) and read the popup. `want` is what the grid of the hour shown
+// says there: the same place, found from the same pixel the click used.
+const READOUT_VIEW = { center: [-123.30, 48.40], zoom: 10 } // Greater Victoria, with Haro Strait and the Oak Bay waters in view on a phone too
+const READOUT_SEA = [-123.20, 48.35] // open water east of Discovery Island
+const READOUT_MUNI = [-123.30, 48.39] // water inside the Oak Bay boundary and the Coastal Douglas-fir zone
+const READOUT_LAND = [-123.40, 48.45] // land
+async function readoutAt(page, [lng, lat]) {
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+  const p = await page.evaluate(([x, y]) => { const q = window.__map.project([x, y]); return { x: Math.round(q.x), y: Math.round(q.y) } }, [lng, lat])
+  await page.mouse.click(p.x, p.y)
+  await page.waitForTimeout(500)
+  const text = await page.evaluate(() => document.querySelector('.maplibregl-popup-content')?.innerText.replace(/\n+/g, ' ').replace(/×$/, '').trim() || null)
+  const want = await page.evaluate(async ([x, y]) => {
+    const D = await import('/js/overlays-data.js'), g = window.__overlays.sea.shown?.grid
+    const ll = window.__map.unproject([x, y]), uv = g && D.seaVelocity(g, ll.lng, ll.lat)
+    return uv ? D.currentReadout(uv) : null
+  }, [p.x, p.y])
+  return { text, want }
+}
+
+// Wind on the flat map: it switches Sea currents off (one canvas, one engine), what is requested, what is drawn (over land
+// and sea), how readable it is, Play, the credit, and what unticking leaves behind.
+async function checkWind(page, requests, t, name, shot) {
+  const panelWas = await page.evaluate(() => document.getElementById('panel-details').open)
+  const panel = (open) => page.evaluate((o) => { document.getElementById('panel-details').open = o }, open)
+  await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z }) }, [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await panel(true)
+  await page.waitForTimeout(800)
+  await setBox(page, '#flow', false)
+  const wide = page.viewportSize().width >= 700
+  const images = watchWcs(page)
+  const flowStats = () => page.evaluate(() => window.__overlays.flow.stats())
+  const ui = (id) => page.evaluate((id) => ({ box: document.querySelector(`input[data-overlay=${id}]`).checked, status: !document.getElementById('status-' + id).hidden, controls: !document.getElementById(id + '-controls').hidden, note: !document.getElementById(id + '-note').hidden, layer: window.__map.getLayoutProperty(id + '-credit', 'visibility'), canvases: document.querySelectorAll('#flow-canvas').length }), id)
+
+  // Sea currents first, so that ticking Wind has something to switch off.
+  await setBox(page, 'input[data-overlay=currents]', true)
+  await waitStatus(page, 'currents').catch(() => {})
+  await page.waitForTimeout(1500)
+  const start = requests.length
+  const hrdps = () => requests.slice(start).filter((u) => u.includes('HRDPS'))
+  const wcs = () => hrdps().filter((u) => u.includes('service=WCS'))
+  report(hrdps().length === 0 && (await flowStats()).kind === 'currents', t('wind: with Sea currents on, nothing has been requested for wind'), JSON.stringify(hrdps()))
+  await setBox(page, 'input[data-overlay=wind]', true)
+  await waitStatus(page, 'wind').catch(() => {})
+  const st0 = await statusOf(page, 'wind')
+  const cur = await ui('currents'), win = await ui('wind')
+  const kept = await page.evaluate(() => ({ cache: window.__overlays.sea.cache.size, hours: window.__overlays.sea.hours.length, playing: window.__overlays.sea.playing }))
+  report(!cur.box && !cur.status && !cur.controls && cur.layer === 'none' && win.box && win.status && win.controls && win.layer === 'visible' && win.canvases === 1 && kept.cache === 0 && kept.hours === 0 && !kept.playing && (await flowStats()).kind === 'wind', t('wind: ticking it unticks Sea currents (box, status line, controls, credit and the hours kept all go) and leaves one canvas, now showing wind'), JSON.stringify({ cur, win, kept }))
+  report(st0.state === 'ok' && WIND_STATUS.test(st0.text), t('wind: the status line names the model hour in Pacific time and the HRDPS model, and says forecast and not for navigation'), st0.text)
+  const first = wcs(), caps = hrdps().filter((u) => u.includes('GetCapabilities') && u.includes('HRDPS.CONTINENTAL_WSPD')).length
+  const times = [...new Set(first.map((u) => new URL(u).searchParams.get('time')))]
+  report(caps === 1 && first.length === 2 && first.some((u) => u.includes('coverageid=HRDPS.CONTINENTAL_WSPD')) && first.some((u) => u.includes('coverageid=HRDPS.CONTINENTAL_WD&')) && times.length === 1 && first.every((u) => u.includes('scalesize=x%2857%29%2Cy%2862%29')) && requests.slice(start).filter((u) => u.includes('CIOPS')).length === 0 && hrdps().length === 3, t('wind: ticking requests the hours on offer once and the speed and the direction of one hour, and nothing else'), JSON.stringify({ caps, first: first.map((u) => u.slice(70, 150)), n: hrdps().length }))
+  const uiW = await page.evaluate(() => ({ controls: !document.getElementById('wind-controls').hidden, play: document.getElementById('wind-play').disabled, note: document.getElementById('wind-note').textContent, noteShown: !document.getElementById('wind-note').hidden }))
+  report(uiW.controls && !uiW.play && uiW.noteShown && /^Particles are sped up so you can see them: 5 m\/s shows as about 60 px a second at any zoom\. The real air moves much slower than it looks\. Play steps through the next 13 hours\./.test(uiW.note), t('wind: Play is on offer and the note gives the pace on the screen (60 px a second for 5 m/s at any zoom)'), JSON.stringify(uiW))
+  const got = (await images.settled()).filter((x) => x.url.includes('HRDPS'))
+  const total = got.reduce((a, x) => a + x.bytes, 0)
+  console.log(`      (${t(`wind: one hour is ${got.length} images, ${got.map((x) => x.bytes.toLocaleString('en-CA')).join(' + ')} bytes, ${total.toLocaleString('en-CA')} bytes in all`)})`)
+  report(got.length === 2 && got.every((x) => x.bytes > 8e3 && x.bytes < 25e3) && total < 40e3, t('wind: one hour is two images of about 15 KB each (57 x 62 cells), under 40 KB in all'), JSON.stringify(got.map((x) => x.bytes)))
+
+  await page.waitForTimeout(2000)
+  await waitDrawn(page)
+  const st = await flowStats()
+  report(st.on && st.kind === 'wind' && st.running && st.attached && st.drawn > 300 && st.particles === (wide ? 4000 : 1500), t(`wind: after about 2 s the canvas has particle pixels (${st.particles} particles, ${wide ? 'wide' : 'narrow'} screen)`), JSON.stringify(st))
+  const cover = await drawnOverWaterAndLand(page)
+  report(!!cover && cover.water > 150 && cover.land > 150 && cover.waterSquares > 10 && cover.landSquares > 10, t('wind: particles are drawn over land as well as over water'), JSON.stringify(cover))
+  const sigA = await canvasSignature(page)
+  let sigB = sigA
+  for (let i = 0; i < 20 && sigB === sigA; i++) { await page.waitForTimeout(500); sigB = await canvasSignature(page) }
+  report(sigA !== null && sigA !== sigB, t('wind: the picture keeps changing while it runs'))
+  const con = await canvasContrast(page)
+  report(!!con && con.n > 100 && con.median >= 3 && con.p10 >= 2.2, t('wind: the particles are dark enough to read on the pale basemap (median contrast 3 to 1 or better against the sea colour, nearly all 2.2 or better)'), JSON.stringify(con))
+  const pace = {}
+  for (const z of [8.6, 12.5]) {
+    await page.evaluate(([c, z]) => window.__map.jumpTo({ center: c, zoom: z }), [READOUT_VIEW.center, z])
+    await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+    await page.waitForTimeout(1200)
+    await waitDrawn(page)
+    await page.evaluate(() => window.__overlays.flow.pace())
+    await page.waitForTimeout(3000)
+    pace[z] = await page.evaluate(() => window.__overlays.flow.pace())
+  }
+  report(Object.values(pace).every((p) => p.samples > 200 && Math.abs(p.pxPerMs - 12) <= 1.2), t('wind: the particles move at the same pace on the screen at zoom 8.6 and 12.5 (12 px a second for each m/s, within 10%)'), JSON.stringify(Object.fromEntries(Object.entries(pace).map(([z, p]) => [z, [+p.pxPerMs.toFixed(2), p.samples]]))))
+  await page.evaluate(([c, z]) => window.__map.jumpTo({ center: c, zoom: z }), [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(1500)
+  await waitDrawn(page)
+  const dom = await page.evaluate(() => {
+    const c = document.getElementById('flow-canvas'), cs = getComputedStyle(c), ratio = Math.min(devicePixelRatio, 2)
+    const attrib = document.querySelector('.maplibregl-ctrl-attrib').textContent
+    return { events: cs.pointerEvents, z: cs.zIndex, inContainer: c.parentElement === window.__map.getCanvasContainer(), sized: c.width === Math.round(innerWidth * ratio) && c.height === Math.round(innerHeight * ratio), hidden: c.getAttribute('aria-hidden'), credit: attrib.includes('Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.') }
+  })
+  report(dom.events === 'none' && dom.z === 'auto' && dom.inContainer && dom.sized && dom.hidden === 'true' && dom.credit, t('wind: the canvas sits in the map under its popups and the panel, lets every touch through, matches the window size, and the map carries the Environment Canada credit'), JSON.stringify(dom))
+  if (shot) {
+    await page.evaluate(() => document.getElementById('wind-controls').scrollIntoView({ block: 'center' }))
+    const fit = await page.evaluate(() => { const p = document.getElementById('panel').getBoundingClientRect(), c = document.getElementById('wind-note').getBoundingClientRect(); return { overflowX: document.documentElement.scrollWidth > innerWidth, noteInside: c.left >= p.left && c.right <= p.right + 1 } })
+    report(!fit.overflowX && fit.noteInside, t('wind: the controls and the note fit inside the panel, with no horizontal scroll'), JSON.stringify(fit))
+    await shot('wind-panel')
+    if (!wide) await panel(false)
+    await shot('wind-2d')
+    await panel(true)
+  }
+
+  // the loop stops while the tab is hidden and starts again
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')) })
+  const hid = await flowStats()
+  await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')) })
+  await page.waitForTimeout(300)
+  const shown = await flowStats()
+  report(!hid.running && shown.running, t('wind: the loop stops while the tab is hidden and resumes when it is shown'), JSON.stringify([hid.running, shown.running]))
+
+  // Play: one hour on, the hour after it fetched ahead, nothing more, and Pause stops it
+  const hours = () => page.evaluate(() => ({ at: window.__overlays.wind.at, time: window.__overlays.wind.hours[window.__overlays.wind.at], n: window.__overlays.wind.hours.length }))
+  const h0 = await hours(), text0 = (await statusOf(page, 'wind')).text
+  await page.click('#wind-play')
+  const btn = await page.evaluate(() => ({ text: document.getElementById('wind-play').textContent, pressed: document.getElementById('wind-play').getAttribute('aria-pressed') }))
+  await page.waitForFunction((t0) => document.getElementById('status-wind').textContent !== t0 && document.getElementById('status-wind').dataset.state === 'ok', text0, { timeout: 90000 })
+  const h1 = await hours(), text1 = (await statusOf(page, 'wind')).text
+  report(btn.text === 'Pause' && btn.pressed === 'true' && h0.n === 13 && h1.at === h0.at + 1 && Date.parse(h1.time) - Date.parse(h0.time) === 3600000 && text1 !== text0 && WIND_STATUS.test(text1), t('wind: Play steps one hour on and the hour label in the status line follows it'), JSON.stringify({ btn, h0, h1, label: [text0.slice(0, 40), text1.slice(0, 40)] }))
+  await page.waitForTimeout(1500)
+  await page.click('#wind-play')
+  const paused = await hours(), pausedBtn = await page.evaluate(() => document.getElementById('wind-play').textContent)
+  const heldAt = wcs().length
+  await page.waitForTimeout(3500)
+  const still = await hours()
+  const asked = [...new Set(wcs().map((u) => new URL(u).searchParams.get('time')))].sort()
+  report(pausedBtn === 'Play' && still.at === paused.at && wcs().length === heldAt, t('wind: Pause stops the hours and the button says Play again, with no more requests'), JSON.stringify({ pausedBtn, paused: paused.at, still: still.at, heldAt, now: wcs().length }))
+  report(asked[0] === h0.time && Math.max(...asked.map(Date.parse)) <= Date.parse(paused.time) + 3600000 && wcs().length === asked.length * 2, t('wind: each hour is two requests, and only the hour shown and the one after it were asked for'), JSON.stringify({ asked, shown: paused.time, requests: wcs().length }))
+
+  // the click readout is for the sea currents only: a click on the water with wind on shows no current
+  await panel(false)
+  const clicked = await readoutAt(page, READOUT_SEA)
+  report(!clicked.text || !clicked.text.includes('Modelled sea current'), t('wind: a click on the sea shows no sea current (the readout belongs to Sea currents)'), JSON.stringify(clicked.text))
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+  await panel(true)
+
+  // ticking Sea currents switches Wind off, and the same canvas now shows the currents
+  await setBox(page, 'input[data-overlay=currents]', true)
+  await waitStatus(page, 'currents').catch(() => {})
+  await page.waitForTimeout(1500)
+  const w2 = await ui('wind'), c2 = await ui('currents')
+  const kept2 = await page.evaluate(() => ({ cache: window.__overlays.wind.cache.size, hours: window.__overlays.wind.hours.length, playing: window.__overlays.wind.playing, play: document.getElementById('wind-play').textContent }))
+  report(!w2.box && !w2.status && !w2.controls && !w2.note && w2.layer === 'none' && c2.box && c2.status && c2.controls && c2.layer === 'visible' && c2.canvases === 1 && kept2.cache === 0 && kept2.hours === 0 && !kept2.playing && kept2.play === 'Play' && (await flowStats()).kind === 'currents', t('wind: ticking Sea currents unticks Wind (box, status line, controls, credit and the hours kept all go) and leaves one canvas, now showing the currents'), JSON.stringify({ w2, c2, kept2 }))
+  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // Wind again, then unticking it stops the loop, frees the canvas and takes the credit off the map
+  await setBox(page, 'input[data-overlay=wind]', true)
+  await waitStatus(page, 'wind').catch(() => {})
+  await page.waitForTimeout(1500)
+  await setBox(page, 'input[data-overlay=wind]', false)
+  await page.waitForTimeout(1200)
+  const off = await page.evaluate(() => ({ stats: window.__overlays.flow.stats(), canvas: !!document.getElementById('flow-canvas'), status: !document.getElementById('status-wind').hidden, controls: !document.getElementById('wind-controls').hidden, note: !document.getElementById('wind-note').hidden, play: document.getElementById('wind-play').textContent, playing: window.__overlays.wind.playing, kept: window.__overlays.wind.cache.size, layer: window.__map.getLayoutProperty('wind-credit', 'visibility'), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
+  const sigOff = await canvasSignature(page)
+  report(!off.stats.on && !off.stats.running && !off.canvas && sigOff === null && !off.status && !off.controls && !off.note && off.play === 'Play' && !off.playing && off.kept === 0 && off.layer === 'none' && !off.attrib.includes('Data Server End-use Licenc'), t('wind: unticking stops the loop, removes the canvas and the hours kept in memory, hides the status line and controls and takes the credit off the map'), JSON.stringify({ ...off, attrib: undefined }))
   await setBox(page, '#flow', true)
   await panel(panelWas)
 }
@@ -581,10 +850,10 @@ const layerStates = (page, id) => page.evaluate((id) => window.__overlays.defs[i
 // attribution carries its credit.
 async function checkOverlays(page, requests, t, shot) {
   await page.evaluate(() => { document.querySelector('.maplibregl-popup')?.remove(); document.getElementById('panel-details').open = true })
-  // Sea currents were ticked earlier, in checkCurrents3d, which checked that nothing had been requested before that.
-  const idle = LIVE_HOSTS.map((h) => requests.filter((u) => new URL(u).host === h && !u.includes('CIOPS-SalishSea')).length)
+  // Sea currents and wind were ticked earlier, in checkCurrents3d, which checked that nothing had been requested before that.
+  const idle = LIVE_HOSTS.map((h) => requests.filter((u) => new URL(u).host === h && !u.includes('CIOPS-SalishSea') && !u.includes('HRDPS')).length)
   const files = requests.filter((u) => /data\/(ecoregions|industry-waste)\.geojson/.test(u)).length
-  report(idle.every((n) => n === 0) && files === 0, t('nothing is requested from Environment Canada, USGS or GBIF (apart from the sea currents ticked earlier), or for the ecoregion and industry files, until a box is ticked'), JSON.stringify([idle, files]))
+  report(idle.every((n) => n === 0) && files === 0, t('nothing is requested from Environment Canada, USGS or GBIF (apart from the sea currents and wind ticked earlier), or for the ecoregion and industry files, until a box is ticked'), JSON.stringify([idle, files]))
   const outcome = {}
   for (const [id, net] of Object.entries(OVERLAY_NET)) {
     const before = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
@@ -608,7 +877,7 @@ async function checkOverlays(page, requests, t, shot) {
     const vis = await layerStates(page, id)
     outcome[id] = st
     report(['ok', 'empty'].includes(st.state) && own && others && file && vis.length > 0 && vis.every((v) => v === 'visible') && attrib.includes(OVERLAY_ATTRIB[id]), t(`${id}: ticking it loads from its own service only, shows its layer, a status line (${st.state}) and its credit on the map`), JSON.stringify({ st, own, others, file, vis, hasCredit: attrib.includes(OVERLAY_ATTRIB[id]) }))
-    if (id === 'currents') await setBox(page, 'input[data-overlay=currents]', false) // its loop is checked on its own, below
+    if (id === 'currents' || id === 'wind') await setBox(page, `input[data-overlay=${id}]`, false) // their loop is checked on its own, below
   }
   report(outcome.ecoregions.text.includes('one ecoregion') && /18 sites/.test(outcome.industry.text), t('ecoregions and industry status lines describe what was loaded'), JSON.stringify([outcome.ecoregions.text, outcome.industry.text]))
 
@@ -676,7 +945,7 @@ async function checkOverlaysBlocked(browser, base) {
   await page.waitForTimeout(1500)
   await page.evaluate(() => { document.getElementById('panel-details').open = true })
   const t = (s) => `hosts blocked: ${s}`
-  for (const id of ['radar', 'currents', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life']) {
+  for (const id of ['radar', 'currents', 'wind', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life']) {
     const before = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
     await setBox(page, `input[data-overlay=${id}]`, true)
     await waitStatus(page, id, 60000).catch(() => {})
@@ -686,9 +955,9 @@ async function checkOverlaysBlocked(browser, base) {
     const empty = await page.evaluate((id) => { const src = window.__overlays.defs[id].source; return src ? window.__map.querySourceFeatures(src).length === 0 : true }, id)
     const wording = id === 'alerts' ? st.text.includes('not showing whether any are in effect') : st.text.includes('could not be loaded')
     report(st.state === 'fail' && !st.hidden && wording && own && others && empty, t(`${id}: its own request is made, then a plain failure line shows and the layer stays empty`), JSON.stringify({ st, own, others, empty }))
-    if (id === 'currents') {
-      const sea = await page.evaluate(() => ({ canvas: !!document.getElementById('currents-canvas'), play: document.getElementById('currents-play').disabled, stats: window.__overlays.currents.stats() }))
-      report(!sea.canvas && sea.play && !sea.stats.on && !sea.stats.running && sea.stats.particles === 0, t('currents: after the failure no canvas is on the map, Play is disabled and nothing runs'), JSON.stringify(sea))
+    if (id === 'currents' || id === 'wind') {
+      const sea = await page.evaluate((id) => ({ canvas: !!document.getElementById('flow-canvas'), play: document.getElementById(id + '-play').disabled, stats: window.__overlays.flow.stats() }), id)
+      report(!sea.canvas && sea.play && !sea.stats.on && !sea.stats.running && sea.stats.particles === 0, t(`${id}: after the failure no canvas is on the map, Play is disabled and nothing runs`), JSON.stringify(sea))
     }
   }
   report(errors.length === 0, t('no page errors from the failed requests'), errors.join(' | '))
@@ -743,25 +1012,29 @@ async function checkReducedMotion(browser, base) {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const d = await settle((st) => !st.running)
   report(d.disabled && !d.checked && d.vis === 'none' && !d.running, 'reduced motion switched on while the page is open: Flow stops', JSON.stringify(d))
-  // Sea currents: still streaks that show the direction, no loop, no Play, and the page follows the setting live.
+  // Sea currents and wind: still streaks that show the direction, no loop, no Play, and the page follows the setting live.
   await page.evaluate(() => { document.getElementById('panel-details').open = true })
   await setBox(page, '#flow', false)
-  await setBox(page, 'input[data-overlay=currents]', true)
-  await waitStatus(page, 'currents').catch(() => {})
-  await page.waitForTimeout(2000)
-  const sea = () => page.evaluate(() => ({ stats: window.__overlays.currents.stats(), play: document.getElementById('currents-play').disabled, why: !document.getElementById('currents-paused').hidden, playing: window.__overlays.sea.playing }))
-  const r1 = await sea(), sigR1 = await canvasSignature(page)
-  await page.waitForTimeout(1500)
-  const r2 = await sea(), sigR2 = await canvasSignature(page)
-  report(r1.stats.on && !r1.stats.running && r1.stats.frames === 0 && r2.stats.frames === 0 && sigR1 !== null && sigR1 === sigR2 && drawnOverSea(r1.stats) && r1.play && r1.why && !r1.playing, 'reduced motion: sea currents are drawn as still streaks over the sea, the loop never runs, the picture never changes, and Play is disabled with the reason shown', JSON.stringify({ r1, sigR1, sigR2 }))
-  await page.emulateMedia({ reducedMotion: 'no-preference' })
-  // The browser reports a media setting change on its next rendered frame, and waitForFunction asks for frames while it waits.
-  const live = await page.waitForFunction(() => window.__overlays.currents.stats().running, null, { timeout: 15000 }).then(() => sea(), () => sea())
-  report(live.stats.running && !live.play && !live.why, 'reduced motion switched off while the page is open: sea currents start moving and Play is offered', JSON.stringify(live))
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  const dead = await page.waitForFunction(() => !window.__overlays.currents.stats().running, null, { timeout: 15000 }).then(() => sea(), () => sea())
-  report(!dead.stats.running && dead.play && dead.why && dead.stats.drawn > 0, 'reduced motion switched on while the page is open: sea currents stop and stay as still streaks, Play is disabled', JSON.stringify(dead))
-  await setBox(page, 'input[data-overlay=currents]', false)
+  for (const id of ['currents', 'wind']) {
+    const what = id === 'currents' ? 'sea currents' : 'wind'
+    await setBox(page, `input[data-overlay=${id}]`, true)
+    await waitStatus(page, id).catch(() => {})
+    await page.waitForTimeout(2000)
+    const sea = () => page.evaluate((id) => ({ stats: window.__overlays.flow.stats(), play: document.getElementById(id + '-play').disabled, why: !document.getElementById(id + '-paused').hidden, playing: window.__overlays[id === 'currents' ? 'sea' : 'wind'].playing }), id)
+    const drawnOk = (st) => (id === 'currents' ? drawnOverSea(st) : st.kind === 'wind' && st.drawn > 300)
+    const r1 = await sea(), sigR1 = await canvasSignature(page)
+    await page.waitForTimeout(1500)
+    const r2 = await sea(), sigR2 = await canvasSignature(page)
+    report(r1.stats.on && !r1.stats.running && r1.stats.frames === 0 && r2.stats.frames === 0 && sigR1 !== null && sigR1 === sigR2 && drawnOk(r1.stats) && r1.play && r1.why && !r1.playing, `reduced motion: ${what} ${id === 'currents' ? 'are' : 'is'} drawn as still streaks${id === 'currents' ? ' over the sea' : ''}, the loop never runs, the picture never changes, and Play is disabled with the reason shown`, JSON.stringify({ r1, sigR1, sigR2 }))
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    // The browser reports a media setting change on its next rendered frame, and waitForFunction asks for frames while it waits.
+    const live = await page.waitForFunction(() => window.__overlays.flow.stats().running, null, { timeout: 15000 }).then(() => sea(), () => sea())
+    report(live.stats.running && !live.play && !live.why, `reduced motion switched off while the page is open: ${what} start${id === 'currents' ? '' : 's'} moving and Play is offered`, JSON.stringify(live))
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const dead = await page.waitForFunction(() => !window.__overlays.flow.stats().running, null, { timeout: 15000 }).then(() => sea(), () => sea())
+    report(!dead.stats.running && dead.play && dead.why && dead.stats.drawn > 0, `reduced motion switched on while the page is open: ${what} stop${id === 'currents' ? '' : 's'} and stay${id === 'currents' ? '' : 's'} as still streaks, Play is disabled`, JSON.stringify(dead))
+    await setBox(page, `input[data-overlay=${id}]`, false)
+  }
   const hard = problems.filter((p) => !/openfreemap/i.test(p) || /HTTP|page error/.test(p))
   report(hard.length === 0, 'reduced motion: no page errors', hard.slice(0, 3).join(' | '))
   await ctx.close()

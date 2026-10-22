@@ -1,6 +1,6 @@
 // Optional overlays for the Greater Victoria demo map. Plain ES module, no build step.
 //
-// Eight live layers load from outside services straight from the visitor's browser, and two
+// Nine live layers load from outside services straight from the visitor's browser, and two
 // static layers (ecoregions, industry and waste sites) load their own data file. Every one is
 // off by default and makes no request until its box is ticked. Each shows a plain status line,
 // and a plain failure line if its request fails. Parsing and filtering live in
@@ -11,9 +11,10 @@ import {
   alertsUrl, normaliseAlerts, aqhiUrl, normaliseAqhi, quakesUrl, normaliseQuakes,
   conditionsUrl, normaliseConditions, waterStationsUrl, waterReadingUrl, nearestGauges, gaugeFeature,
   lifeUrls, normaliseLife,
-  CURRENTS_PLAY_HOURS, currentsCapabilitiesUrl, currentsTimes, currentsWindow, currentsUrl, currentsGrid, readGeoTiff, pacificHour,
+  PLAY_HOURS, hourWindow, currentsCapabilitiesUrl, currentsTimes, currentsUrl, currentsGrid, windCapabilitiesUrl, windTimes, windUrl, windGrid,
+  readGeoTiff, pacificHour, seaVelocity, currentReadout,
 } from './overlays-data.js'
-import { createCurrents, SPEED_UP } from './currents.js'
+import { createFlow, FLOW_PROFILES } from './flow.js'
 
 const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'
 // The statement the Environment and Climate Change Canada licence requires when the server names
@@ -59,7 +60,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
   // ---- layer definitions. 'ids' are the map layers each box shows and hides.
   const DEFS = {
     radar: { label: 'Precipitation radar', ids: ['radar', 'radar-credit'], ttl: 5 * 60e3, load: loadRadar },
-    currents: { label: 'Sea currents', ids: ['currents-credit'], ttl: 30 * 60e3, load: loadCurrents },
+    currents: { label: 'Sea currents', ids: ['currents-credit'], ttl: 30 * 60e3, load: (s) => loadHourly('currents', s) },
+    wind: { label: 'Wind', ids: ['wind-credit'], ttl: 30 * 60e3, load: (s) => loadHourly('wind', s) },
     alerts: { label: 'Weather alerts', ids: ['alerts-fill', 'alerts-line'], source: 'ov-alerts', ttl: 5 * 60e3, load: loadAlerts },
     aqhi: { label: 'Air quality', ids: ['aqhi-dot', 'aqhi-label'], source: 'ov-aqhi', ttl: 15 * 60e3, load: loadAqhi },
     quakes: { label: 'Earthquakes', ids: ['quakes-dot', 'quakes-label'], source: 'ov-quakes', ttl: 5 * 60e3, load: loadQuakes },
@@ -79,7 +81,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     if (!st.on) return // unticked while waiting
     setVisible(def, true)
     if (id === 'radar') $('radar-controls').hidden = false
-    if (id === 'currents') showCurrentsControls(true)
+    if (HOURLY[id]) showHourlyControls(id, true)
     if (st.loading) { showStatus(id); return }
     if (st.loadedAt && Date.now() - st.loadedAt < def.ttl) { showStatus(id); return }
     st.loading = true
@@ -123,20 +125,30 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       radar.playing = false; radar.frames = []; radar.shown = -1; st.loadedAt = 0
       syncPlayButton()
     }
-    if (id === 'currents') {
+    if (HOURLY[id]) {
       // Free the canvas and the hours kept in memory, and start fresh next time.
-      stopSea()
-      sea.playing = false; sea.hours = []; sea.at = -1; sea.cache.clear(); st.loadedAt = 0
-      currents.hide()
-      showCurrentsControls(false)
-      syncSeaPlay()
+      const run = HOURLY[id].run
+      stopHourly(run)
+      run.playing = false; run.hours = []; run.at = -1; run.cache.clear(); run.shown = null; st.loadedAt = 0
+      flow.hide()
+      showHourlyControls(id, false)
+      syncHourlyPlay(id)
     }
   }
   const boxes = document.querySelectorAll('input[data-overlay]')
+  // Sea currents and wind share one canvas and one engine, so ticking one unticks the other.
+  const EXCLUSIVE = { currents: 'wind', wind: 'currents' }
   for (const box of boxes) {
     box.addEventListener('change', () => {
       const id = box.dataset.overlay
-      if (box.checked) { state[id].on = true; enable(id) } else disable(id)
+      if (box.checked) {
+        const other = EXCLUSIVE[id]
+        if (other && state[other].on) {
+          for (const b of boxes) if (b.dataset.overlay === other) b.checked = false
+          disable(other)
+        }
+        state[id].on = true; enable(id)
+      } else disable(id)
     })
   }
 
@@ -323,83 +335,124 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     if (e.target.open && !img.src) { img.src = radarLegendUrl(); img.onerror = () => { $('radar-legend-note').hidden = false } }
   })
 
-  // ---- sea currents: modelled hourly surface currents, drawn as moving particles (js/currents.js)
-  // Each hour is two small images from the GeoMet WCS, one for each component of the velocity. Only the
-  // hour shown is fetched, and while Play runs the one after it. The last few hours are kept for the next loop.
-  const currents = createCurrents({ map, motionQuery })
-  const sea = { hours: [], at: -1, cache: new Map(), playing: false, timer: 0 }
-  const SEA_CACHE_HOURS = 14, SEA_STEP_MS = 1500
-  const seaSignal = () => state.currents.abort?.signal
-  const stopSea = () => { clearTimeout(sea.timer); sea.timer = 0 }
-  const showCurrentsControls = (on) => { $('currents-controls').hidden = !on; $('currents-note').hidden = !on }
-  async function tiff(axis, time, signal) {
-    const r = await fetch(currentsUrl(axis, time), { signal })
+  // ---- sea currents and wind: modelled hourly fields, drawn as moving particles (js/flow.js)
+  // Each hour is two small images from the GeoMet WCS (the east and north components of the currents, the
+  // speed and direction of the wind). Only the hour shown is fetched, and while Play runs the one after
+  // it. The last few hours are kept for the next loop. Currents and wind share one canvas and one engine.
+  const flow = createFlow({ map, motionQuery })
+  const HOURS_KEPT = 14, HOUR_STEP_MS = 1500
+  const newRun = () => ({ hours: [], at: -1, cache: new Map(), playing: false, timer: 0, shown: null })
+  const sea = newRun(), wind = newRun()
+  async function tiff(url, signal) {
+    const r = await fetch(url, { signal })
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     // Out of range, the service answers HTTP 200 with a description of the error.
     if (!/image\/tiff/i.test(r.headers.get('content-type') || '')) throw new Error('the service sent no image')
     return readGeoTiff(await r.arrayBuffer())
   }
-  async function seaGrid(time, signal) {
-    const kept = sea.cache.get(time)
-    if (kept) { sea.cache.delete(time); sea.cache.set(time, kept); return kept } // most recently used last
-    const grid = currentsGrid(...(await Promise.all([tiff('X', time, signal), tiff('Y', time, signal)])))
-    sea.cache.set(time, grid)
-    while (sea.cache.size > SEA_CACHE_HOURS) sea.cache.delete(sea.cache.keys().next().value)
+  const HOURLY = {
+    currents: {
+      run: sea, capabilities: currentsCapabilitiesUrl, times: currentsTimes, example: 0.5, medium: 'water',
+      grid: async (time, signal) => currentsGrid(...(await Promise.all([tiff(currentsUrl('X', time), signal), tiff(currentsUrl('Y', time), signal)]))),
+      message: (time) => `Modelled surface currents for ${pacificHour(time)}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`,
+      loading: (time) => `Loading sea currents for ${pacificHour(time)}…`,
+      nextFailed: (time) => `The next hour of sea currents could not be loaded just now. The map still shows ${pacificHour(time)}.`,
+    },
+    wind: {
+      run: wind, capabilities: windCapabilitiesUrl, times: windTimes, example: 5, medium: 'air',
+      grid: async (time, signal) => windGrid(...(await Promise.all([tiff(windUrl('speed', time), signal), tiff(windUrl('direction', time), signal)]))),
+      message: (time) => `Modelled wind for ${pacificHour(time)}, Environment Canada’s HRDPS model (forecast, not for navigation).`,
+      loading: (time) => `Loading wind for ${pacificHour(time)}…`,
+      nextFailed: (time) => `The next hour of wind could not be loaded just now. The map still shows ${pacificHour(time)}.`,
+    },
+  }
+  const stopHourly = (run) => { clearTimeout(run.timer); run.timer = 0 }
+  const showHourlyControls = (id, on) => { $(`${id}-controls`).hidden = !on; $(`${id}-note`).hidden = !on }
+  async function hourlyGrid(id, time, signal) {
+    const { run } = HOURLY[id], kept = run.cache.get(time)
+    if (kept) { run.cache.delete(time); run.cache.set(time, kept); return kept } // most recently used last
+    const grid = await HOURLY[id].grid(time, signal)
+    run.cache.set(time, grid)
+    while (run.cache.size > HOURS_KEPT) run.cache.delete(run.cache.keys().next().value)
     return grid
   }
-  const seaMessage = (time) => `Modelled surface currents for ${pacificHour(time)}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`
-  function syncSeaPlay() {
-    const b = $('currents-play'), reduced = motionQuery.matches
-    b.textContent = sea.playing ? 'Pause' : 'Play'
-    b.setAttribute('aria-pressed', String(sea.playing))
-    b.disabled = reduced || sea.hours.length < 2
-    $('currents-paused').hidden = !reduced || !state.currents.on
+  // Put one hour on the map and remember it, for the click readout.
+  function showHour(id, time, grid) { HOURLY[id].run.shown = { time, grid }; flow.show(grid, id) }
+  function syncHourlyPlay(id) {
+    const { run } = HOURLY[id], b = $(`${id}-play`), reduced = motionQuery.matches
+    b.textContent = run.playing ? 'Pause' : 'Play'
+    b.setAttribute('aria-pressed', String(run.playing))
+    b.disabled = reduced || run.hours.length < 2
+    $(`${id}-paused`).hidden = !reduced || !state[id].on
     // A line that changes every hour is not read out while Play runs.
-    $('status-currents').setAttribute('aria-live', sea.playing ? 'off' : 'polite')
+    $(`status-${id}`).setAttribute('aria-live', run.playing ? 'off' : 'polite')
   }
-  async function seaStep() {
-    stopSea()
-    if (!sea.playing || !state.currents.on || document.hidden) return
-    const next = (sea.at + 1) % sea.hours.length, signal = seaSignal()
-    if (!sea.cache.has(sea.hours[next])) setStatus('currents', 'loading', `Loading sea currents for ${pacificHour(sea.hours[next])}…`)
+  async function hourlyStep(id) {
+    const h = HOURLY[id], run = h.run
+    stopHourly(run)
+    if (!run.playing || !state[id].on || document.hidden) return
+    const next = (run.at + 1) % run.hours.length, signal = state[id].abort?.signal
+    if (!run.cache.has(run.hours[next])) setStatus(id, 'loading', h.loading(run.hours[next]))
     try {
-      const grid = await seaGrid(sea.hours[next], signal)
-      if (!sea.playing || !state.currents.on) return
-      sea.at = next
-      currents.show(grid)
-      setStatus('currents', 'ok', seaMessage(sea.hours[next]))
-      seaGrid(sea.hours[(next + 1) % sea.hours.length], signal).catch(() => {}) // the next hour, ready before it is wanted
+      const grid = await hourlyGrid(id, run.hours[next], signal)
+      if (!run.playing || !state[id].on) return
+      run.at = next
+      showHour(id, run.hours[next], grid)
+      setStatus(id, 'ok', h.message(run.hours[next]))
+      hourlyGrid(id, run.hours[(next + 1) % run.hours.length], signal).catch(() => {}) // the next hour, ready before it is wanted
     } catch (e) {
-      if (signal?.aborted || !state.currents.on) return
-      setSeaPlaying(false)
-      setStatus('currents', 'fail', `The next hour of sea currents could not be loaded just now. The map still shows ${pacificHour(sea.hours[sea.at])}.`)
+      if (signal?.aborted || !state[id].on) return
+      setHourlyPlaying(id, false)
+      setStatus(id, 'fail', h.nextFailed(run.hours[run.at]))
       return
     }
-    sea.timer = setTimeout(seaStep, SEA_STEP_MS)
+    run.timer = setTimeout(() => hourlyStep(id), HOUR_STEP_MS)
   }
-  function setSeaPlaying(on) {
-    sea.playing = on
-    syncSeaPlay()
-    if (on) seaStep(); else stopSea()
+  function setHourlyPlaying(id, on) {
+    const { run } = HOURLY[id]
+    run.playing = on
+    syncHourlyPlay(id)
+    if (on) hourlyStep(id); else stopHourly(run)
   }
-  $('currents-play').addEventListener('click', () => setSeaPlaying(!sea.playing))
-  document.addEventListener('visibilitychange', () => { if (sea.playing) seaStep() })
-  motionQuery.addEventListener('change', () => { if (motionQuery.matches && sea.playing) setSeaPlaying(false); syncSeaPlay() })
-  $('currents-note').textContent = `Particles move ${SPEED_UP.toLocaleString('en-CA')} times faster than the water. Play steps through the next ${CURRENTS_PLAY_HOURS} hours.`
+  for (const id of Object.keys(HOURLY)) {
+    const { run } = HOURLY[id]
+    $(`${id}-play`).addEventListener('click', () => setHourlyPlaying(id, !run.playing))
+    document.addEventListener('visibilitychange', () => { if (run.playing) hourlyStep(id) })
+    motionQuery.addEventListener('change', () => { if (motionQuery.matches && run.playing) setHourlyPlaying(id, false); syncHourlyPlay(id) })
+    // The particles are sped up so they can be seen, and by the same pace at every zoom, so no single factor is quoted.
+    const { example, medium } = HOURLY[id]
+    $(`${id}-note`).textContent = `Particles are sped up so you can see them: ${example} m/s shows as about ${Math.round(example * FLOW_PROFILES[id].pxPerMs)} px a second at any zoom. The real ${medium} moves much slower than it looks. Play steps through the next ${PLAY_HOURS} hours. Sea currents and Wind share one picture, so only one can be on.`
+  }
 
-  async function loadCurrents(signal) {
-    const { times, at } = currentsWindow(currentsTimes(await text(currentsCapabilitiesUrl(), signal)))
-    const grid = await seaGrid(times[at], signal)
+  async function loadHourly(id, signal) {
+    const h = HOURLY[id]
+    const { times, at } = hourWindow(h.times(await text(h.capabilities(), signal)))
+    const grid = await hourlyGrid(id, times[at], signal)
     return {
       data: null,
-      message: seaMessage(times[at]),
+      message: h.message(times[at]),
       after() {
-        if (!state.currents.on) return
-        sea.hours = times; sea.at = at
-        currents.show(grid)
-        syncSeaPlay()
+        if (!state[id].on) return
+        h.run.hours = times; h.run.at = at
+        showHour(id, times[at], grid)
+        syncHourlyPlay(id)
       },
     }
+  }
+
+  // ---- the readout for a click on the sea: the modelled current of the hour shown, from the grid already loaded
+  function seaReadout(lngLat) {
+    const shown = sea.shown
+    if (!state.currents.on || !shown) return null
+    const uv = seaVelocity(shown.grid, lngLat.lng, lngLat.lat)
+    if (!uv) return null // land, or outside the model
+    const r = currentReadout(uv), box = el('div')
+    box.append(el('h3', 'Modelled sea current'))
+    box.append(el('span', 'model estimate', 'tag'))
+    box.append(el('p', r.still ? `Almost still: ${r.knots.toFixed(2)} knots (${r.ms.toFixed(2)} m/s).` : `${r.knots.toFixed(1)} knots (${r.ms.toFixed(2)} m/s), flowing toward the ${r.toward}.`))
+    box.append(el('p', `Surface current for ${pacificHour(shown.time)}.`))
+    box.append(el('p', 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 1 km grid.', 'src'))
+    return box
   }
 
   // ---- add the map layers (called once, when the basemap style is in)
@@ -412,6 +465,9 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
 
     src('ov-currents-credit', ECCC_ATTRIB)
     map.addLayer({ id: 'currents-credit', type: 'circle', source: 'ov-currents-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
+
+    src('ov-wind-credit', ECCC_ATTRIB)
+    map.addLayer({ id: 'wind-credit', type: 'circle', source: 'ov-wind-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
 
     src('ov-ecoregions', ECO_ATTRIB)
     map.addLayer({ id: 'ecoregions-fill', type: 'fill', source: 'ov-ecoregions', layout: hidden, paint: { 'fill-color': '#4f8a5b', 'fill-opacity': 0.22 } }, ecoBefore)
@@ -549,5 +605,5 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
   const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot']
   const POPUP_LAYERS = [...QUERY_LAYERS, 'ecoregions-fill']
 
-  return { addLayers, addLabels, popupFor, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, sea, currents, enable, disable, showFrame }
+  return { addLayers, addLabels, popupFor, seaReadout, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, sea, wind, flow, enable, disable, showFrame }
 }

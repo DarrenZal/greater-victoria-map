@@ -242,20 +242,27 @@ export function normaliseLife(results) {
   return collection(out)
 }
 
-// ---- sea currents (ECCC GeoMet WCS, CIOPS-SalishSea model)
+// ---- sea currents (ECCC GeoMet WCS, CIOPS-SalishSea model) and wind (HRDPS, same service)
 export const CURRENTS_LAYER = 'CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m' // the layer whose time dimension lists the hours
 export const CURRENTS_BOX = [-124.5, 47.8, -122.6, 49.2] // west, south, east, north: the map's reach (REGION) and a margin
-export const CURRENTS_PLAY_HOURS = 13 // Play steps through this many hours, a little more than one tide cycle
-const NO_FLOW = 100 // m/s. A value above this is the service's fill value, not a current
+export const CURRENTS_SCALE = 0.5 // the service sends every second cell of its 500 m grid: 1 km cells, a quarter of the bytes
+export const PLAY_HOURS = 13 // Play steps through this many hours, a little more than one tide cycle
+export const WIND_LAYERS = { speed: 'HRDPS.CONTINENTAL_WSPD', direction: 'HRDPS.CONTINENTAL_WD' } // 10 m above the surface, m/s and degrees
+export const WIND_SIZE = [57, 62] // cells asked for across the box: about 2.5 km each, the model's own spacing
+const NO_FLOW = 100 // m/s. A value above this is the service's fill value, not a current or a wind
 const M_PER_DEGREE = 111320
 
 export function currentsCapabilitiesUrl() {
   return `${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&LAYER=${CURRENTS_LAYER}`
 }
 export const currentsTimes = (xml) => layerTimes(xml, CURRENTS_LAYER, 'sea currents')
+export function windCapabilitiesUrl() {
+  return `${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&LAYER=${WIND_LAYERS.speed}`
+}
+export const windTimes = (xml) => layerTimes(xml, WIND_LAYERS.speed, 'wind')
 // The hours Play steps through, and the one shown first: the latest hour not after `now`, then the
 // hours after it. If the service ends sooner than that, the window is moved back to fit.
-export function currentsWindow(times, now = Date.now(), hours = CURRENTS_PLAY_HOURS) {
+export function hourWindow(times, now = Date.now(), hours = PLAY_HOURS) {
   let start = 0
   times.forEach((t, i) => { if (Date.parse(t) <= now) start = i })
   const from = Math.max(0, Math.min(start, times.length - hours))
@@ -266,7 +273,16 @@ export function currentsUrl(axis, time) {
   if (axis !== 'X' && axis !== 'Y') throw new Error('the velocity axis must be X or Y')
   if (!Number.isFinite(Date.parse(time))) throw new Error('an hour is needed')
   const [w, s, e, n] = CURRENTS_BOX
-  const p = new URLSearchParams({ service: 'WCS', version: '2.0.1', request: 'GetCoverage', coverageid: `CIOPS-SalishSea_500m_SeaWaterVelocity${axis}_0.5m`, format: 'image/tiff', subsettingcrs: 'http://www.opengis.net/def/crs/EPSG/0/4326', time })
+  const p = new URLSearchParams({ service: 'WCS', version: '2.0.1', request: 'GetCoverage', coverageid: `CIOPS-SalishSea_500m_SeaWaterVelocity${axis}_0.5m`, format: 'image/tiff', subsettingcrs: 'http://www.opengis.net/def/crs/EPSG/0/4326', scalefactor: String(CURRENTS_SCALE), time })
+  p.append('subset', `x(${w},${e})`); p.append('subset', `y(${s},${n})`)
+  return `${GEOMET}?${p}`
+}
+// The wind speed or direction for one hour, on a grid of WIND_SIZE cells over the same box.
+export function windUrl(part, time) {
+  if (part !== 'speed' && part !== 'direction') throw new Error('the wind part must be speed or direction')
+  if (!Number.isFinite(Date.parse(time))) throw new Error('an hour is needed')
+  const [w, s, e, n] = CURRENTS_BOX
+  const p = new URLSearchParams({ service: 'WCS', version: '2.0.1', request: 'GetCoverage', coverageid: WIND_LAYERS[part], format: 'image/tiff', subsettingcrs: 'http://www.opengis.net/def/crs/EPSG/0/4326', scalesize: `x(${WIND_SIZE[0]}),y(${WIND_SIZE[1]})`, time })
   p.append('subset', `x(${w},${e})`); p.append('subset', `y(${s},${n})`)
   return `${GEOMET}?${p}`
 }
@@ -331,6 +347,23 @@ export function currentsGrid(east, north) {
     sea[i] = Math.abs(u) <= NO_FLOW && Math.abs(v) <= NO_FLOW && (u !== 0 || v !== 0) ? 1 : 0
   }
   return { width: east.width, height: east.height, bbox: east.bbox, u: east.data, v: north.data, sea }
+}
+
+// The wind for one hour on one grid, from its speed (m/s) and direction (degrees). The service gives the
+// direction the wind blows FROM, clockwise from north (checked against station reports, see data/SOURCES.md),
+// so a wind from the west, 270, blows east. The east and north components are made first and interpolated
+// after, because directions cannot be averaged. Every cell with a number is data: wind blows over land too,
+// and exactly zero is a calm, not land.
+export function windGrid(speed, direction) {
+  if (speed.width !== direction.width || speed.height !== direction.height || speed.bbox.some((x, i) => Math.abs(x - direction.bbox[i]) > 1e-9)) throw new Error('the two wind grids differ')
+  const n = speed.data.length, u = new Float32Array(n), v = new Float32Array(n), sea = new Uint8Array(n)
+  for (let i = 0; i < n; i++) {
+    const s = speed.data[i], d = direction.data[i]
+    if (!(s >= 0 && s <= NO_FLOW && d >= 0 && d <= 360)) continue // NaN fails every comparison
+    const r = d * Math.PI / 180
+    u[i] = -s * Math.sin(r); v[i] = -s * Math.cos(r); sea[i] = 1
+  }
+  return { width: speed.width, height: speed.height, bbox: speed.bbox, u, v, sea }
 }
 
 // Bilinear interpolation of `layers` (arrays of cols x rows values, cell centres at whole numbers)
@@ -413,4 +446,30 @@ export function screenField(g, width, height, step, places) {
 // The screen velocity [px/s, px/s, m/s] at a pixel, or false where there is no flow.
 export function fieldAt(f, x, y, out) {
   return bilinear([f.vx, f.vy, f.speed], f.sea, f.cols, f.rows, x / f.step, y / f.step, out)
+}
+
+// Pixels the picture of the water moves per metre the water travels, typical of this view: the middle value
+// over the field. It follows zoom (and tilt, near and far), so a caller can scale every velocity by one
+// number to get the same speed on the screen at any zoom. NaN when the field has no flow.
+export function fieldScale(f) {
+  const step = Math.max(1, Math.floor(f.list.length / 1500)), ratios = []
+  for (let k = 0; k < f.list.length; k += step) {
+    const o = f.list[k]
+    if (f.speed[o] > 1e-3) ratios.push(Math.hypot(f.vx[o], f.vy[o]) / f.speed[o])
+  }
+  if (!ratios.length) return NaN
+  ratios.sort((a, b) => a - b)
+  return ratios[Math.floor(ratios.length / 2)]
+}
+
+// ---- the readout for a click on the sea
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
+// The compass point nearest a bearing in degrees, clockwise from north, e.g. 50 is "north-east".
+export const compassWord = (deg) => COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8]
+const STILL_MS = 0.03 // below this a current is called almost still and given no direction
+// A current [east, north] in m/s as speed in m/s and knots and the way it flows toward.
+export function currentReadout([east, north]) {
+  const ms = Math.hypot(east, north)
+  if (!Number.isFinite(ms)) throw new Error('the current is not a number')
+  return { ms, knots: ms * 3600 / 1852, still: ms < STILL_MS, toward: ms < STILL_MS ? null : compassWord(Math.atan2(east, north) * 180 / Math.PI) }
 }
