@@ -212,6 +212,8 @@ export function lifeUrls(now = Date.now()) {
 }
 // Records kept: CC0 or CC BY 4.0 only, nothing withheld or generalised by its publisher, a
 // position known to within 5 km, and a position rounded to 0.01 degree (about 1 km).
+// Whales, dolphins and porpoises (order Cetacea) are left out: a recent sighting point can send
+// boats after them, and many killer whale records here are not obscured at the source.
 export function normaliseLife(results) {
   const seen = new Set(), out = []
   for (const r of results) {
@@ -219,6 +221,7 @@ export function normaliseLife(results) {
     seen.add(r.key)
     const lic = LIFE_LICENCES.find((l) => l.test.test(String(r.license || '')))
     if (!lic) continue
+    if (r.order === 'Cetacea') continue
     if (r.informationWithheld) continue
     if (r.dataGeneralizations && !/^none$/i.test(String(r.dataGeneralizations).trim())) continue
     if (num(r.decimalLatitude) == null || num(r.decimalLongitude) == null) continue
