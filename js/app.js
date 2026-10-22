@@ -116,7 +116,7 @@ const map = new Map({
   fitBoundsOptions: { padding: FIT_PADDING },
   maxBounds: MAX_BOUNDS,
   attributionControl: false,
-  // Flat and north-up until 3D terrain is switched on.
+  // Flat and north-up until 'load' switches 3D terrain on (its box is ticked by default).
   maxPitch: 0,
   dragRotate: false,
   touchPitch: false,
@@ -313,7 +313,7 @@ map.once('load', () => {
 
   // Layers start in the state the checkboxes describe.
   applyToggles()
-  if (terrainBox.checked) setTerrain3d() // a browser that restored the box before the map was ready
+  if (terrainBox.checked) setTerrain3d() // 3D terrain is on by default, so the map tilts once it is ready
 
   // Honest empty state: only real happenings and journeys count.
   const real = pins.features.filter((f) => f.properties.kind !== 'example-place')

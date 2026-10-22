@@ -6,8 +6,8 @@
 // Playwright is not a dependency of this folder. Point PLAYWRIGHT_MODULE at an
 // existing install, or leave it unset if `playwright` resolves from here.
 // The folder is served by a small built-in static server on a free port.
-// The page loads map tiles from tiles.openfreemap.org, the terrain checks load elevation tiles
-// from s3.amazonaws.com, and the desktop run ticks each live layer against its real service
+// The page loads map tiles from tiles.openfreemap.org and, since Terrain shading and 3D terrain
+// are on by default, elevation tiles from s3.amazonaws.com, and the desktop run ticks each live layer against its real service
 // (api.weather.gc.ca, geo.weather.gc.ca, earthquake.usgs.gov, api.gbif.org), so this needs network.
 // The failure lines are checked separately with those four hosts blocked.
 //
@@ -84,7 +84,11 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
   page.on('request', (r) => requests.push(r.url()))
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console error: ' + m.text().slice(0, 200)); else if (m.type() === 'warning') warnings.push(m.text().slice(0, 160)) })
   page.on('pageerror', (e) => problems.push('page error: ' + e.message.slice(0, 200)))
-  page.on('requestfailed', (r) => { if (!blockTiles || !r.url().includes('tiles.openfreemap.org')) problems.push('request failed: ' + r.url().slice(0, 120)) })
+  page.on('requestfailed', (r) => {
+    // MapLibre cancels elevation tiles it no longer needs, for example while the map tilts into 3D at load.
+    if (/ERR_ABORTED/.test(r.failure()?.errorText || '') && new URL(r.url()).host === 's3.amazonaws.com') return
+    if (!blockTiles || !r.url().includes('tiles.openfreemap.org')) problems.push(`request failed (${r.failure()?.errorText || '?'}): ` + r.url().slice(0, 120))
+  })
   page.on('response', (r) => { if (r.url().startsWith(base) && r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url().slice(0, 120)}`) })
   if (blockTiles) await page.route('https://tiles.openfreemap.org/**', (r) => r.abort())
   await page.goto(base + '/index.html?test', { waitUntil: 'load' })
@@ -96,6 +100,8 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
 async function checkViewport(browser, base, name, vp, shots) {
   const { ctx, page, problems, warnings, requests } = await openPage(browser, base, vp)
   const t = (s) => `${name}: ${s}`
+  // 3D terrain is on by default: the map tilts to 60 degrees once it is ready.
+  await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1, null, { timeout: 90000 }).catch(() => {})
   const info = await page.evaluate((OVERLAY_LAYERS) => {
     const m = window.__map
     const vis = (id) => m.getLayer(id) ? (m.getLayoutProperty(id, 'visibility') ?? 'visible') : 'absent'
@@ -106,7 +112,7 @@ async function checkViewport(browser, base, name, vp, shots) {
       layers: ['hillshade', 'bec-fill', 'bec-sea-mask', 'watersheds-fill', 'watersheds-line', 'parks-local', 'parks-bc', 'parks-bc-line', 'wetlands', 'lakes', 'streams', 'streams-flow', 'muni-fill', 'muni-line', 'streams-label', 'parks-bc-label', 'muni-label', 'pins', 'pins-label', ...OVERLAY_LAYERS].filter((id) => !m.getLayer(id)),
       defaults: Object.fromEntries(['bec-fill', 'hillshade', 'watersheds-line', 'parks-local', 'parks-bc', 'streams', 'streams-flow', 'muni-line', 'pins'].map((id) => [id, vis(id)])),
       overlayDefaults: Object.fromEntries(OVERLAY_LAYERS.map((id) => [id, vis(id)])),
-      flat: { terrain: m.getTerrain(), pitch: m.getPitch(), maxPitch: m.getMaxPitch(), rotate: m.dragRotate.isEnabled(), box: document.getElementById('terrain3d').checked },
+      view3d: { terrain: m.getTerrain(), pitch: m.getPitch(), maxPitch: m.getMaxPitch(), rotate: m.dragRotate.isEnabled(), box: document.getElementById('terrain3d').checked, sky: !!(m.getSky && m.getSky()?.['sky-color']), note: !document.getElementById('terrain3d-note').hidden },
       overlayBoxes: [...document.querySelectorAll('input[data-overlay]')].map((b) => b.checked),
       overlayRadarLayer: !!m.getLayer('radar'),
       flowBox: { checked: document.getElementById('flow').checked, disabled: document.getElementById('flow').disabled },
@@ -126,24 +132,31 @@ async function checkViewport(browser, base, name, vp, shots) {
     }
   }, OVERLAY_LAYERS)
   report(info.layers.length === 0, t('all map layers present'), 'missing: ' + info.layers.join(', '))
-  report(JSON.stringify(info.defaults) === JSON.stringify({ 'bec-fill': 'none', hillshade: 'none', 'watersheds-line': 'none', 'parks-local': 'visible', 'parks-bc': 'visible', streams: 'visible', 'streams-flow': 'visible', 'muni-line': 'visible', pins: 'visible' }), t('default layer visibility as specified'), JSON.stringify(info.defaults))
-  report(info.flowBox.checked && !info.flowBox.disabled && info.flowRunning && !info.terrainChecked, t('Flow box is on and the flow loop is running; Terrain shading box is off'), JSON.stringify({ flowBox: info.flowBox, running: info.flowRunning, terrain: info.terrainChecked, zoom: info.zoom }))
+  report(JSON.stringify(info.defaults) === JSON.stringify({ 'bec-fill': 'none', hillshade: 'visible', 'watersheds-line': 'none', 'parks-local': 'visible', 'parks-bc': 'visible', streams: 'visible', 'streams-flow': 'visible', 'muni-line': 'visible', pins: 'visible' }), t('default layer visibility as specified'), JSON.stringify(info.defaults))
+  report(info.flowBox.checked && !info.flowBox.disabled && info.flowRunning && info.terrainChecked, t('Flow box is on and the flow loop is running; Terrain shading box is on'), JSON.stringify({ flowBox: info.flowBox, running: info.flowRunning, terrain: info.terrainChecked, zoom: info.zoom }))
   report(Object.values(info.overlayDefaults).every((v) => v === 'none') && info.overlayBoxes.length === 9 && info.overlayBoxes.every((b) => !b) && !info.overlayRadarLayer, t('every new layer exists, is hidden and unticked at load (ecoregions, industry, radar, alerts, air quality, conditions, river gauges, earthquakes, life observations)'), JSON.stringify([info.overlayDefaults, info.overlayBoxes, info.overlayRadarLayer]))
-  report(info.flat.terrain === null && info.flat.pitch === 0 && info.flat.maxPitch === 0 && !info.flat.rotate && !info.flat.box, t('3D terrain is off at load: no terrain, flat, north-up, rotation locked'), JSON.stringify(info.flat))
+  const v = info.view3d
+  report(v.box && v.terrain?.source === 'terrain-dem' && v.terrain.exaggeration === 2 && Math.abs(v.pitch - 60) < 1 && v.maxPitch >= 60 && v.rotate && v.sky && v.note, t('3D terrain is on at load: terrain from the elevation tiles, tilted to 60 degrees, rotation unlocked, sky and note shown'), JSON.stringify(v))
   const hosts = [...new Set(requests.map((u) => new URL(u).host))].filter((h) => !h.startsWith('127.0.0.1'))
-  report(hosts.every((h) => h === 'tiles.openfreemap.org'), t('on load the page contacts only the basemap host (no terrain, weather or other service)'), hosts.join(', '))
+  report(hosts.includes('s3.amazonaws.com') && hosts.every((h) => h === 'tiles.openfreemap.org' || h === 's3.amazonaws.com'), t('on load the page contacts only the basemap host and the elevation tiles (no weather or other service)'), hosts.join(', '))
   report(!info.overflowX, t('no horizontal page scroll'))
   report(info.banner.includes('Demo.') && !info.banner.includes('could not be reached'), t('demo banner shown, basemap reached'), info.banner)
   report(info.pinCount === '(1)' && info.emptyVisible && info.emptyText === 'No events listed yet.', t('pins panel: 1 example place and the empty-state sentence'), info.emptyText)
   if (name === 'desktop') {
     report(info.attribText.includes('OpenFreeMap') && info.attribText.includes('OpenStreetMap') && info.attribText.includes('Open Government Licence'), t('attribution shows basemap and BC credit'), info.attribText)
-    report(info.attribHeight < 34, t('attribution strip fits on one line'), `${info.attribHeight}px high`)
+    // Two lines at most: with terrain on by default, its credit joins the basemap and BC credits.
+    report(info.attribHeight < 50, t('attribution strip fits on two lines'), `${info.attribHeight}px high`)
   } else {
     report(info.attribCompact && info.attribCollapsed, t('attribution is the collapsed (i) button after load'), JSON.stringify({ compact: info.attribCompact, collapsed: info.attribCollapsed }))
     report(!info.panelOverlapsAttrib, t('layers panel does not cover the attribution control'))
   }
 
   if (shots) await page.screenshot({ path: join(shots, `${name}-1-default.png`) })
+
+  // The checks below run on the flat map. checkTerrain3d switches 3D terrain on and off again.
+  await setBox(page, '#terrain3d', false)
+  await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 90000 })
+  await page.waitForTimeout(1500)
 
   // toggles
   const toggled = await page.evaluate(async () => {
@@ -334,22 +347,24 @@ async function checkMarchDirection(page, t) {
   report(inked > rows[0].length * 0.2 && east === moves.length, t(`dash pattern marches along vertex order on all ${moves.length} steps (test line drawn west to east moves east)`), `inked ${inked}/${rows[0].length}, moves ${JSON.stringify(moves.map((m) => [m.s, +m.fit.toFixed(2)]))}`)
 }
 
-// Terrain shading: off by default, and no elevation tile is requested until it is ticked.
+// Terrain shading: on by default, with elevation tiles from AWS and their credit on the map.
+// Unticking hides it and ticking shows it again. It is left off for checkTerrain3d.
 async function checkTerrain(page, requests, t, shot) {
   const s3 = () => requests.filter((u) => new URL(u).host === 's3.amazonaws.com').length
-  report(s3() === 0, t('no terrain tile requested before the Terrain shading box is ticked'), `${s3()} requests`)
-  await setBox(page, 'input[data-group=terrain]', true)
-  await page.waitForTimeout(3500)
-  const on = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('hillshade', 'visibility'), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
-  report(on.vis === 'visible' && s3() > 0, t('Terrain shading on: layer visible and elevation tiles requested from AWS'), `${on.vis}, ${s3()} requests`)
+  const state = () => page.evaluate(() => ({ vis: window.__map.getLayoutProperty('hillshade', 'visibility') ?? 'visible', attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
+  const on = await state()
+  report(on.vis === 'visible' && s3() > 0, t('Terrain shading on by default: layer visible and elevation tiles requested from AWS'), `${on.vis}, ${s3()} requests`)
   report(on.attrib.includes('AWS Terrain Tiles') && on.attrib.includes('OGL') && on.attrib.includes('USGS'), t('map attribution carries the terrain credit while the layer is on'), on.attrib.slice(0, 200))
   if (shot) await shot('terrain-on')
   await setBox(page, 'input[data-group=terrain]', false)
-  const off = await page.evaluate(() => window.__map.getLayoutProperty('hillshade', 'visibility'))
-  report(off === 'none', t('Terrain shading off again hides the layer'))
+  const off = await state()
+  await setBox(page, 'input[data-group=terrain]', true)
+  const again = await state()
+  await setBox(page, 'input[data-group=terrain]', false)
+  report(off.vis === 'none' && again.vis === 'visible', t('Terrain shading box hides the layer and shows it again'), JSON.stringify([off.vis, again.vis]))
 }
 
-// 3D terrain: off by default. Ticking it sets MapLibre terrain from the elevation tiles, tilts the
+// 3D terrain: on by default (checkViewport switches it off first). Ticking it sets MapLibre terrain from the elevation tiles, tilts the
 // map to 60 degrees, unlocks rotation and pitch and adds a sky. The Terrain shading box stays
 // independent of it. Unticking resets the pitch and bearing and removes the terrain.
 async function checkTerrain3d(page, requests, t, shot) {
@@ -543,6 +558,8 @@ async function checkReducedMotion(browser, base) {
     return get()
   }
   const a = await get()
+  const tilt = await page.evaluate(() => ({ pitch: window.__map.getPitch(), terrain: !!window.__map.getTerrain() }))
+  report(Math.abs(tilt.pitch - 60) < 1 && tilt.terrain, 'reduced motion: 3D terrain is on at load and the map is already tilted', JSON.stringify(tilt))
   await page.waitForTimeout(600)
   const b = await get()
   report(a.disabled && !a.checked && a.vis === 'none' && !a.running && a.why, 'reduced motion: Flow box is off and disabled, dashes hidden, loop not running, reason shown', JSON.stringify(a))
