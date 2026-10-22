@@ -1,6 +1,7 @@
 // Greater Victoria demo map. Plain ES module, no build step. Every path is relative so the
 // page works from any GitHub Pages project path (https://<org>.github.io/<repo>/).
 import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWorkerUrl } from '../vendor/maplibre-gl.mjs'
+import { createOverlays } from './overlays.js'
 
 // MapLibre 6.x ships ES modules only, so its worker is pointed at explicitly.
 setWorkerUrl(new URL('../vendor/maplibre-gl-worker.mjs', import.meta.url).href)
@@ -17,20 +18,27 @@ const FIT_PADDING = { top: 56, bottom: 56, left: 16, right: 16 }
 
 const OGL_BC = 'https://www2.gov.bc.ca/gov/content?id=A519A56BC2BF44E4A008B33FCF527F61'
 const BC_ATTRIB = `Contains information licensed under the <a href="${OGL_BC}" target="_blank" rel="noopener">Open Government Licence &ndash; British Columbia</a>.`
-const PARKS_ATTRIB = 'Parks: also OGL &ndash; Victoria, Saanich'
+const PARKS_ATTRIB = 'Parks: also OGL &ndash; Victoria, Saanich, Islands Trust'
 // Each provider's own attribution statement, word for word as its licence gives
 // it (Saanich spells "licenced"). The popup of a park shows the one for its row.
-// The Capital Regional District and Islands Trust have no entry: their rows are
-// not on the map.
+// The Capital Regional District has no entry: its rows are not on the map.
 const LIC_STATEMENTS = {
   V: 'Contains information licensed under the Open Government Licence – City of Victoria.',
   S: 'Contains information licenced under the Open Government Licence – District of Saanich.',
+  I: 'Contains information licensed under the Open Government Licence – Islands Trust.',
 }
 // Terrain shading draws a hillshade from AWS Terrain Tiles (terrarium encoding).
 // Shown on the map only while the terrain layer is on. The full credit lines are
 // in the credits panel.
 const TERRAIN_TILES = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
 const TERRAIN_ATTRIB = 'Terrain: AWS Terrain Tiles, OGL – Canada, USGS, NOAA'
+// 3D terrain lifts the map from the same elevation tiles. The hillshade box stays separate.
+const TERRAIN_EXAGGERATION = 2 // 1 is true height. Raise it for a more dramatic view.
+const TERRAIN_PITCH = 60 // degrees the map tilts when 3D terrain is switched on
+const TERRAIN_MAX_PITCH = 75
+// MapLibre has no way to remove a sky, so turning 3D off sets its own default: nothing drawn.
+const NO_SKY = { 'sky-color': 'transparent', 'horizon-color': 'transparent', 'fog-color': 'transparent', 'fog-ground-blend': 1, 'atmosphere-blend': 0 }
+const TERRAIN_SKY = { 'sky-color': '#8db7e0', 'horizon-color': '#e8eef1', 'fog-color': '#eef0ea', 'sky-horizon-blend': 0.5, 'horizon-fog-blend': 0.6, 'fog-ground-blend': 0.5, 'atmosphere-blend': 0 }
 
 // Flow: a pale dash pattern slid along the creek lines makes dashes march in the
 // direction of the line, which data/streams-flow.geojson draws downstream.
@@ -108,9 +116,15 @@ const map = new Map({
   fitBoundsOptions: { padding: FIT_PADDING },
   maxBounds: MAX_BOUNDS,
   attributionControl: false,
+  // Flat and north-up until 3D terrain is switched on.
+  maxPitch: 0,
+  dragRotate: false,
+  touchPitch: false,
 })
+map.touchZoomRotate.disableRotation()
 map.addControl(new AttributionControl({ compact: innerWidth < 700 }), 'bottom-right')
-map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
+let nav = new NavigationControl({ showCompass: false })
+map.addControl(nav, 'top-right')
 map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left')
 
 let basemapNoted = false
@@ -121,6 +135,8 @@ function noteBasemapDown() {
 }
 if (!basemap) noteBasemapDown()
 map.on('error', (e) => { if (basemap && e.sourceId === 'openmaptiles') noteBasemapDown() })
+
+const overlays = createOverlays({ map, $, el, link, basemap, motionQuery })
 
 // group -> layer ids, for the toggles
 const GROUPS = {
@@ -133,7 +149,7 @@ const GROUPS = {
   muni: ['muni-fill', 'muni-line', 'muni-label'],
 }
 // Popup priority, first match wins.
-const QUERY_ORDER = ['pins', 'parks-bc', 'parks-local', 'watersheds-fill', 'streams', 'lakes', 'wetlands', 'bec-fill', 'muni-fill']
+const QUERY_ORDER = ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams', 'lakes', 'wetlands', 'bec-fill', 'ecoregions-fill', 'muni-fill']
 
 function applyToggles() {
   for (const box of document.querySelectorAll('input[data-group]')) {
@@ -154,7 +170,8 @@ flowBox.checked = !motionQuery.matches
 let flowFrameId = 0, flowStep = -1
 function flowFrame(ts) {
   flowFrameId = requestAnimationFrame(flowFrame)
-  const next = Math.floor(ts / FLOW_STEP_MS) % FLOW_SEQUENCE.length
+  // In 3D terrain every step redraws the creeks draped over the relief, so the steps come at half the rate.
+  const next = Math.floor(ts / (map.getTerrain() ? FLOW_STEP_MS * 2 : FLOW_STEP_MS)) % FLOW_SEQUENCE.length
   if (next === flowStep) return
   flowStep = next
   try { map.setPaintProperty('streams-flow', 'line-dasharray', FLOW_SEQUENCE[next]) } catch { /* style not ready this frame */ }
@@ -174,6 +191,45 @@ flowBox.addEventListener('change', syncFlow)
 document.addEventListener('visibilitychange', syncFlow)
 map.on('zoomend', syncFlow)
 motionQuery.addEventListener('change', () => { flowBox.checked = !motionQuery.matches; syncFlow() })
+
+// ---- 3D terrain: the same elevation tiles as the hillshade, lifted into relief.
+// Off, the map is flat and north-up. On, it tilts, can be rotated and pitched, and gets a sky.
+// The hillshade box does not change when this one does. MapLibre drapes the flat layers
+// (parks, creeks, watersheds and the rest) over the relief.
+const terrainBox = $('terrain3d')
+function setNavigation(compass) {
+  map.removeControl(nav)
+  nav = new NavigationControl({ showCompass: compass, visualizePitch: compass })
+  map.addControl(nav, 'top-right')
+}
+function lockFlat() {
+  if (terrainBox.checked) return
+  map.setMaxPitch(0)
+  map.dragRotate.disable()
+  map.touchZoomRotate.disableRotation()
+  map.touchPitch.disable()
+}
+function setTerrain3d() {
+  if (!map.getSource('terrain-dem')) return // the map is not ready, 'load' calls this again
+  const on = terrainBox.checked, duration = motionQuery.matches ? 0 : 800
+  if (on) {
+    map.setMaxPitch(TERRAIN_MAX_PITCH)
+    map.dragRotate.enable()
+    map.touchZoomRotate.enableRotation()
+    map.touchPitch.enable()
+    map.setTerrain({ source: 'terrain-dem', exaggeration: TERRAIN_EXAGGERATION })
+    map.setSky(TERRAIN_SKY)
+    map.easeTo({ pitch: TERRAIN_PITCH, duration })
+  } else {
+    map.setTerrain(null)
+    map.setSky(NO_SKY)
+    map.easeTo({ pitch: 0, bearing: 0, duration })
+    if (duration) map.once('moveend', lockFlat); else lockFlat()
+  }
+  setNavigation(on)
+  $('terrain3d-note').hidden = !on
+}
+terrainBox.addEventListener('change', setTerrain3d)
 
 map.once('load', () => {
   // MapLibre opens the compact attribution control expanded the first time.
@@ -198,6 +254,9 @@ map.once('load', () => {
   map.addSource('pins', { type: 'geojson', data: pins })
   // The terrain source only loads tiles while the terrain layer is visible.
   map.addSource('terrain', { type: 'raster-dem', tiles: [TERRAIN_TILES], encoding: 'terrarium', tileSize: 256, maxzoom: 15, attribution: TERRAIN_ATTRIB })
+  // 3D terrain gets its own source on the same tiles. MapLibre warns that sharing one source
+  // with the hillshade lowers the quality of both, and the browser reuses the cached tiles.
+  map.addSource('terrain-dem', { type: 'raster-dem', tiles: [TERRAIN_TILES], encoding: 'terrarium', tileSize: 256, maxzoom: 15, attribution: TERRAIN_ATTRIB })
 
   // Terrain shading sits just under the basemap's water layer, so the sea stays
   // flat. Without a basemap it goes under our first layer.
@@ -228,6 +287,10 @@ map.once('load', () => {
   map.addLayer({ id: 'muni-fill', type: 'fill', source: 'municipalities', paint: { 'fill-color': '#000000', 'fill-opacity': 0 } }, under)
   map.addLayer({ id: 'muni-line', type: 'line', source: 'municipalities', paint: { 'line-color': '#5b5f58', 'line-width': 1.1, 'line-dasharray': [4, 2] } }, under)
 
+  // Optional overlays: ecoregions, industry and waste sites, and the live layers. All start hidden
+  // and none requests anything until its box is ticked.
+  overlays.addLayers({ before: under, ecoBefore: 'watersheds-fill', water })
+
   map.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: {
     'circle-radius': 9, 'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff',
     'circle-color': ['match', ['get', 'kind'], ...Object.entries(PIN_COLOURS).flat(), '#444444'] } })
@@ -245,10 +308,12 @@ map.once('load', () => {
     label('muni-label', 'municipalities', ['get', 'name'], 9, { 'text-size': 12, 'text-transform': 'uppercase', 'text-letter-spacing': 0.08 }, { 'text-color': '#4b4f48' })
     map.setLayerZoomRange('muni-label', 9, 13)
     label('pins-label', 'pins', ['get', 'title'], 0, { 'text-offset': [0, 1.4], 'text-anchor': 'top', 'text-optional': true }, { 'text-color': '#1d1d1d' })
+    overlays.addLabels({ font })
   }
 
   // Layers start in the state the checkboxes describe.
   applyToggles()
+  if (terrainBox.checked) setTerrain3d() // a browser that restored the box before the map was ready
 
   // Honest empty state: only real happenings and journeys count.
   const real = pins.features.filter((f) => f.properties.kind !== 'example-place')
@@ -281,7 +346,8 @@ function link(href, text) {
 }
 const hectares = (n) => `${Number(n).toLocaleString('en-CA', { maximumFractionDigits: 1 })} ha`
 
-function popupFor(f, layer) {
+function popupFor(f, layer, group = [f]) {
+  if (overlays.popupLayers.includes(layer)) return overlays.popupFor(f, layer, group)
   const p = f.properties, box = el('div')
   const add = (title, tag, lines, src) => {
     box.append(el('h3', title))
@@ -336,13 +402,13 @@ map.on('click', (e) => {
     if (!group.length) continue
     // Watersheds nest, so show the smallest one under the click.
     if (id === 'watersheds-fill') group = [group.sort((a, b) => a.properties.area_ha - b.properties.area_ha)[0]]
-    const content = popupFor(group[0], id)
+    const content = popupFor(group[0], id, group)
     if (!content) continue
     new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
     return
   }
 })
-for (const id of ['pins', 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
+for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
   map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
 }
@@ -350,6 +416,7 @@ for (const id of ['pins', 'parks-bc', 'parks-local', 'watersheds-fill', 'streams
 // Test hook for scripts/browser-check.mjs. Harmless in production.
 if (new URLSearchParams(location.search).has('test')) {
   window.__map = map
+  window.__overlays = overlays
   window.__flow = { sequence: FLOW_SEQUENCE, minZoom: FLOW_MIN_ZOOM, running: () => flowFrameId !== 0 }
   // map.loaded() and the 'idle' event never settle while the flow dashes animate,
   // so the checks wait for this flag (set after the layers are added) instead.

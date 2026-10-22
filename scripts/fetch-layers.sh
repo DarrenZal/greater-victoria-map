@@ -76,13 +76,13 @@ ms "$RAW/parks.json" \
 # too: the only CRD terms found forbid passing the data on to others and name
 # no open licence (see data/SOURCES.md). Remove that filter only after the CRD
 # confirms an open licence in writing. Rows that carry the Islands Trust
-# statement (lic "I") are dropped as well: its terms page could not be read, so
-# its licence is unconfirmed. Remove "I" from the filter only after the page
-# has been read and grants an open licence (see data/SOURCES.md).
+# statement (lic "I") are kept: its terms page, read on 2026-10-21, is the Open
+# Government Licence - Islands Trust v2.0, which allows copying and publishing
+# with attribution (see data/SOURCES.md).
 ms "$RAW/greenspaces.json" \
   -filter 'REGIONAL_DISTRICT=="Capital" && PARK_TYPE!="Private"' \
   -each 'name=PARK_NAME, type=PARK_TYPE, use=PARK_PRIMARY_USE, muni=(MUNICIPALITY=="<Null>" ? null : MUNICIPALITY), lic=(/Saanich/.test(LICENCE_COMMENTS||"") ? "S" : /Victoria/.test(LICENCE_COMMENTS||"") ? "V" : /Capital Regional District/.test(LICENCE_COMMENTS||"") ? "C" : /Islands Trust/.test(LICENCE_COMMENTS||"") ? "I" : null)' \
-  -filter 'lic!="C" && lic!="I"' \
+  -filter 'lic!="C"' \
   -filter-fields name,type,use,muni,lic \
   -clip bbox=$BBOX -filter-slivers min-area=150 remove-empty \
   -simplify percentage=20% keep-shapes \

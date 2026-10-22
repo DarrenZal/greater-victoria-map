@@ -21,14 +21,16 @@
 //    where two segments meet. Segments of one stream that share an end point
 //    are joined into one continuous line. A line also ends where the stream
 //    order changes, so the width stays the same along a line.
-// 3. Open flow only. Only edge types that are main flow in a natural channel
-//    are kept (1000 single line, 1050 through a wetland, 1200 construction line
-//    through a lake, 1250 construction line through a double-line river).
-//    Reaches the Province maps as underground flow (1425), canals (2000) and
-//    connection lines (1450) get no dashes, so a pipe is never shown as a flowing creek.
+// 3. Open flow only. Only edge types that are open channels are kept (1000
+//    single line, 1050 through a wetland, 1200 construction line through a lake,
+//    1250 construction line through a double-line river, 2000 single line canal).
+//    Reaches the Province maps as underground flow (1425) and connection lines
+//    (1450) get no dashes, so a pipe is never shown as a flowing creek. Canals
+//    (2000) were left out in the first version and added on 2026-10-21, so
+//    that creeks such as Bowker Creek show their mapped open channel.
 import { readFileSync, writeFileSync } from 'node:fs'
 
-const OPEN_FLOW = new Set([1000, 1050, 1200, 1250])
+const OPEN_FLOW = new Set([1000, 1050, 1200, 1250, 2000])
 const [inPath, outPath] = process.argv.slice(2)
 if (!inPath || !outPath) { console.error('usage: node scripts/make-flow.mjs <streams_keyed.geojson> <streams-flow.geojson>'); process.exit(2) }
 

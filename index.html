@@ -34,15 +34,50 @@
             <label><input type="checkbox" data-group="watersheds"> <span>Watersheds (named creeks)</span></label>
             <label><input type="checkbox" data-group="water" checked> <span>Creeks, lakes and wetlands</span></label>
             <label class="sub"><input type="checkbox" id="flow" checked> <span>Flow</span></label>
-            <p class="empty sub" id="flow-note">Dashes show which way creeks drain, from the Province's stream lines. They do not show how much water is flowing. Reaches mapped as pipes or canals have no dashes.</p>
+            <p class="empty sub" id="flow-note">Dashes show which way creeks drain, from the Province's stream lines. They do not show how much water is flowing. Canals get dashes too. Reaches mapped as pipes or connection lines do not.</p>
             <p class="empty sub" id="flow-paused" hidden>Flow is off because your device asks for less motion.</p>
           </fieldset>
           <fieldset>
             <legend>Land</legend>
             <label><input type="checkbox" data-group="parks" checked> <span>Parks and green spaces</span></label>
             <label><input type="checkbox" data-group="terrain"> <span>Terrain shading</span></label>
+            <label><input type="checkbox" id="terrain3d"> <span>3D terrain</span></label>
+            <p class="empty sub" id="terrain3d-note" hidden>Tilted view. Drag with the right mouse button, or with two fingers, to rotate and tilt. Tick Terrain shading as well for light and shade on the hills.</p>
             <label><input type="checkbox" data-group="bec"> <span>Ecosystem zones (BEC)</span></label>
+            <label><input type="checkbox" data-overlay="ecoregions"> <span>Ecoregions</span></label>
+            <p class="empty sub" id="status-ecoregions" hidden></p>
+            <label><input type="checkbox" data-overlay="industry"> <span>Industry and waste sites</span></label>
+            <p class="empty sub" id="status-industry" hidden></p>
+            <p class="empty sub" id="industry-note">Only records with an open licence. A dot with no figures is a location, not an empty site. Brown: landfills and waste sites. Blue: wastewater. Yellow: power.</p>
             <label><input type="checkbox" data-group="muni" checked> <span>Municipal boundaries</span></label>
+          </fieldset>
+          <fieldset id="live">
+            <legend>Live data</legend>
+            <p class="empty">These load from outside services when ticked. Nothing loads until you tick one.</p>
+            <label><input type="checkbox" data-overlay="radar"> <span>Precipitation radar</span></label>
+            <p class="empty sub live-status" id="status-radar" hidden aria-live="polite"></p>
+            <div class="sub" id="radar-controls" hidden>
+              <button type="button" class="small" id="radar-play" aria-pressed="false" disabled>Play</button>
+              <span id="radar-time"></span>
+              <details id="radar-legend">
+                <summary>Colour key</summary>
+                <img id="radar-legend-img" alt="Colour key for the radar: rain rate in millimetres per hour, light to heavy">
+                <p class="empty" id="radar-legend-note" hidden>The colour key could not be loaded.</p>
+              </details>
+            </div>
+            <label><input type="checkbox" data-overlay="alerts"> <span>Weather alerts</span></label>
+            <p class="empty sub live-status" id="status-alerts" hidden aria-live="polite"></p>
+            <div class="sub" id="alerts-list"></div>
+            <label><input type="checkbox" data-overlay="aqhi"> <span>Air quality (AQHI)</span></label>
+            <p class="empty sub live-status" id="status-aqhi" hidden aria-live="polite"></p>
+            <label><input type="checkbox" data-overlay="conditions"> <span>Current conditions</span></label>
+            <p class="empty sub live-status" id="status-conditions" hidden aria-live="polite"></p>
+            <label><input type="checkbox" data-overlay="water"> <span>River gauges</span></label>
+            <p class="empty sub live-status" id="status-water" hidden aria-live="polite"></p>
+            <label><input type="checkbox" data-overlay="quakes"> <span>Earthquakes (7 days)</span></label>
+            <p class="empty sub live-status" id="status-quakes" hidden aria-live="polite"></p>
+            <label><input type="checkbox" data-overlay="life"> <span>Life observations</span></label>
+            <p class="empty sub live-status" id="status-life" hidden aria-live="polite"></p>
           </fieldset>
           <div class="actions"><button type="button" id="fit">Fit to Greater Victoria</button></div>
         </details>
@@ -67,13 +102,26 @@
     <ul>
       <li>Contains information licensed under the <a href="https://opendata.victoria.ca/pages/open-data-licence" target="_blank" rel="noopener">Open Government Licence &ndash; City of Victoria</a>.</li>
       <li>Contains information licenced under the <a href="https://www.saanich.ca/assets/Local~Government/Documents/SaanichDataCatalogueLicence.pdf" target="_blank" rel="noopener">Open Government Licence &ndash; District of Saanich</a>.</li>
+      <li>Contains information licensed under the <a href="https://islandstrust.bc.ca/mapping-resources/mapping/terms-and-conditions-of-use/" target="_blank" rel="noopener">Open Government Licence &ndash; Islands Trust</a>.</li>
     </ul>
     <p>Rows with no provider statement are covered by the Province's licence above. Parks run by the Capital Regional District are not on this map yet.</p>
-    <p><strong>Flow.</strong> The moving dashes show the direction creeks drain, taken from the Province's stream lines. They do not show how much water is flowing or how fast. Reaches the Province maps as underground pipes, canals or connections have no dashes.</p>
+    <p><strong>Flow.</strong> The moving dashes show the direction creeks drain, taken from the Province's stream lines. They do not show how much water is flowing or how fast. Canals get dashes too. Reaches the Province maps as underground pipes or connection lines have no dashes.</p>
     <p><strong>Terrain shading</strong> (off until you switch it on). Hillshade drawn in your browser from <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a>. Canada terrain data contains information licensed under the <a href="https://open.canada.ca/en/open-government-licence-canada" target="_blank" rel="noopener">Open Government Licence &ndash; Canada</a>. United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey. Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration. The full list of sources is in the <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">tile attribution notes</a>.</p>
+    <p><strong>3D terrain</strong> (off until you switch it on). It lifts the map from the same elevation tiles as Terrain shading, so the credits above apply to it too.</p>
+    <p><strong>Ecoregions</strong> (off until you switch it on). Ecoregions 2017 &copy; Resolve. Licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. From <a href="https://ecoregions.appspot.com/" target="_blank" rel="noopener">ecoregions.appspot.com</a> (report: An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm). Clipped to this map's box, from a simplified copy of the data, so the coast and edges are coarse.</p>
+    <p><strong>Industry and waste sites</strong> (off until you switch it on). Only records with an open licence, each credited in its popup:</p>
+    <ul>
+      <li>Statistics Canada, Open Database of Infrastructure, Version 2 (Catalogue no. 34-26-0003), released November 13, 2024. Contains information licensed under the <a href="https://open.canada.ca/en/open-government-licence-canada" target="_blank" rel="noopener">Open Government Licence &ndash; Canada</a>. Landfills and waste sites.</li>
+      <li>Ehalt Macedo, H., Lehner, B., Nicell, J., Grill, G., Li, J., Limtong, A., Shakya, R. (2022). Distribution and characteristics of wastewater treatment plants within the global river network. Earth System Science Data, 14(2): 559-577, <a href="https://doi.org/10.5194/essd-14-559-2022" target="_blank" rel="noopener">doi:10.5194/essd-14-559-2022</a>. HydroWASTE version 1.0, from <a href="https://www.hydrosheds.org/products/hydrowaste" target="_blank" rel="noopener">HydroSHEDS</a>, licensed <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Wastewater plants and pump stations, clipped to this map's box and shortened.</li>
+      <li>Global Energy Observatory, Google, KTH Royal Institute of Technology in Stockholm, Enipedia, World Resources Institute. 2021. <a href="https://datasets.wri.org/datasets/global-power-plant-database" target="_blank" rel="noopener">Global Power Plant Database</a> version 1.3.0. Licensed CC BY 4.0. One power plant.</li>
+    </ul>
+    <p>A dot with no figures is a location, not an empty site. Figures are labelled as reported, as capacity or as modelled. Sites from sources with unclear or share-alike licences are left out.</p>
+    <p><strong>Live data from Environment and Climate Change Canada</strong> (radar, weather alerts, air quality, current conditions and river gauges; each off until you switch it on). Data Source: Environment and Climate Change Canada. Contains information licenced under the <a href="https://eccc-msc.github.io/open-data/licence/readme_en/" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada. Where a weather station or gauge is run by another body, its popup names that body. Weather alerts are shown exactly as issued. This map is not an alerting service and is not for safety decisions: use Environment Canada's own alerts.</p>
+    <p><strong>Earthquakes</strong> (off until you switch it on). Credit: U.S. Geological Survey. <a href="https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits" target="_blank" rel="noopener">USGS-authored or produced data and information are considered to be in the U.S. Public Domain</a>. Early magnitudes and positions are revised.</p>
+    <p><strong>Life observations</strong> (off until you switch it on). A sample of up to 300 occurrence records from <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a>, dated in the last 12 months. Only records licensed CC0 or CC BY 4.0 are kept, and records withheld or generalised by their publisher are dropped. Positions are rounded to about 1 km. Each popup keeps the record's dataset, licence and source link.</p>
     <p><strong>Example place.</strong> The Bowker Creek pin is an example, not an event. Its figures are from the 2012 Bowker Creek Blueprint, linked in the pin. Its position is a point on the creek from OpenStreetMap.</p>
     <p><strong>Please note.</strong> Boundaries are for orientation. They are simplified for the web and are not survey or legal boundaries. Creeks that run in pipes may be missing or partly mapped. It is not endorsed by the Province of British Columbia or any data provider.</p>
-    <p><strong>Privacy.</strong> This page uses no analytics and no cookies. Map tiles load from OpenFreeMap (tiles.openfreemap.org), so that service receives your browser's tile requests. If you switch on Terrain shading, its tiles load from Amazon Web Services (s3.amazonaws.com), which then receives those requests too.</p>
+    <p><strong>Privacy.</strong> This page uses no analytics and no cookies. Map tiles load from OpenFreeMap (tiles.openfreemap.org), so that service receives your browser's tile requests. If you switch on Terrain shading or 3D terrain, elevation tiles load from Amazon Web Services (s3.amazonaws.com), which then receives those requests too. Nothing else loads until you switch a layer on. The live layers then send your browser's requests, with your internet address, to the service behind each: Environment and Climate Change Canada for radar, alerts, air quality, conditions and gauges (api.weather.gc.ca and geo.weather.gc.ca), the U.S. Geological Survey for earthquakes (earthquake.usgs.gov) and GBIF for life observations (api.gbif.org). Ecoregions and Industry and waste sites load a file from this site only.</p>
     <p><strong>Software.</strong> <a href="vendor/MAPLIBRE-LICENSE.txt">MapLibre GL JS 6.9.0</a> (BSD-3-Clause), included in this site.</p>
   </section>
 

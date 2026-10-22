@@ -13,24 +13,52 @@ import { tmpdir } from 'node:os'
 import { join, relative, dirname, basename, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
+import { copyFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const BBOX = [-123.75, 48.28, -123.20, 48.70]
 const SIZE_LIMIT = 10 * 1024 * 1024
 const BANNER = 'A test of what an open, self-hostable map can do. It is not an official map of any group.'
 const PINS_EMPTY = 'No events listed yet.'
-const LAYER_FILES = ['municipalities', 'bc-parks', 'greenspaces', 'streams', 'streams-flow', 'lakes', 'wetlands', 'watersheds', 'bec', 'pins']
+const LAYER_FILES = ['municipalities', 'bc-parks', 'greenspaces', 'streams', 'streams-flow', 'lakes', 'wetlands', 'watersheds', 'bec', 'pins', 'ecoregions', 'industry-waste']
 const PIN_KINDS = ['happening', 'learning-journey', 'partner-event', 'example-place']
 const PIN_STATUS = ['draft', 'approved']
-// Hosts the page may name. Most appear only as credit links. The two the page
-// fetches from at run time are tiles.openfreemap.org (basemap) and
-// s3.amazonaws.com (terrain tiles, only after the Terrain shading box is ticked).
+// Hosts the page may name. Most appear only as credit links. The page fetches from
+// tiles.openfreemap.org (basemap) on load. After the matching box is ticked it also fetches from
+// s3.amazonaws.com (elevation tiles for Terrain shading and 3D terrain), api.weather.gc.ca and
+// geo.weather.gc.ca (Environment and Climate Change Canada: radar, alerts, air quality,
+// conditions, river gauges), earthquake.usgs.gov (earthquakes) and api.gbif.org (life observations).
 const ALLOWED_HOSTS = [
   'tiles.openfreemap.org', 'openfreemap.org', 'www2.gov.bc.ca', 'www.openstreetmap.org',
   'www.openmaptiles.org', 'crd.ca', 'www.crd.ca', 'catalogue.data.gov.bc.ca',
-  'opendata.victoria.ca', 'www.saanich.ca',
+  'opendata.victoria.ca', 'www.saanich.ca', 'islandstrust.bc.ca',
   's3.amazonaws.com', 'registry.opendata.aws', 'github.com', 'open.canada.ca',
+  'api.weather.gc.ca', 'geo.weather.gc.ca', 'eccc-msc.github.io', 'wateroffice.ec.gc.ca',
+  'earthquake.usgs.gov', 'www.usgs.gov', 'api.gbif.org', 'www.gbif.org', 'creativecommons.org',
+  'ecoregions.appspot.com', 'www.hydrosheds.org', 'doi.org', 'datasets.wri.org',
 ]
+// Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
+const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org']
+const OVERLAY_IDS = ['radar', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
+const LIVE_SENTENCE = 'These load from outside services when ticked. Nothing loads until you tick one.'
+// Credit text the new layers must carry, word for word, in the credits panel.
+const OVERLAY_STATEMENTS = [
+  'Data Source: Environment and Climate Change Canada.',
+  'Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.',
+  'Credit: U.S. Geological Survey.',
+  'USGS-authored or produced data and information are considered to be in the U.S. Public Domain',
+  'Ecoregions 2017 \u00a9 Resolve. Licensed under CC BY 4.0.',
+  'Statistics Canada, Open Database of Infrastructure, Version 2 (Catalogue no. 34-26-0003), released November 13, 2024. Contains information licensed under the Open Government Licence \u2013 Canada.',
+  'Ehalt Macedo, H., Lehner, B., Nicell, J., Grill, G., Li, J., Limtong, A., Shakya, R. (2022). Distribution and characteristics of wastewater treatment plants within the global river network. Earth System Science Data, 14(2): 559-577',
+  'Global Energy Observatory, Google, KTH Royal Institute of Technology in Stockholm, Enipedia, World Resources Institute. 2021.',
+]
+const INDUSTRY_SRC = ['odi', 'hydrowaste', 'gppd']
+const INDUSTRY_KINDS = ['landfill', 'power', 'wastewater']
+// Bowker Creek, mapped length of open channel in the flow file. Canals (edge type 2000) are
+// in, pipes (1425) are out. With canals the file holds about 1,420 m. Without them about 480 m.
+// With the pipes as well it would hold about 2,110 m.
+const BOWKER_OPEN_M = [1300, 1600]
 // Where two creeks reach the sea. Flow lines must END there: the last vertex is
 // the downstream end, and MapLibre marches the dashes toward it.
 const FLOW_MOUTHS = [
@@ -42,6 +70,7 @@ const FLOW_TOLERANCE_M = 300
 const PROVIDER_STATEMENTS = [
   'Contains information licensed under the Open Government Licence \u2013 City of Victoria.',
   'Contains information licenced under the Open Government Licence \u2013 District of Saanich.',
+  'Contains information licensed under the Open Government Licence \u2013 Islands Trust.',
 ]
 const TERRAIN_STATEMENTS = [
   'Canada terrain data contains information licensed under the Open Government Licence \u2013 Canada.',
@@ -123,9 +152,7 @@ function ruleSize(files, limit = SIZE_LIMIT) {
 
 // The Capital Regional District's only terms found forbid passing its data on and
 // name no open licence, so its rows (lic "C") must not be in the park layer
-// until the CRD confirms an open licence in writing. The Islands Trust terms
-// page could not be read, so its rows (lic "I") must not be in the layer until
-// the page has been read and grants an open licence. See data/SOURCES.md.
+// until the CRD confirms an open licence in writing. See data/SOURCES.md.
 function ruleDroppedProvider(files, code, name) {
   const f = files.find((x) => x.path === 'data/greenspaces.geojson')
   if (!f) return ['data/greenspaces.geojson is missing']
@@ -135,7 +162,6 @@ function ruleDroppedProvider(files, code, name) {
   return n ? [`${n} park rows carry the ${name} statement (lic "${code}")`] : []
 }
 const ruleDroppedProviders = (files) => ruleDroppedProvider(files, 'C', 'Capital Regional District')
-const ruleDroppedIslandsTrust = (files) => ruleDroppedProvider(files, 'I', 'Islands Trust')
 
 const metres = ([x1, y1], [x2, y2]) => {
   const r = Math.PI / 180, dy = (y2 - y1) * r, dx = (x2 - x1) * r * Math.cos(((y1 + y2) / 2) * r)
@@ -162,7 +188,67 @@ function ruleFlowDirection(files) {
   return out
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleDroppedIslandsTrust, ruleFlowDirection }
+// Canals are in the flow file and pipes are not. Bowker Creek is the test: its open channel
+// (natural channel plus canal) is about 1,420 m, and its subsurface reach about 680 m more.
+function lengthM(coords) { let n = 0; for (let i = 1; i < coords.length; i++) n += metres(coords[i - 1], coords[i]); return n }
+function ruleFlowCanals(files, range = BOWKER_OPEN_M) {
+  const f = files.find((x) => x.path === 'data/streams-flow.geojson')
+  if (!f) return ['data/streams-flow.geojson is missing']
+  let fc
+  try { fc = JSON.parse(f.text) } catch { return ['data/streams-flow.geojson is not valid JSON'] }
+  const total = (fc.features || []).filter((x) => x.properties?.name === 'Bowker Creek' && x.geometry?.type === 'LineString').reduce((a, x) => a + lengthM(x.geometry.coordinates), 0)
+  return total >= range[0] && total <= range[1] ? [] : [`Bowker Creek flow lines are ${Math.round(total)} m long, expected ${range[0]} to ${range[1]} m (canals in, pipes out)`]
+}
+
+// The Environment and Climate Change Canada licence is its own licence, not the Open Government
+// Licence - Canada. No paragraph of the credits may join the two.
+function ruleEcccLicence(html) {
+  const out = []
+  for (const para of html.split(/<\/p>|<\/li>/)) {
+    const t = textOf(para)
+    if (/Environment and Climate Change Canada/.test(t) && /Open Government Licence/.test(t)) out.push(`ECCC data credited to the Open Government Licence: ${t.slice(0, 80)}`)
+  }
+  return out
+}
+
+// Every third-party host the page fetches from once a box is ticked is named in the privacy note.
+function rulePrivacyHosts(html) {
+  const privacy = textOf(html.slice(html.indexOf('<strong>Privacy.</strong>'), html.indexOf('<strong>Software.</strong>')))
+  return FETCH_HOSTS.filter((h) => !privacy.includes(h)).map((h) => `the privacy note does not name ${h}`)
+}
+
+// Boxes: every new overlay has a box in the panel, off by default, and the Live data sentence is there.
+function ruleOverlayBoxes(html) {
+  const out = []
+  for (const id of OVERLAY_IDS) {
+    const m = html.match(new RegExp(`<input[^>]*data-overlay="${id}"[^>]*>`))
+    if (!m) out.push(`no box for overlay ${id}`)
+    else if (/\bchecked\b/.test(m[0])) out.push(`overlay ${id} is on by default`)
+  }
+  const m3 = html.match(/<input[^>]*id="terrain3d"[^>]*>/)
+  if (!m3) out.push('no box for 3D terrain'); else if (/\bchecked\b/.test(m3[0])) out.push('3D terrain is on by default')
+  if (!textOf(html).includes(LIVE_SENTENCE)) out.push('the Live data sentence is missing')
+  return out
+}
+
+// Industry and waste sites: only the sources whose licences were read as open, only the kinds
+// shown, and no site named for a First Nation.
+function ruleIndustry(files) {
+  const f = files.find((x) => x.path === 'data/industry-waste.geojson')
+  if (!f) return ['data/industry-waste.geojson is missing']
+  let fc
+  try { fc = JSON.parse(f.text) } catch { return ['data/industry-waste.geojson is not valid JSON'] }
+  const out = []
+  for (const [i, x] of (fc.features || []).entries()) {
+    const p = x.properties || {}
+    if (!INDUSTRY_SRC.includes(p.src)) out.push(`site ${i} (${p.name}): source ${p.src} is not on the open list`)
+    if (!INDUSTRY_KINDS.includes(p.kind)) out.push(`site ${i} (${p.name}): kind ${p.kind} is not shown`)
+    if (/tsawout/i.test(String(p.name))) out.push(`site ${i}: named for a First Nation`)
+  }
+  return out
+}
+
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -174,6 +260,10 @@ function selftest() {
     const up = [m.at[0] + 0.02, m.at[1] + 0.02]
     return { geometry: { type: 'LineString', coordinates: (i === 0 ? colquitzReversed : bowkerReversed) ? [m.at, up] : [up, m.at] }, properties: { name: m.name } }
   }) })
+  // A flow file whose Bowker Creek line is about `metres` long, running east to the creek's mouth.
+  const bowker = (n) => JSON.stringify({ features: [{ geometry: { type: 'LineString', coordinates: [[FLOW_MOUTHS[1].at[0] - n / (111320 * Math.cos(FLOW_MOUTHS[1].at[1] * Math.PI / 180)), FLOW_MOUTHS[1].at[1]], FLOW_MOUTHS[1].at] }, properties: { name: 'Bowker Creek' } }] })
+  const boxes = (checked) => OVERLAY_IDS.map((id) => `<input type="checkbox" data-overlay="${id}"${checked ? ' checked' : ''}>`).join('') + `<input type="checkbox" id="terrain3d"> <p>${LIVE_SENTENCE}</p>`
+  const industry = (over) => JSON.stringify({ features: [{ geometry: { type: 'Point', coordinates: [-123.4, 48.5] }, properties: { name: 'Plant', kind: 'wastewater', src: 'hydrowaste', ...over } }] })
   const cases = [
     ['ruleForbiddenNames', ruleForbiddenNames, [f('data/native-land.geojson', '{}')], [f('data/streams.geojson', '{}')]],
     ['ruleForbiddenNames (rush)', ruleForbiddenNames, [f('data/rush-map.geojson', '{}')], [f('data/bec.geojson', '{}')]],
@@ -191,9 +281,17 @@ function selftest() {
     ['rulePins (kind)', rulePins, [f('data/pins.geojson', goodPin.replace('example-place', 'rumour'))], [f('data/pins.geojson', goodPin)]],
     ['ruleSize', (files) => ruleSize(files, 100), [{ path: 'x', text: null, size: 1000 }], [{ path: 'x', text: null, size: 10 }]],
     ['ruleDroppedProviders', ruleDroppedProviders, [f('data/greenspaces.geojson', gs('C'))], [f('data/greenspaces.geojson', gs('V'))]],
-    ['ruleDroppedIslandsTrust', ruleDroppedIslandsTrust, [f('data/greenspaces.geojson', gs('I'))], [f('data/greenspaces.geojson', gs('V'))]],
     ['ruleFlowDirection (reversed)', ruleFlowDirection, [f('data/streams-flow.geojson', flow(true, true))], [f('data/streams-flow.geojson', flow(false, false))]],
     ['ruleFlowDirection (missing line)', ruleFlowDirection, [f('data/streams-flow.geojson', flow(false, false).replace('Colquitz River', 'Other Creek'))], [f('data/streams-flow.geojson', flow(false, false))]],
+    ['ruleFlowCanals (canals missing)', ruleFlowCanals, [f('data/streams-flow.geojson', bowker(480))], [f('data/streams-flow.geojson', bowker(1420))]],
+    ['ruleFlowCanals (pipes included)', ruleFlowCanals, [f('data/streams-flow.geojson', bowker(2110))], [f('data/streams-flow.geojson', bowker(1420))]],
+    ['ruleEcccLicence', (files) => ruleEcccLicence(files[0].text), [f('x.html', '<p>Data Source: Environment and Climate Change Canada. Contains information licensed under the Open Government Licence &ndash; Canada.</p>')], [f('x.html', '<p>Data Source: Environment and Climate Change Canada. Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.</p><p>Canada terrain data contains information licensed under the Open Government Licence &ndash; Canada.</p>')]],
+    ['rulePrivacyHosts', (files) => rulePrivacyHosts(files[0].text), [f('x.html', '<strong>Privacy.</strong> tiles.openfreemap.org <strong>Software.</strong>')], [f('x.html', `<strong>Privacy.</strong> ${FETCH_HOSTS.join(' ')} <strong>Software.</strong>`)]],
+    ['ruleOverlayBoxes (on by default)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(true))], [f('x.html', boxes(false))]],
+    ['ruleOverlayBoxes (no live sentence)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(false).replace(LIVE_SENTENCE, ''))], [f('x.html', boxes(false))]],
+    ['ruleIndustry (source)', ruleIndustry, [f('data/industry-waste.geojson', industry({ src: 'climate-trace' }))], [f('data/industry-waste.geojson', industry({ src: 'hydrowaste' }))]],
+    ['ruleIndustry (kind)', ruleIndustry, [f('data/industry-waste.geojson', industry({ kind: 'river' }))], [f('data/industry-waste.geojson', industry({ kind: 'wastewater' }))]],
+    ['ruleIndustry (First Nation name)', ruleIndustry, [f('data/industry-waste.geojson', industry({ name: 'Tsawout WWTP' }))], [f('data/industry-waste.geojson', industry({ name: 'Saanich Peninsula WWTP' }))]],
   ]
   let ok = true
   for (const [name, rule, bad, clean] of cases) {
@@ -224,7 +322,13 @@ function selftestFlowBuilder() {
     // Same creek drawn downstream: the builder has to stop.
     const bad = run([piece(0, [[1, 0], [0, 0]]), piece(100, [[2, 0], [1, 0]])])
     report(turned && bad.status !== 0, 'selftest make-flow: joins and turns correct lines, refuses lines that already run downstream', turned ? 'accepted reversed input' : 'did not turn correct input')
-    return turned && bad.status !== 0
+    // Edge types: a canal (2000) is kept and joins the creek it runs into, subsurface flow (1425) and connection lines (1450) are dropped.
+    const edge = (n, e, key, measure, coords) => ({ ...piece(measure, coords), properties: { name: 'Test Creek ' + n, order: 1, edge: e, key, measure } })
+    const kinds = run([edge(1, 1000, 1, 0, [[0, 0], [1, 0]]), edge(1, 2000, 1, 100, [[1, 0], [2, 0]]), edge(2, 1425, 2, 0, [[10, 10], [11, 10]]), edge(3, 1450, 3, 0, [[20, 20], [21, 20]])])
+    const lines = kinds.out?.features || []
+    const edgesOk = kinds.status === 0 && lines.length === 1 && lines[0].geometry.coordinates.length === 3 && lines[0].geometry.coordinates.every(([x]) => x < 10)
+    report(edgesOk, 'selftest make-flow: canals (edge type 2000) are kept and joined, subsurface flow (1425) and connection lines (1450) are dropped', JSON.stringify(lines.map((l) => l.geometry.coordinates)))
+    return turned && bad.status !== 0 && edgesOk
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
@@ -274,8 +378,9 @@ function checkTree() {
   report(...pair(ruleExternalRefs(refScope), 'every URL names an allowed host; no root-relative src or href'))
   report(...pair(rulePins(files), 'pins: status, allowed kind, https links, summary length, inside demo box'))
   report(...pair(ruleDroppedProviders(files), 'park layer has no Capital Regional District rows (no open licence confirmed)'))
-  report(...pair(ruleDroppedIslandsTrust(files), 'park layer has no Islands Trust rows (terms page could not be read)'))
   report(...pair(ruleFlowDirection(files), 'flow lines end at the creek mouths (Colquitz River, Bowker Creek): dashes march downstream'))
+  report(...pair(ruleFlowCanals(files), `flow lines include the canals and not the pipes: Bowker Creek open channel ${BOWKER_OPEN_M[0]} to ${BOWKER_OPEN_M[1]} m`))
+  report(...pair(ruleIndustry(files), 'industry and waste sites: only open-licence sources, only landfill, power and wastewater kinds, no site named for a First Nation'))
   report(...pair(ruleSize(files), `total size under 10 MB (${(files.reduce((a, f) => a + f.size, 0) / 1048576).toFixed(2)} MB)`))
 
   // require rules (the positive twins)
@@ -309,11 +414,18 @@ function checkTree() {
   report(app.includes('BC_ATTRIB') && app.includes('attribution'), 'BC layers carry a source attribution string')
   const creditsText = textOf(credits)
   const missingStatements = [...PROVIDER_STATEMENTS, ...TERRAIN_STATEMENTS].filter((t) => !creditsText.includes(t))
-  report(missingStatements.length === 0, 'credits carry the Victoria and Saanich statements and the three terrain attribution lines word for word', missingStatements.join(' | '))
-  report(PROVIDER_STATEMENTS.every((t) => app.includes(t)) && !/Open Government Licence \u2013 (Capital Regional District|Islands Trust)/.test(creditsText + app), 'park popups carry each kept provider statement; no Capital Regional District or Islands Trust statement is shown')
+  report(missingStatements.length === 0, 'credits carry the Victoria, Saanich and Islands Trust statements and the three terrain attribution lines word for word', missingStatements.join(' | '))
+  report(PROVIDER_STATEMENTS.every((t) => app.includes(t)) && !/Open Government Licence \u2013 Capital Regional District/.test(creditsText + app), 'park popups carry each kept provider statement; no Capital Regional District statement is shown')
   report(/id="flow"[^>]*\bchecked\b/.test(html) && /data-group="terrain"(?![^>]*\bchecked\b)/.test(html), 'Flow box is on by default and Terrain shading box is off by default')
   report(app.includes('prefers-reduced-motion') && app.includes('visibilitychange') && app.includes('cancelAnimationFrame'), 'flow loop honours reduced motion and stops when the tab is hidden')
   report(/<title>Greater Victoria open map \(demo\)<\/title>/.test(html), 'page title marks the map as a demo')
+  report(...pair(ruleOverlayBoxes(html), 'every new layer has a box, all are off by default, 3D terrain is off, and the Live data sentence is present'))
+  report(...pair(ruleEcccLicence(html), 'Environment and Climate Change Canada data is not credited to the Open Government Licence'))
+  report(...pair(rulePrivacyHosts(html), 'the privacy note names every third-party host the page fetches from after a box is ticked'))
+  const overlaysJs = byPath['js/overlays.js']?.text || ''
+  report(overlaysJs.includes('Contains information licenced under the <a href="${ECCC_LICENCE}" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada.') && overlaysJs.includes("const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'"), 'on-map attribution carries the Environment and Climate Change Canada licence statement and a link to the licence')
+  const missingOverlay = OVERLAY_STATEMENTS.filter((t) => !creditsText.includes(t))
+  report(missingOverlay.length === 0, 'credits carry the Environment Canada, USGS, ecoregion and industry source statements word for word', missingOverlay.join(' | '))
 
   const sources = byPath['data/SOURCES.md']?.text || ''
   report(LAYER_FILES.filter((n) => n !== 'pins').every((n) => sources.includes(`${n}.geojson`)), 'data/SOURCES.md lists every data file')
@@ -339,10 +451,63 @@ function pair(findings, name) {
   return [findings.length === 0, name, findings.slice(0, 5).join('; ')]
 }
 
+// js/overlays-data.js turns the replies of outside services into map data. It has no DOM code, so
+// it is run here on sample replies: bad rows must be dropped, good rows kept, and the text of an
+// alert passed on unchanged.
+async function checkOverlayData() {
+  const dir = mkdtempSync(join(tmpdir(), 'gv-ov-'))
+  try {
+    copyFileSync(join(ROOT, 'js/overlays-data.js'), join(dir, 'data.mjs'))
+    const D = await import(pathToFileURL(join(dir, 'data.mjs')).href)
+    const now = Date.parse('2026-10-21T20:00:00Z')
+    const threw = (fn) => { try { fn(); return false } catch { return true } }
+    const pt = (x, y) => ({ type: 'Point', coordinates: [x, y] })
+
+    const xml = (name, dim) => `<Layer><Name>OTHER</Name><Dimension name="time" units="ISO8601">2026-01-01T00:00:00Z/2026-01-01T01:00:00Z/PT1H</Dimension></Layer><Layer><Name>${name}</Name><Dimension name="time" units="ISO8601">${dim}</Dimension></Layer>`
+    const times = D.radarTimes(xml('RADAR_1KM_RRAI', '2026-10-21T21:00:00Z/2026-10-22T00:00:00Z/PT6M'))
+    report(times.length === 10 && times.at(-1) === '2026-10-22T00:00:00Z' && times[0] === '2026-10-21T23:06:00Z', 'radar: the ten newest frames, six minutes apart, read from the radar layer and not a sibling layer', times.join(','))
+    report(threw(() => D.radarTimes(xml('SOMETHING_ELSE', '2026-10-21T21:00:00Z/2026-10-22T00:00:00Z/PT6M'))) && threw(() => D.radarTimes(xml('RADAR_1KM_RRAI', '2026-10-21T21:00:00Z/2026-10-22T00:00:00Z/P1D'))), 'radar: a missing layer or an unreadable step is refused, not guessed')
+    report(D.radarFrameUrl(times[0]).includes('layers=RADAR_1KM_RRAI') && D.radarFrameUrl(times[0]).includes('EPSG%3A3857') && threw(() => D.radarFrameUrl('not a time')), 'radar: frame request names the layer and web Mercator, and refuses a bad time')
+
+    const alertFeature = (over, geometry = { type: 'Polygon', coordinates: [[[-123.5, 48.4], [-123.3, 48.4], [-123.3, 48.6], [-123.5, 48.4]]] }) => ({ id: 'a1', geometry, properties: { alert_short_name_en: 'yellow warning - wind', feature_name_en: 'Greater Victoria', alert_text_en: 'Line one.\n\nLine two, unchanged.', risk_colour_en: 'yellow', publication_datetime: '2026-10-21T18:00:00Z', expiration_datetime: '2026-10-22T06:00:00Z', ...over } })
+    const al = D.normaliseAlerts({ features: [alertFeature({}), alertFeature({ expiration_datetime: '2026-10-21T10:00:00Z' }), alertFeature({}, null)] }, now)
+    report(al.items.length === 1 && al.items[0].text === 'Line one.\n\nLine two, unchanged.' && al.items[0].colour === '#d9a400', 'alerts: an expired alert and one with no area are dropped, and the text is passed on exactly as published', JSON.stringify(al.items.map((i) => i.text)))
+
+    const aq = (id, loc, v, t, c) => ({ id, geometry: pt(...c), properties: { location_id: loc, location_name_en: loc, aqhi: v, observation_datetime: t } })
+    const aqhi = D.normaliseAqhi({ features: [aq('1', 'V', 3.4, '2026-10-21T18:00:00Z', [-123.37, 48.43]), aq('2', 'V', 3.6, '2026-10-21T19:00:00Z', [-123.37, 48.43]), aq('3', 'Far', 2, '2026-10-21T19:00:00Z', [-122.5, 49.1])] })
+    report(aqhi.features.length === 1 && aqhi.features[0].properties.band === 'Moderate risk' && D.aqhiBand(3.4) === 'Low risk', 'air quality: the newest reading per station, stations outside the box dropped, band read on the rounded index', JSON.stringify(aqhi.features.map((f) => f.properties)))
+
+    const q = (id, type, c, extra = {}) => ({ id, geometry: pt(c[0], c[1]), properties: { type, mag: 2, time: now - 3600000, place: 'x', url: 'https://earthquake.usgs.gov/earthquakes/eventpage/' + id, ...extra } })
+    const quakes = D.normaliseQuakes({ features: [q('e1', 'earthquake', [-123.5, 48.3]), q('e2', 'explosion', [-123.5, 48.3]), q('e3', 'earthquake', [-120, 40]), q('e4', 'earthquake', [-123.5, 48.3], { url: 'http://evil.example/x' })] }, now)
+    report(quakes.features.length === 2 && quakes.features[1].properties.url === null, 'earthquakes: only earthquakes inside the map area are kept, and a link off the USGS host is dropped')
+
+    const sw = (name, t, c, extra = {}) => ({ geometry: pt(c[0], c[1]), properties: { 'stn_nam-value': name, 'date_tm-value': t, air_temp: 11, ...extra } })
+    const cond = D.normaliseConditions({ features: [sw('A', '2026-10-21T19:50:00Z', [-123.4, 48.4]), sw('A', '2026-10-21T19:55:00Z', [-123.4, 48.4], { air_temp: 12 }), sw('B', '2026-10-21T12:00:00Z', [-123.4, 48.5]), sw('C', '2026-10-21T19:55:00Z', [-123.4, 48.5], { air_temp: null }), sw('D', '2026-10-21T19:55:00Z', [-130, 40])] }, now)
+    report(cond.features.length === 1 && cond.features[0].properties.temp === 12, 'conditions: one report per station (the newest), reports older than 3 hours, empty reports and stations outside the area dropped')
+
+    const st = (n, c, over = {}) => ({ geometry: pt(c[0], c[1]), properties: { STATION_NUMBER: n, STATION_NAME: 'S' + n, REAL_TIME: 1, STATUS_EN: 'Active', ...over } })
+    const gauges = D.nearestGauges({ features: [st('08HA011', [-123.71, 48.77]), st('08HA003', [-123.67, 48.73]), st('08HB099', [-123.4, 48.5], { STATUS_EN: 'Discontinued' }), st('08HB098', [-123.4, 48.5], { REAL_TIME: 0 }), st('bad', [-123.4, 48.5])] }, 5)
+    report(gauges.length === 2 && gauges[0].number === '08HA003' && gauges[0].km < gauges[1].km, 'river gauges: only active real-time gauges, nearest first, a bad station number refused')
+    report(D.gaugeFeature(gauges[0], { features: [] }) === null && D.gaugeFeature(gauges[0], { features: [{ properties: { LEVEL: 0.5, DISCHARGE: null, DATETIME: '2026-10-21T19:00:00Z' } }] }).properties.km === Math.round(gauges[0].km) && threw(() => D.waterReadingUrl('08HA003; drop')), 'river gauges: a gauge with no reading is left out, the distance is kept, and a station number is checked before it goes into a URL')
+
+    const rec = (over) => ({ key: Math.floor(Math.random() * 1e9) + 1e9, species: 'Quercus garryana', kingdom: 'Plantae', eventDate: '2026-06-01T10:00', license: 'http://creativecommons.org/publicdomain/zero/1.0/legalcode', decimalLatitude: 48.42951, decimalLongitude: -123.36549, datasetKey: '50c9509d-22c7-4a22-a47d-8c48425ef4a7', datasetName: 'D', rightsHolder: 'R. Holder', ...over })
+    const good1 = rec({ key: 1 }), good2 = rec({ key: 2, license: 'http://creativecommons.org/licenses/by/4.0/legalcode' })
+    const life = D.normaliseLife([good1, good2, rec({ key: 3, license: 'http://creativecommons.org/licenses/by-nc/4.0/legalcode' }), rec({ key: 4, informationWithheld: 'Coordinate uncertainty increased' }), rec({ key: 5, dataGeneralizations: 'Coordinates obscured' }), rec({ key: 6, coordinateUncertaintyInMeters: 9000 }), rec({ key: 7, decimalLatitude: 49.5 }), rec({ key: 1 }), rec({ key: 8, license: null })])
+    const p1 = life.features.find((f) => f.properties.key === 1)?.properties, p2 = life.features.find((f) => f.properties.key === 2)?.properties
+    report(life.features.length === 2 && !!p1 && !!p2, 'life observations: records under another licence, withheld, generalised, too uncertain, outside the box or repeated are dropped; the two good ones stay', String(life.features.length))
+    report(life.features[0].geometry.coordinates[0] === -123.37 && life.features[0].geometry.coordinates[1] === 48.43 && p1.holder === null && p2.holder === 'R. Holder' && p2.licence === 'CC BY 4.0' && p2.licence_url.startsWith('https://'), 'life observations: positions rounded to 0.01 degree, a credit kept only where CC BY asks for one, the licence kept with each record')
+    const urls = D.lifeUrls(now)
+    report(urls.length === 3 && urls.every((u) => u.includes('license=CC0_1_0') && u.includes('license=CC_BY_4_0') && u.includes('limit=100') && u.startsWith('https://api.gbif.org/')), 'life observations: three requests of 100 records, each asking for CC0 and CC BY 4.0 only')
+    report(D.quakesUrl(now).includes('eventtype=earthquake') && D.quakesUrl(now).includes('starttime=2026-10-14T20:00:00'), 'earthquakes: request covers the last 7 days')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+
 console.log('Self-test (each forbid rule must fire on bad input and stay quiet on clean input)')
 selftest()
 console.log('\nChecks on this folder')
 checkTree()
+console.log('\nParsing of outside replies (js/overlays-data.js, run on sample replies)')
+await checkOverlayData()
 console.log(`\n${failures === 0 ? 'All static checks passed.' : failures + ' check(s) failed.'}`)
 if (failures) process.exitCode = 1
 if (process.argv.includes('--browser')) {

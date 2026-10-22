@@ -6,8 +6,10 @@
 // Playwright is not a dependency of this folder. Point PLAYWRIGHT_MODULE at an
 // existing install, or leave it unset if `playwright` resolves from here.
 // The folder is served by a small built-in static server on a free port.
-// The page loads map tiles from tiles.openfreemap.org, and the terrain checks
-// load elevation tiles from s3.amazonaws.com, so this needs network.
+// The page loads map tiles from tiles.openfreemap.org, the terrain checks load elevation tiles
+// from s3.amazonaws.com, and the desktop run ticks each live layer against its real service
+// (api.weather.gc.ca, geo.weather.gc.ca, earthquake.usgs.gov, api.gbif.org), so this needs network.
+// The failure lines are checked separately with those four hosts blocked.
 //
 // The page is declared ready by window.__ready, not map.loaded() or the 'idle'
 // event, because neither settles while the flow dashes animate.
@@ -19,6 +21,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.geojson': 'application/geo+json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8' }
 const BOWKER = [-123.3165974, 48.4309387]
+// Map layers of the optional overlays that exist from the start, all hidden. The radar layer is made on first use.
+const OVERLAY_LAYERS = ['radar-credit', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label']
+// What each box asks of the network when ticked: [host, ...] and the file it loads from this site.
+const OVERLAY_NET = {
+  radar: { hosts: ['geo.weather.gc.ca'] }, alerts: { hosts: ['api.weather.gc.ca'] }, aqhi: { hosts: ['api.weather.gc.ca'] },
+  conditions: { hosts: ['api.weather.gc.ca'] }, water: { hosts: ['api.weather.gc.ca'] }, quakes: { hosts: ['earthquake.usgs.gov'] },
+  life: { hosts: ['api.gbif.org'] }, ecoregions: { hosts: [], file: 'data/ecoregions.geojson' }, industry: { hosts: [], file: 'data/industry-waste.geojson' },
+}
+const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org']
+const ECCC_STATEMENT = 'Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.'
+// Text the map's attribution must carry while each layer is on.
+const OVERLAY_ATTRIB = {
+  radar: ECCC_STATEMENT, alerts: ECCC_STATEMENT, aqhi: ECCC_STATEMENT, conditions: ECCC_STATEMENT, water: ECCC_STATEMENT,
+  quakes: 'U.S. Geological Survey', life: 'GBIF', ecoregions: 'Ecoregions 2017 \u00a9 Resolve', industry: 'HydroWASTE',
+}
 
 function serve() {
   const server = createServer(async (req, res) => {
@@ -51,6 +68,7 @@ export async function runBrowserChecks() {
     }
     await checkReducedMotion(browser, base)
     await checkBasemapDown(browser, base, shots)
+    await checkOverlaysBlocked(browser, base)
   } finally {
     await browser.close()
     server.close()
@@ -78,15 +96,19 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
 async function checkViewport(browser, base, name, vp, shots) {
   const { ctx, page, problems, warnings, requests } = await openPage(browser, base, vp)
   const t = (s) => `${name}: ${s}`
-  const info = await page.evaluate(() => {
+  const info = await page.evaluate((OVERLAY_LAYERS) => {
     const m = window.__map
     const vis = (id) => m.getLayer(id) ? (m.getLayoutProperty(id, 'visibility') ?? 'visible') : 'absent'
     const attrib = document.querySelector('.maplibregl-ctrl-attrib')
     const panel = document.getElementById('panel').getBoundingClientRect()
     const a = attrib.getBoundingClientRect()
     return {
-      layers: ['hillshade', 'bec-fill', 'bec-sea-mask', 'watersheds-fill', 'watersheds-line', 'parks-local', 'parks-bc', 'parks-bc-line', 'wetlands', 'lakes', 'streams', 'streams-flow', 'muni-fill', 'muni-line', 'streams-label', 'parks-bc-label', 'muni-label', 'pins', 'pins-label'].filter((id) => !m.getLayer(id)),
+      layers: ['hillshade', 'bec-fill', 'bec-sea-mask', 'watersheds-fill', 'watersheds-line', 'parks-local', 'parks-bc', 'parks-bc-line', 'wetlands', 'lakes', 'streams', 'streams-flow', 'muni-fill', 'muni-line', 'streams-label', 'parks-bc-label', 'muni-label', 'pins', 'pins-label', ...OVERLAY_LAYERS].filter((id) => !m.getLayer(id)),
       defaults: Object.fromEntries(['bec-fill', 'hillshade', 'watersheds-line', 'parks-local', 'parks-bc', 'streams', 'streams-flow', 'muni-line', 'pins'].map((id) => [id, vis(id)])),
+      overlayDefaults: Object.fromEntries(OVERLAY_LAYERS.map((id) => [id, vis(id)])),
+      flat: { terrain: m.getTerrain(), pitch: m.getPitch(), maxPitch: m.getMaxPitch(), rotate: m.dragRotate.isEnabled(), box: document.getElementById('terrain3d').checked },
+      overlayBoxes: [...document.querySelectorAll('input[data-overlay]')].map((b) => b.checked),
+      overlayRadarLayer: !!m.getLayer('radar'),
       flowBox: { checked: document.getElementById('flow').checked, disabled: document.getElementById('flow').disabled },
       terrainChecked: document.querySelector('input[data-group=terrain]').checked,
       flowRunning: window.__flow.running(),
@@ -102,10 +124,12 @@ async function checkViewport(browser, base, name, vp, shots) {
       emptyVisible: !document.getElementById('pins-empty').hidden,
       emptyText: document.getElementById('pins-empty').textContent,
     }
-  })
+  }, OVERLAY_LAYERS)
   report(info.layers.length === 0, t('all map layers present'), 'missing: ' + info.layers.join(', '))
   report(JSON.stringify(info.defaults) === JSON.stringify({ 'bec-fill': 'none', hillshade: 'none', 'watersheds-line': 'none', 'parks-local': 'visible', 'parks-bc': 'visible', streams: 'visible', 'streams-flow': 'visible', 'muni-line': 'visible', pins: 'visible' }), t('default layer visibility as specified'), JSON.stringify(info.defaults))
   report(info.flowBox.checked && !info.flowBox.disabled && info.flowRunning && !info.terrainChecked, t('Flow box is on and the flow loop is running; Terrain shading box is off'), JSON.stringify({ flowBox: info.flowBox, running: info.flowRunning, terrain: info.terrainChecked, zoom: info.zoom }))
+  report(Object.values(info.overlayDefaults).every((v) => v === 'none') && info.overlayBoxes.length === 9 && info.overlayBoxes.every((b) => !b) && !info.overlayRadarLayer, t('every new layer exists, is hidden and unticked at load (ecoregions, industry, radar, alerts, air quality, conditions, river gauges, earthquakes, life observations)'), JSON.stringify([info.overlayDefaults, info.overlayBoxes, info.overlayRadarLayer]))
+  report(info.flat.terrain === null && info.flat.pitch === 0 && info.flat.maxPitch === 0 && !info.flat.rotate && !info.flat.box, t('3D terrain is off at load: no terrain, flat, north-up, rotation locked'), JSON.stringify(info.flat))
   const hosts = [...new Set(requests.map((u) => new URL(u).host))].filter((h) => !h.startsWith('127.0.0.1'))
   report(hosts.every((h) => h === 'tiles.openfreemap.org'), t('on load the page contacts only the basemap host (no terrain, weather or other service)'), hosts.join(', '))
   report(!info.overflowX, t('no horizontal page scroll'))
@@ -137,6 +161,8 @@ async function checkViewport(browser, base, name, vp, shots) {
   await checkFlowToggles(page, t)
   if (name === 'desktop') await checkMarchDirection(page, t)
   await checkTerrain(page, requests, t, shots ? (label) => page.screenshot({ path: join(shots, `${name}-${label}.png`) }) : null)
+  await checkTerrain3d(page, requests, t, shots ? (label) => page.screenshot({ path: join(shots, `${name}-${label}.png`) }) : null)
+  if (name === 'desktop') await checkOverlays(page, requests, t, shots ? (label) => page.screenshot({ path: join(shots, `${name}-${label}.png`) }) : null)
   await page.waitForTimeout(1200)
   if (shots) await page.screenshot({ path: join(shots, `${name}-2-bec-watersheds.png`) })
 
@@ -201,7 +227,8 @@ async function checkViewport(browser, base, name, vp, shots) {
   const center = await page.evaluate(() => window.__map.getCenter())
   report(Math.abs(center.lng - -123.43) < 0.1 && Math.abs(center.lat - 48.48) < 0.1, t('Fit to Greater Victoria returns to the home view'), JSON.stringify(center))
 
-  const hardProblems = problems.filter((p) => !/openfreemap/i.test(p) || /HTTP|page error/.test(p))
+  // A 429 from GBIF (it refuses bursts) is reported on the page as a partial result, so it is not a page problem.
+  const hardProblems = problems.filter((p) => (!/openfreemap/i.test(p) || /HTTP|page error/.test(p)) && !/status of 429/.test(p))
   report(hardProblems.length === 0, t('no page errors, console errors or failed requests'), hardProblems.slice(0, 3).join(' | '))
   if (warnings.length) console.log(`      (${warnings.length} console warnings, listed once: ${[...new Set(warnings)].slice(0, 5).join(' || ')})`)
   await ctx.close()
@@ -320,6 +347,181 @@ async function checkTerrain(page, requests, t, shot) {
   await setBox(page, 'input[data-group=terrain]', false)
   const off = await page.evaluate(() => window.__map.getLayoutProperty('hillshade', 'visibility'))
   report(off === 'none', t('Terrain shading off again hides the layer'))
+}
+
+// 3D terrain: off by default. Ticking it sets MapLibre terrain from the elevation tiles, tilts the
+// map to 60 degrees, unlocks rotation and pitch and adds a sky. The Terrain shading box stays
+// independent of it. Unticking resets the pitch and bearing and removes the terrain.
+async function checkTerrain3d(page, requests, t, shot) {
+  const s3 = () => requests.filter((u) => new URL(u).host === 's3.amazonaws.com').length
+  const st = () => page.evaluate(() => {
+    const m = window.__map
+    return { terrain: m.getTerrain(), pitch: m.getPitch(), maxPitch: m.getMaxPitch(), bearing: m.getBearing(), rotate: m.dragRotate.isEnabled(), hill: m.getLayoutProperty('hillshade', 'visibility'), sky: m.getSky ? m.getSky() : null,
+      note: !document.getElementById('terrain3d-note').hidden, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent, hillBox: document.querySelector('input[data-group=terrain]').checked }
+  })
+  // A view the elevation tiles for which have not been fetched yet.
+  await page.evaluate(() => window.__map.jumpTo({ center: [-123.56, 48.49], zoom: 12.6 }))
+  await page.waitForTimeout(1500)
+  const before = s3()
+  await setBox(page, '#terrain3d', true)
+  await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1, null, { timeout: 150000 })
+  await page.waitForTimeout(2500)
+  const on = await st()
+  report(on.terrain?.source === 'terrain-dem' && on.terrain.exaggeration === 2 && Math.abs(on.pitch - 60) < 1 && on.maxPitch >= 60 && on.rotate && on.note, t('3D terrain on: terrain set from the elevation tiles, map tilted to 60 degrees, rotation and pitch unlocked'), JSON.stringify({ ...on, attrib: undefined }))
+  report(on.hill === 'none' && !on.hillBox, t('3D terrain on leaves the Terrain shading box and layer alone'))
+  report(!!on.sky && !!on.sky['sky-color'], t('3D terrain on: a sky is set'), JSON.stringify(on.sky))
+  report(s3() > before, t('3D terrain on: elevation tiles are requested from AWS'), `${s3() - before} new requests`)
+  report(on.attrib.includes('AWS Terrain Tiles') && on.attrib.includes('USGS'), t('map attribution carries the terrain credit with 3D terrain on and shading off'), on.attrib.slice(0, 160))
+  await setBox(page, 'input[data-group=terrain]', true)
+  const both = await st()
+  await setBox(page, 'input[data-group=terrain]', false)
+  const shadeOff = await st()
+  report(!!both.terrain && both.hill === 'visible' && !!shadeOff.terrain && shadeOff.hill === 'none', t('Terrain shading toggles on and off while 3D terrain stays on'), JSON.stringify([both.hill, shadeOff.hill, !!shadeOff.terrain]))
+  // The flat layers are drawn over the relief and can still be found there.
+  const drawn = await page.evaluate(() => window.__map.queryRenderedFeatures({ layers: ['streams', 'lakes', 'parks-local', 'muni-line'] }).length)
+  report(drawn > 0, t('with 3D terrain on, creeks, lakes, parks and boundaries are still drawn and can be queried over the relief'), `${drawn} features`)
+  if (shot) await shot('terrain3d-on')
+  await page.evaluate(() => window.__map.jumpTo({ bearing: 40 }))
+  await setBox(page, '#terrain3d', false)
+  await page.waitForFunction(() => window.__map.getPitch() < 0.5 && Math.abs(window.__map.getBearing()) < 0.5 && !window.__map.getTerrain(), null, { timeout: 90000 })
+  await page.waitForTimeout(500)
+  const off = await st()
+  report(off.terrain === null && off.pitch < 0.5 && Math.abs(off.bearing) < 0.5 && off.maxPitch === 0 && !off.rotate && !off.note, t('3D terrain off again: pitch and bearing back to 0, terrain removed, rotation locked'), JSON.stringify({ ...off, attrib: undefined, sky: undefined }))
+}
+
+const waitStatus = (page, id, timeout = 90000) => page.waitForFunction((id) => { const p = document.getElementById('status-' + id); return !!p && !p.hidden && !!p.dataset.state && p.dataset.state !== 'loading' }, id, { timeout })
+const statusOf = (page, id) => page.evaluate((id) => { const p = document.getElementById('status-' + id); return { state: p.dataset.state, text: p.textContent, hidden: p.hidden } }, id)
+const hostCount = (requests, host) => requests.filter((u) => new URL(u).host === host).length
+const layerStates = (page, id) => page.evaluate((id) => window.__overlays.defs[id].ids.filter((l) => window.__map.getLayer(l)).map((l) => window.__map.getLayoutProperty(l, 'visibility') ?? 'visible'), id)
+
+// The optional layers, each against its real service. Nothing is requested before its box is
+// ticked, and ticking one contacts its own host and no other. While a layer is on, the map
+// attribution carries its credit.
+async function checkOverlays(page, requests, t, shot) {
+  await page.evaluate(() => { document.querySelector('.maplibregl-popup')?.remove(); document.getElementById('panel-details').open = true })
+  const idle = LIVE_HOSTS.map((h) => hostCount(requests, h))
+  const files = requests.filter((u) => /data\/(ecoregions|industry-waste)\.geojson/.test(u)).length
+  report(idle.every((n) => n === 0) && files === 0, t('nothing is requested from Environment Canada, USGS or GBIF, or for the ecoregion and industry files, until a box is ticked'), JSON.stringify([idle, files]))
+  const outcome = {}
+  for (const [id, net] of Object.entries(OVERLAY_NET)) {
+    const before = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
+    const fileBefore = requests.filter((u) => net.file && u.endsWith(net.file)).length
+    await setBox(page, `input[data-overlay=${id}]`, true)
+    let st
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await waitStatus(page, id).catch(() => {})
+      st = await statusOf(page, id)
+      if (st.state !== 'fail') break
+      await page.waitForTimeout(8000) // a service may be rate limiting. Try once more.
+      await setBox(page, `input[data-overlay=${id}]`, false)
+      await setBox(page, `input[data-overlay=${id}]`, true)
+    }
+    const after = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
+    const own = (net.hosts || []).every((h) => after[h] > before[h])
+    const others = LIVE_HOSTS.filter((h) => !(net.hosts || []).includes(h)).every((h) => after[h] === before[h])
+    const file = net.file ? requests.filter((u) => u.endsWith(net.file)).length > fileBefore : true
+    await page.waitForTimeout(900)
+    const attrib = await page.evaluate(() => document.querySelector('.maplibregl-ctrl-attrib').textContent)
+    const vis = await layerStates(page, id)
+    outcome[id] = st
+    report(['ok', 'empty'].includes(st.state) && own && others && file && vis.length > 0 && vis.every((v) => v === 'visible') && attrib.includes(OVERLAY_ATTRIB[id]), t(`${id}: ticking it loads from its own service only, shows its layer, a status line (${st.state}) and its credit on the map`), JSON.stringify({ st, own, others, file, vis, hasCredit: attrib.includes(OVERLAY_ATTRIB[id]) }))
+  }
+  report(outcome.ecoregions.text.includes('one ecoregion') && /18 sites/.test(outcome.industry.text), t('ecoregions and industry status lines describe what was loaded'), JSON.stringify([outcome.ecoregions.text, outcome.industry.text]))
+
+  // radar: frames, a time label, play and pause, and a colour key fetched only when opened
+  const radar = await page.evaluate(() => ({ frames: window.__overlays.radar.frames.length, time: document.getElementById('radar-time').textContent, playing: window.__overlays.radar.playing, button: document.getElementById('radar-play').textContent, layer: !!window.__map.getLayer('radar'), type: window.__map.getSource('radar')?.type, legendSrc: document.getElementById('radar-legend-img').getAttribute('src') }))
+  report(radar.frames >= 2 && /^Radar, /.test(radar.time) && radar.layer && radar.type === 'image' && radar.playing && radar.button === 'Pause', t('radar: several frames, a time label, an image layer, and it plays'), JSON.stringify(radar))
+  await page.click('#radar-play')
+  const paused = await page.evaluate(() => ({ playing: window.__overlays.radar.playing, button: document.getElementById('radar-play').textContent, shown: window.__overlays.radar.shown }))
+  await page.waitForTimeout(1500)
+  const still = await page.evaluate(() => window.__overlays.radar.shown)
+  report(!paused.playing && paused.button === 'Play' && still === paused.shown, t('radar: Pause stops the frames, and the button says Play'), JSON.stringify([paused, still]))
+  const legendBefore = requests.filter((u) => u.includes('GetLegendGraphic')).length
+  report(legendBefore === 0 && radar.legendSrc === null, t('radar: the colour key is not requested until it is opened'), String(legendBefore))
+  await page.evaluate(() => { document.getElementById('radar-legend').open = true })
+  await page.waitForTimeout(2500)
+  report(requests.some((u) => u.includes('GetLegendGraphic')), t('radar: opening the colour key requests it'))
+
+  // popups are built from text only, and carry each record's licence and source link
+  const pop = await page.evaluate(async () => {
+    const o = window.__overlays
+    const life = { properties: { key: 5938027964, name: '<img src=x onerror=alert(1)>', kingdom: 'Plantae', date: '2026-06-25T10:54:16', dataset: 'iNaturalist research-grade observations', dataset_key: '50c9509d-22c7-4a22-a47d-8c48425ef4a7', licence: 'CC BY 4.0', licence_url: 'https://creativecommons.org/licenses/by/4.0/legalcode', holder: 'A. Person' } }
+    const box = o.popupFor(life, 'life-dot', [life])
+    const fc = await (await fetch('data/industry-waste.geojson')).json()
+    const clover = fc.features.find((f) => f.properties.name === 'Clover Point Pump Station')
+    const unnamed = fc.features.find((f) => !f.properties.name)
+    const ind = o.popupFor({ properties: clover.properties }, 'industry-dot')
+    const loc = o.popupFor({ properties: unnamed.properties }, 'industry-dot')
+    return {
+      lifeImg: !!box.querySelector('img'), lifeText: box.textContent, lifeLinks: [...box.querySelectorAll('a')].map((a) => a.href + ' ' + a.rel),
+      ind: ind.textContent, indLinks: [...ind.querySelectorAll('a')].map((a) => a.href), loc: loc.textContent,
+    }
+  })
+  report(!pop.lifeImg && pop.lifeText.includes('<img src=x onerror=alert(1)>') && pop.lifeText.includes('CC BY 4.0') && pop.lifeText.includes('Credit: A. Person') && pop.lifeLinks.some((l) => l.startsWith('https://www.gbif.org/occurrence/5938027964')) && pop.lifeLinks.every((l) => l.startsWith('https://') && l.includes('noopener')), t('life observation popup: text only (no markup from the record), licence, credit and source link kept, https links with rel=noopener'), JSON.stringify(pop.lifeLinks))
+  report(pop.ind.includes('Treated wastewater discharged: 50,000 m3 per day') && pop.ind.includes('modelled, not counted') && pop.ind.includes('Ehalt Macedo, H.') && pop.ind.includes('CC BY 4.0') && pop.indLinks.every((l) => l.startsWith('https://')) && pop.loc.includes('No figures. This is a location only, not an empty site.') && pop.loc.includes('Open Government Licence'), t('industry popups: figures carry their basis, a site with no figures says so, and each carries its source attribution'))
+  await page.evaluate(() => window.__map.jumpTo({ center: [-123.349, 48.406], zoom: 14 }))
+  await page.waitForTimeout(2500)
+  const vp = page.viewportSize()
+  await page.mouse.click(vp.width / 2, vp.height / 2)
+  await page.waitForTimeout(800)
+  const clicked = await page.evaluate(() => document.querySelector('.maplibregl-popup-content')?.innerText || null)
+  report(!!clicked && clicked.includes('Clover Point Pump Station') && clicked.includes('wastewater'), t('a click on an industry site opens its popup'), String(clicked).slice(0, 100))
+  if (shot) await shot('overlays-on')
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+
+  // untick everything: layers hide, status lines hide, the credits leave the map
+  for (const id of Object.keys(OVERLAY_NET)) await setBox(page, `input[data-overlay=${id}]`, false)
+  await page.waitForTimeout(1500)
+  const off = await page.evaluate(() => ({ attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent, shown: [...document.querySelectorAll('[id^=status-]')].filter((p) => !p.hidden).length, radarControls: !document.getElementById('radar-controls').hidden, playing: window.__overlays.radar.playing }))
+  const hidden = []
+  for (const id of Object.keys(OVERLAY_NET)) hidden.push(...(await layerStates(page, id)))
+  report(hidden.every((v) => v === 'none') && off.shown === 0 && !off.radarControls && !off.attrib.includes('Data Server End-use Licence') && !off.attrib.includes('GBIF') && !off.attrib.includes('HydroWASTE'), t('unticking every new layer hides it, its status line and its credit'), JSON.stringify({ ...off, attrib: off.attrib.slice(0, 120), hidden: [...new Set(hidden)] }))
+}
+
+// With every outside service blocked: ticking a live layer makes its own request and then shows a
+// plain failure line, nothing else breaks, and an alert from a service is shown unchanged.
+async function checkOverlaysBlocked(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 })
+  const page = await ctx.newPage()
+  const requests = [], errors = []
+  page.on('request', (r) => requests.push(r.url()))
+  page.on('pageerror', (e) => errors.push(e.message.slice(0, 160)))
+  for (const h of LIVE_HOSTS) await page.route(`https://${h}/**`, (r) => r.abort())
+  await page.goto(base + '/index.html?test', { waitUntil: 'load' })
+  await page.waitForFunction(() => window.__ready, null, { timeout: 90000 })
+  await page.waitForTimeout(1500)
+  await page.evaluate(() => { document.getElementById('panel-details').open = true })
+  const t = (s) => `hosts blocked: ${s}`
+  for (const id of ['radar', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life']) {
+    const before = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
+    await setBox(page, `input[data-overlay=${id}]`, true)
+    await waitStatus(page, id, 60000).catch(() => {})
+    const st = await statusOf(page, id)
+    const own = OVERLAY_NET[id].hosts.every((h) => hostCount(requests, h) > before[h])
+    const others = LIVE_HOSTS.filter((h) => !OVERLAY_NET[id].hosts.includes(h)).every((h) => hostCount(requests, h) === before[h])
+    const empty = await page.evaluate((id) => { const src = window.__overlays.defs[id].source; return src ? window.__map.querySourceFeatures(src).length === 0 : true }, id)
+    const wording = id === 'alerts' ? st.text.includes('not showing whether any are in effect') : st.text.includes('could not be loaded')
+    report(st.state === 'fail' && !st.hidden && wording && own && others && empty, t(`${id}: its own request is made, then a plain failure line shows and the layer stays empty`), JSON.stringify({ st, own, others, empty }))
+  }
+  report(errors.length === 0, t('no page errors from the failed requests'), errors.join(' | '))
+  // an alert is passed on exactly as the service issued it
+  const text = 'WIND WARNING IN EFFECT\n\nSouthwest winds 70 km/h gusting to 90.\n\nThis is a test text. It must not be reworded.'
+  const fixture = { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'test-1', geometry: { type: 'Polygon', coordinates: [[[-123.6, 48.35], [-123.25, 48.35], [-123.25, 48.6], [-123.6, 48.6], [-123.6, 48.35]]] }, properties: { alert_short_name_en: 'orange warning - wind', feature_name_en: 'Greater Victoria', alert_text_en: text, risk_colour_en: 'orange', publication_datetime: new Date(Date.now() - 3600000).toISOString(), expiration_datetime: new Date(Date.now() + 3600000).toISOString() } }] }
+  await page.route('https://api.weather.gc.ca/collections/weather-alerts/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(fixture) }))
+  await setBox(page, 'input[data-overlay=alerts]', false)
+  await setBox(page, 'input[data-overlay=alerts]', true)
+  await waitStatus(page, 'alerts', 30000).catch(() => {})
+  await page.evaluate(() => document.querySelector('#alerts-list details')?.setAttribute('open', ''))
+  const shown = await page.evaluate(() => ({ state: document.getElementById('status-alerts').dataset.state, text: document.querySelector('#alerts-list .alert-text')?.textContent, title: document.querySelector('#alerts-list summary')?.textContent, count: window.__map.getSource('ov-alerts') ? window.__map.querySourceFeatures('ov-alerts').length : 0 }))
+  report(shown.state === 'ok' && shown.text === text && shown.title.includes('orange warning') && shown.count > 0, t('an alert is shown word for word as issued, with its area drawn on the map'), JSON.stringify(shown))
+  // the two static layers need no outside service
+  for (const id of ['ecoregions', 'industry']) {
+    await setBox(page, `input[data-overlay=${id}]`, true)
+    await waitStatus(page, id, 30000).catch(() => {})
+    const st = await statusOf(page, id)
+    report(st.state === 'ok', t(`${id} loads from this site while the outside services are blocked`), JSON.stringify(st))
+  }
+  await ctx.close()
 }
 
 // Reduced motion: Flow is off and disabled, nothing animates, and the page follows the setting live.

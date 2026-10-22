@@ -76,6 +76,19 @@ body {
 #panel input:disabled + span { opacity: .55; }
 #panel label:has(input:disabled) { cursor: default; }
 #panel .actions { border-top: 1px solid var(--line); padding: 10px 12px 12px; }
+/* Status line under an overlay box. A failure is shown plainly, with a tint. */
+#panel .empty[data-state=fail] { background: var(--warn); padding: 4px 8px; border-radius: 6px; opacity: 1; }
+#panel button.small { min-height: 36px; padding: 4px 14px; }
+#radar-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px 30px; font-size: 13px; }
+#radar-controls[hidden], #alerts-list:empty { display: none; }
+#radar-legend { flex-basis: 100%; }
+#radar-legend summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; }
+#radar-legend img { display: block; max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); }
+#alerts-list { margin: 0 0 6px 30px; }
+#alerts-list details { border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; margin-bottom: 6px; font-size: 13px; }
+#alerts-list summary { cursor: pointer; min-height: 40px; display: flex; align-items: center; font-weight: 600; }
+#alerts-list .alert-text { white-space: pre-line; max-height: 40vh; overflow: auto; margin: 0 0 6px; }
+#alerts-list .src { margin: 0 0 6px; opacity: .85; }
 
 button {
   min-height: 44px; padding: 8px 14px; border-radius: 8px;
@@ -120,6 +133,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, a:focus-visibl
 .maplibregl-popup-content .tag { display: inline-block; margin-bottom: 6px; padding: 1px 8px; border-radius: 10px; background: #e6efe9; font-size: 12px; }
 .maplibregl-popup-content p { margin: 0 0 6px; }
 .maplibregl-popup-content .src { font-size: 12px; color: #4a554f; }
+.maplibregl-popup-content hr { border: 0; border-top: 1px solid #d5dad3; margin: 8px 0; }
+.maplibregl-popup-content { max-height: 60vh; overflow: auto; }
 .maplibregl-popup-content a { color: #1f5a43; }
 .maplibregl-popup-close-button { min-height: 0; padding: 0 6px; background: transparent; border: 0; color: #1d2a24; }
 
