@@ -346,8 +346,8 @@ function link(href, text) {
 }
 const hectares = (n) => `${Number(n).toLocaleString('en-CA', { maximumFractionDigits: 1 })} ha`
 
-function popupFor(f, layer, group = [f]) {
-  if (overlays.popupLayers.includes(layer)) return overlays.popupFor(f, layer, group)
+function popupFor(f, layer, group = [f], hits = []) {
+  if (overlays.popupLayers.includes(layer)) return overlays.popupFor(f, layer, group, hits)
   const p = f.properties, box = el('div')
   const add = (title, tag, lines, src) => {
     box.append(el('h3', title))
@@ -393,7 +393,7 @@ function popupFor(f, layer, group = [f]) {
 
 // Area layers that cover water as well as land. A click on the sea that reaches one of these and nothing
 // else also gets the sea readout, above the area's own popup. Every other popup is shown alone.
-const AREA_LAYERS = ['bec-fill', 'ecoregions-fill', 'muni-fill']
+const AREA_LAYERS = ['bec-fill', 'ecoregions-fill', 'muni-fill', ...overlays.seaAreaLayers]
 
 map.on('click', (e) => {
   const r = 8 // 16 px box around the click, not a single pixel
@@ -406,7 +406,7 @@ map.on('click', (e) => {
     if (!group.length) continue
     // Watersheds nest, so show the smallest one under the click.
     if (id === 'watersheds-fill') group = [group.sort((a, b) => a.properties.area_ha - b.properties.area_ha)[0]]
-    content = popupFor(group[0], id, group)
+    content = popupFor(group[0], id, group, hits)
     if (!content) continue
     from = id
     break
@@ -418,6 +418,9 @@ map.on('click', (e) => {
   }
   if (!content) return
   const popup = new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
+  // MapLibre moves focus to the first link in a popup, which scrolls a long popup to its end. Start it at the top.
+  const body = popup.getElement()?.querySelector('.maplibregl-popup-content')
+  if (body) body.scrollTop = 0
   // A popup whose text arrives later (a tide prediction, a temperature) says so, and is placed again for its new size.
   content.addEventListener('filled', () => popup.setLngLat(e.lngLat))
 })

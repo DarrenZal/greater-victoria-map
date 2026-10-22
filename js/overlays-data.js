@@ -718,3 +718,205 @@ export function depthGradient(from = DEPTH_FADE_FROM, to = DEPTH_STOPS.at(-1)[0]
   const parts = [`rgba(${stops[0][1].join(', ')}, 0) 0%`, ...stops.map(([d, c]) => `rgb(${c.join(', ')}) ${at(d)}`)]
   return `linear-gradient(to right, ${parts.join(', ')})`
 }
+
+// ---- marine life and protection: seven files in data/, built by scripts/fetch-layers.sh from open government data
+// None shows where an animal is now. The protected areas, the critical habitat and the CRIMS survey are drawn from
+// fixed boundaries and old records, and the density layer is a model of summer 2018 ship surveys.
+export const MARINE_FILES = {
+  protected: 'data/marine-protected.geojson', srkw: 'data/srkw-habitat.geojson', cetaceans: 'data/whale-density.geojson',
+  kelp: 'data/kelp.geojson', eelgrass: 'data/eelgrass.geojson', herring: 'data/herring-spawn.geojson', seabirds: 'data/seabird-colonies.geojson',
+}
+// The vessel distances, said wherever whales appear. The 1,000 m rule is Transport Canada Ship Safety Bulletin 08/2026 (the
+// Interim Order, in force from June 1, 2026 to May 31, 2027). The 200 m and 100 m rules are the Marine Mammal Regulations,
+// Schedule VI (read 2026-10-22). The bulletin lists exceptions, for example for vessels in transit.
+export const WHALE_RULES = 'Vessels must stay at least 1,000 m from Southern Resident killer whales from June 1, 2026 to May 31, 2027, at least 200 m from all other killer whales and at least 100 m from all other whales, dolphins and porpoises. Some exceptions apply.'
+export const WHALE_RULE_LINKS = [
+  { href: 'https://tc.canada.ca/en/marine-transportation/marine-safety/ship-safety-bulletins/protecting-killer-whales-waters-southern-british-columbia-2026-ssb-no-08-2026', label: 'Transport Canada Ship Safety Bulletin 08/2026 (the 1,000 m rule)' },
+  { href: 'https://laws-lois.justice.gc.ca/eng/regulations/SOR-93-56/FullText.html', label: 'Marine Mammal Regulations, Schedule VI (the 200 m and 100 m rules)' },
+]
+export const OGL_CANADA_LINE = 'Contains information licensed under the Open Government Licence – Canada.'
+const OGL_BC_LINE = 'Contains information licensed under the Open Government Licence – British Columbia.'
+const CRIMS_SOURCE = `Source: Coastal Resource Information Management System (CRIMS), Province of British Columbia. A legacy survey that began in 1979 and was only updated now and then. ${OGL_BC_LINE}`
+
+// Names the sources publish in capitals ("RACE ROCKS ECOLOGICAL RESERVE") are shown in capitals and small letters. A name
+// that already has small letters is shown as published.
+const SMALL_WORDS = new Set(['of', 'and', 'the', 'in', 'on', 'at'])
+export function tidyName(s) {
+  const t = str(s, 120)
+  if (!t) return null
+  if (t !== t.toUpperCase() || t === t.toLowerCase()) return t
+  return t.toLowerCase().replace(/(^|[\s(/-])(\p{L})(\p{L}*)/gu, (m, lead, first, rest, at) => (at > 0 && SMALL_WORDS.has(first + rest) ? m : lead + first.toUpperCase() + rest))
+}
+const lower = (s) => (typeof s === 'string' ? s.trim().toLowerCase() : '')
+const sentence = (s) => (/[.!?]$/.test(s) ? s : `${s}.`)
+const TYPE_TAGS = { 'A - Park': 'park (class A)', 'Other Effective Area-Based Conservation Measure': 'area-based conservation measure (OECM)' }
+export const typeTag = (type) => TYPE_TAGS[type] || lower(type) || 'protected area'
+// CPCAD's "Marine Resource Use" field: All, Part or None of the area is no-take. Anything else (not reported, not applicable) is not said.
+export const NO_TAKE_WORDS = { 1: 'all of it', 2: 'part of it', 3: 'none of it' }
+
+// What each popup says, as plain data: { title, tag, lines, source }. js/overlays.js turns it into text nodes.
+export function protectedInfo(p) {
+  const owner = str(p.owner, 200), year = Number.isInteger(p.year) && p.year > 1800 ? p.year : null
+  return {
+    title: tidyName(p.name) || 'Protected marine area',
+    tag: typeTag(p.type),
+    lines: [
+      owner ? sentence(`Owner: ${owner}`) : null,
+      year ? `Established ${year}.` : null,
+      NO_TAKE_WORDS[p.no_take] ? `No-take area, as reported to CPCAD: ${NO_TAKE_WORDS[p.no_take]}.` : null,
+      'This is the marine part of the protected area. Its land is not drawn here.',
+    ].filter(Boolean),
+    source: `Source: Canadian Protected and Conserved Areas Database (CPCAD). Boundaries are approximate and not for navigation. ${OGL_CANADA_LINE}`,
+  }
+}
+export function srkwInfo(p) {
+  return {
+    title: 'Southern Resident killer whale critical habitat',
+    tag: 'critical habitat, Species at Risk Act',
+    lines: [
+      'A mapped boundary, not a sighting. It does not show where the whales are now.',
+      /final/i.test(String(p.status)) ? 'Mapped as final or proposed critical habitat.' : null,
+      WHALE_RULES,
+    ].filter(Boolean),
+    source: `Source: Fisheries and Oceans Canada, Species at Risk critical habitat. For general guidance only. Not for navigation. ${OGL_CANADA_LINE}`,
+  }
+}
+
+// The three species of the density model. Each is a column of Nhat ("<key>_n") and CV ("<key>_cv") in data/whale-density.geojson.
+export const CETACEANS = {
+  humpback: { name: 'Humpback whale', plural: 'humpback whales' },
+  harbour: { name: 'Harbour porpoise', plural: 'harbour porpoises' },
+  dalls: { name: 'Dall’s porpoise', plural: 'Dall’s porpoises' },
+}
+export const CETACEAN_CLASSES = 5
+// Animals per 100 km2 from the model's Nhat (animals in the cell) and the cell's area. Cells cut by the coast are smaller than
+// 25 km2 and hold fewer animals, so the colour is read from the density and not from Nhat.
+export function cetaceanDensity(n, km2) {
+  if (!Number.isFinite(n) || !Number.isFinite(km2) || n < 0 || km2 <= 0) throw new Error('a count and an area are needed')
+  return n / km2 * 100
+}
+// The cells with a density column for each species ("d_<key>"), ready to draw. A cell that does not have all three numbers is dropped.
+export function cetaceanCells(d) {
+  const out = []
+  for (const f of must(d)) {
+    const p = f?.properties, km2 = num(p?.km2)
+    if (!f.geometry || km2 == null || km2 <= 0) continue
+    const props = { ...p }
+    let ok = true
+    for (const key of Object.keys(CETACEANS)) {
+      const n = num(p[`${key}_n`]), cv = num(p[`${key}_cv`])
+      if (n == null || n < 0 || cv == null) { ok = false; break }
+      props[`d_${key}`] = cetaceanDensity(n, km2)
+    }
+    if (ok) out.push({ type: 'Feature', geometry: f.geometry, properties: props })
+  }
+  return collection(out)
+}
+// Class limits at equal shares of the cells (the 20th, 40th, 60th and 80th percentile), shown to 2 significant figures. They are
+// strictly increasing, which a MapLibre `step` needs, and fewer than `classes - 1` if the values do not spread that far.
+export function densityBreaks(values, classes = CETACEAN_CLASSES) {
+  const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b)
+  if (v.length < classes) throw new Error('too few values to make classes')
+  const out = []
+  for (let i = 1; i < classes; i++) {
+    const q = Number(v[Math.min(v.length - 1, Math.floor(v.length * i / classes))].toPrecision(2))
+    if (q > 0 && (!out.length || q > out.at(-1))) out.push(q)
+  }
+  return out
+}
+export const densityClass = (value, breaks) => breaks.filter((b) => value >= b).length
+// Five steps of one hue, light to dark. Drawn at 0.75 opacity over the pale sea of the basemap.
+export const DENSITY_COLOURS = ['#e6d9f2', '#c4a6e0', '#9d6dc9', '#7340a6', '#47206b']
+export function densityExpression(prop, breaks, colours = DENSITY_COLOURS) {
+  if (breaks.length + 1 > colours.length) throw new Error('more classes than colours')
+  const expr = ['step', ['get', prop], colours[0]]
+  breaks.forEach((b, i) => expr.push(b, colours[i + 1]))
+  return expr
+}
+// A key of stepped blocks, left to right, one block per class.
+export function stepGradient(colours) {
+  const w = 100 / colours.length
+  return `linear-gradient(to right, ${colours.map((c, i) => `${c} ${Math.round(i * w * 10) / 10}%, ${c} ${Math.round((i + 1) * w * 10) / 10}%`).join(', ')})`
+}
+// A number shown to 2 significant figures, with the thousands separator.
+export const fmt2 = (n) => Number(Number(n).toPrecision(2)).toLocaleString('en-CA', { maximumFractionDigits: 6 })
+export function cetaceanInfo(p, key) {
+  const sp = CETACEANS[key]
+  if (!sp) throw new Error('unknown species')
+  const n = num(p[`${key}_n`]), cv = num(p[`${key}_cv`]), km2 = num(p.km2)
+  if (n == null || cv == null || km2 == null) throw new Error('the cell has no number for this species')
+  return {
+    title: `${sp.name}: modelled summer numbers`,
+    tag: 'model of summer 2018 surveys',
+    lines: [
+      `The model predicts about ${fmt2(n)} ${n === 1 ? sp.plural.replace(/s$/, '') : sp.plural} in this cell (Nhat, for a cell of ${fmt2(km2)} km²).`,
+      `That is about ${fmt2(cetaceanDensity(n, km2))} per 100 km².`,
+      `Uncertainty (CV): ${cv.toFixed(2)}. Higher means less certain.`,
+      'This is a model of ship surveys from July to early September 2018. It is not where animals are now, and no sighting is shown on this map.',
+      WHALE_RULES,
+    ],
+    source: `Source: Fisheries and Oceans Canada, Pacific Region International Survey of Marine Megafauna (PRISMM), spatial density models. Not for navigation. ${OGL_CANADA_LINE}`,
+  }
+}
+
+// CRIMS (coastal habitat). Every popup says the survey is old.
+export function kelpInfo(p) {
+  const species = str(p.species, 60), density = lower(p.density)
+  return {
+    title: species ? `${species.charAt(0).toUpperCase()}${species.slice(1).toLowerCase()} bed` : 'Kelp bed',
+    tag: 'kelp bed',
+    lines: [density ? `Density recorded: ${density}.` : null, 'Mapped in a survey that began in 1979, so the bed may have changed or gone.'].filter(Boolean),
+    source: CRIMS_SOURCE,
+  }
+}
+export function eelgrassInfo(p) {
+  const year = Number.isInteger(p.year) && p.year > 1900 ? p.year : null
+  return {
+    title: 'Eelgrass bed',
+    tag: 'eelgrass',
+    lines: [year ? `Mapped in ${year}.` : null, 'This is an old survey, so the bed may have changed or gone.'].filter(Boolean),
+    source: CRIMS_SOURCE,
+  }
+}
+export function herringInfo(p) {
+  const magnitude = lower(p.magnitude), consistency = lower(p.consistency)
+  const from = Number.isInteger(p.first_year) ? p.first_year : null, to = Number.isInteger(p.last_year) ? p.last_year : null
+  return {
+    title: 'Herring spawn, shore',
+    tag: 'herring spawn',
+    lines: [
+      magnitude ? `Spawn magnitude recorded: ${magnitude}.` : null,
+      consistency ? `Spawning here was recorded as ${consistency}.` : null,
+      from && to ? `The records run from ${from} to ${to}.` : null,
+      'These are old records, not this year’s spawn.',
+    ].filter(Boolean),
+    source: CRIMS_SOURCE,
+  }
+}
+export function seabirdInfo(p) {
+  return {
+    title: tidyName(p.name) || 'Seabird colony',
+    tag: 'seabird colony',
+    lines: ['A nesting colony recorded in a survey that began in 1979. Colonies change, so this may be out of date.', 'Nesting birds are easily disturbed by boats and people. Keep well back.'],
+    source: CRIMS_SOURCE,
+  }
+}
+
+// The status line of a marine layer, from the features that were loaded.
+export function marineMessage(id, features) {
+  const n = features.length, plural = (one, many) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`
+  const years = (key) => features.map((f) => f.properties?.[key]).filter((y) => Number.isInteger(y) && y > 0)
+  if (id === 'protected') return `${plural('marine zone', 'marine zones')} of protected areas in the area this map reaches. Click one for its owner, its year and whether it is no-take.`
+  if (id === 'srkw') return 'Southern Resident killer whale critical habitat in the area this map reaches. A mapped boundary, not a sighting.'
+  if (id === 'kelp') return `${plural('kelp bed', 'kelp beds')} from a survey that began in 1979. Old data, not a current record.`
+  if (id === 'eelgrass') {
+    const y = years('year')
+    return `${plural('eelgrass bed', 'eelgrass beds')}${y.length ? `, mapped in ${Math.min(...y) === Math.max(...y) ? Math.min(...y) : `${Math.min(...y)} to ${Math.max(...y)}`}` : ''}. Old data, not a current record.`
+  }
+  if (id === 'herring') {
+    const a = years('first_year'), b = years('last_year')
+    return `${plural('stretch of shore', 'stretches of shore')} with herring spawn recorded${a.length && b.length ? ` between ${Math.min(...a)} and ${Math.max(...b)}` : ''}. Old records, not this year’s spawn.`
+  }
+  if (id === 'seabirds') return `${plural('seabird colony', 'seabird colonies')} from a survey that began in 1979. Old data. Keep well back from nesting birds.`
+  throw new Error('unknown marine layer')
+}

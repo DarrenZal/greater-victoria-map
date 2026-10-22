@@ -81,6 +81,10 @@ body {
 #panel button.small { min-height: 36px; padding: 4px 14px; }
 #radar-controls, #currents-controls, #wind-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px 30px; font-size: 13px; }
 #radar-controls[hidden], #currents-controls[hidden], #wind-controls[hidden], #alerts-list:empty { display: none; }
+/* The species picker of the whale and porpoise density layer. */
+#cetaceans-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px 30px; font-size: 13px; }
+#cetaceans-controls[hidden] { display: none; }
+#panel select { min-height: 44px; max-width: 100%; padding: 4px 8px; font: inherit; color: var(--ink); background: var(--ground); border: 1px solid var(--line); border-radius: 6px; }
 #radar-legend { flex-basis: 100%; }
 #radar-legend summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; }
 #radar-legend img { display: block; max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); }
@@ -93,6 +97,8 @@ body {
 .scale-ticks span { position: absolute; top: 0; transform: translateX(-50%); font-size: 12px; }
 .scale-ticks span:first-child { transform: none; }
 .scale-ticks span:last-child { transform: translateX(-100%); }
+/* A key of steps has its limits between the blocks, so every number is centred on its limit. */
+.scale-ticks.steps span:first-child, .scale-ticks.steps span:last-child { transform: translateX(-50%); }
 /* The next events and the 24-hour curve in a tide popup. */
 .tide-events { border-collapse: collapse; margin: 2px 0 4px; }
 .tide-events th { text-align: left; font-weight: 600; padding: 1px 10px 1px 0; white-space: nowrap; }

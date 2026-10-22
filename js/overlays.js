@@ -1,8 +1,9 @@
 // Optional overlays for the Greater Victoria demo map. Plain ES module, no build step.
 //
-// Twelve live layers load from outside services straight from the visitor's browser, and three
-// static layers (ecoregions, industry and waste sites, seafloor depth) draw from files and tiles this
-// page already has. Every one is off by default and makes no request until its box is ticked. Each shows a plain status line,
+// Twelve live layers load from outside services straight from the visitor's browser, and ten
+// static layers (ecoregions, industry and waste sites, seafloor depth and seven marine life and protection
+// layers) draw from files and tiles this site already has. Every one is off by default and makes no request
+// until its box is ticked. Each shows a plain status line,
 // and a plain failure line if its request fails. Parsing and filtering live in
 // js/overlays-data.js, which has no DOM code so the checks can run it in Node.
 import {
@@ -16,6 +17,8 @@ import {
   SCALARS, SCALES, SCALE_TICKS, scalarCapabilitiesUrl, scalarTimes, scalarHour, nearestHour, scalarImageUrl, scalarInfoUrl, scalarReading, scalarText, scaleGradient,
   tideStation, tideFeatures, tideUrls, normaliseTide, tideNext, tideCurve, curveGeometry, curveTicks, tideClock, TIDE_STATIONS,
   DEPTH_TICKS, DEPTH_FADE_FROM, depthExpression, depthGradient,
+  MARINE_FILES, WHALE_RULES, WHALE_RULE_LINKS, OGL_CANADA_LINE, CETACEANS, cetaceanCells, densityBreaks, densityExpression, DENSITY_COLOURS, stepGradient, fmt2,
+  protectedInfo, srkwInfo, cetaceanInfo, kelpInfo, eelgrassInfo, herringInfo, seabirdInfo, marineMessage,
 } from './overlays-data.js'
 import { createFlow, FLOW_PROFILES } from './flow.js'
 
@@ -28,6 +31,12 @@ const GBIF_ATTRIB = 'Observations: <a href="https://www.gbif.org" target="_blank
 const ECO_ATTRIB = 'Ecoregions 2017 &copy; <a href="https://ecoregions.appspot.com/" target="_blank" rel="noopener">Resolve</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>'
 const TIDES_ATTRIB = 'Tides and tidal currents: <a href="https://tidesandcurrents.noaa.gov/disclaimers.html" target="_blank" rel="noopener">NOAA/NOS/CO-OPS</a> predictions'
 const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'
+const OGL_CANADA_LINK = '<a href="https://open.canada.ca/en/open-government-licence-canada" target="_blank" rel="noopener">OGL &ndash; Canada</a>'
+const OGL_BC_LINK = '<a href="https://www2.gov.bc.ca/gov/content?id=A519A56BC2BF44E4A008B33FCF527F61" target="_blank" rel="noopener">OGL &ndash; British Columbia</a>'
+const PROTECTED_ATTRIB = `Protected areas: <a href="https://open.canada.ca/data/en/dataset/6c343726-1e92-451a-876a-76e17d398a1c" target="_blank" rel="noopener">CPCAD</a> (${OGL_CANADA_LINK})`
+const SRKW_ATTRIB = `Killer whale critical habitat: <a href="https://open.canada.ca/data/en/dataset/db177a8c-5d7d-49eb-8290-31e6a45d786c" target="_blank" rel="noopener">Fisheries and Oceans Canada</a> (${OGL_CANADA_LINK})`
+const CETACEANS_ATTRIB = `Whale and porpoise model: <a href="https://open.canada.ca/data/en/dataset/39546277-b33e-4f80-8a2d-3ca1ce5b1401" target="_blank" rel="noopener">Fisheries and Oceans Canada</a> (${OGL_CANADA_LINK})`
+const CRIMS_ATTRIB = `Coastal habitat: CRIMS, Province of British Columbia, a legacy survey from 1979 (${OGL_BC_LINK})`
 const INDUSTRY_ATTRIB = 'Industry and waste sites: Statistics Canada (OGL &ndash; Canada), HydroWASTE (CC BY 4.0), WRI (CC BY 4.0)'
 
 // The full attribution of each industry and waste source, shown in the popup of its sites.
@@ -75,6 +84,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     salinity: { label: 'Sea saltiness', ids: ['sea-scalar', 'salinity-credit'], ui: ['salinity-key', 'salinity-note'], ttl: 30 * 60e3, load: (s) => loadScalar('salinity', s) },
     tides: { label: 'Tides and tidal currents', ids: ['tides-dot', 'tides-label'], ui: ['tides-note'], source: 'ov-tides', ttl: Infinity, load: loadTides },
     seafloor: { label: 'Seafloor depth', ids: ['seafloor'], ui: ['seafloor-key', 'seafloor-note'], ttl: Infinity, load: loadSeafloor },
+    // Marine life and protection: a file of this site each, fetched when the box is first ticked.
+    protected: { label: 'Protected marine areas', ids: ['protected-fill', 'protected-line'], ui: ['protected-note'], source: 'ov-protected', ttl: Infinity, load: (s) => loadMarine(s, 'protected') },
+    srkw: { label: 'Killer whale critical habitat', ids: ['srkw-fill', 'srkw-line'], ui: ['srkw-note'], source: 'ov-srkw', ttl: Infinity, load: (s) => loadMarine(s, 'srkw') },
+    cetaceans: { label: 'Whale and porpoise density', ids: ['cetaceans-fill', 'cetaceans-line'], ui: ['cetaceans-controls', 'cetaceans-key', 'cetaceans-note'], source: 'ov-cetaceans', ttl: Infinity, load: loadCetaceans },
+    kelp: { label: 'Kelp beds', ids: ['kelp-fill', 'kelp-line'], source: 'ov-kelp', ttl: Infinity, load: (s) => loadMarine(s, 'kelp') },
+    eelgrass: { label: 'Eelgrass', ids: ['eelgrass-fill', 'eelgrass-line'], source: 'ov-eelgrass', ttl: Infinity, load: (s) => loadMarine(s, 'eelgrass') },
+    herring: { label: 'Herring spawn', ids: ['herring-line'], source: 'ov-herring', ttl: Infinity, load: (s) => loadMarine(s, 'herring') },
+    seabirds: { label: 'Seabird colonies', ids: ['seabirds-dot'], source: 'ov-seabirds', ttl: Infinity, load: (s) => loadMarine(s, 'seabirds') },
     alerts: { label: 'Weather alerts', ids: ['alerts-fill', 'alerts-line'], source: 'ov-alerts', ttl: 5 * 60e3, load: loadAlerts },
     aqhi: { label: 'Air quality', ids: ['aqhi-dot', 'aqhi-label'], source: 'ov-aqhi', ttl: 15 * 60e3, load: loadAqhi },
     quakes: { label: 'Earthquakes', ids: ['quakes-dot', 'quakes-label'], source: 'ov-quakes', ttl: 5 * 60e3, load: loadQuakes },
@@ -185,6 +202,41 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     const kinds = data.features.reduce((a, f) => ((a[f.properties.kind] = (a[f.properties.kind] || 0) + 1), a), {})
     return { data, message: `${plural(n, 'site', 'sites')}: ${plural(kinds.landfill || 0, 'landfill or waste site', 'landfills and waste sites')}, ${plural(kinds.wastewater || 0, 'wastewater plant', 'wastewater plants')}, ${plural(kinds.power || 0, 'power plant', 'power plants')}.` }
   }
+
+  // ---- marine life and protection: files of this site. None shows where an animal is now.
+  async function loadMarine(signal, id) {
+    const data = await json(MARINE_FILES[id], signal)
+    if (!Array.isArray(data.features) || !data.features.length) throw new Error('not a feature collection')
+    return { data, message: marineMessage(id, data.features) }
+  }
+  // Whale and porpoise density: 223 cells of 25 km2 with the numbers of three species, one picked at a time. The colour is the
+  // density (animals per 100 km2) in five classes of equal shares of the cells, worked out for the species when the file is read.
+  const cet = { key: 'humpback', breaks: {}, cells: 0 }
+  const cetaceanStatus = () => `${CETACEANS[cet.key].name}: modelled summer density from the 2018 ship surveys, not where animals are now. ${cet.cells} cells in Canadian waters.`
+  async function loadCetaceans(signal) {
+    const data = cetaceanCells(await json(MARINE_FILES.cetaceans, signal))
+    if (!data.features.length) throw new Error('no cells')
+    cet.cells = data.features.length
+    for (const key of Object.keys(CETACEANS)) cet.breaks[key] = densityBreaks(data.features.map((f) => f.properties[`d_${key}`]))
+    return { data, message: cetaceanStatus(), after: showCetacean }
+  }
+  // Colour the cells for the species picked, and write the key under the box.
+  function showCetacean() {
+    const key = cet.key, breaks = cet.breaks[key]
+    if (!breaks || !have('cetaceans-fill')) return
+    const colours = DENSITY_COLOURS.slice(0, breaks.length + 1)
+    map.setPaintProperty('cetaceans-fill', 'fill-color', densityExpression(`d_${key}`, breaks))
+    $('cetaceans-bar').style.backgroundImage = stepGradient(colours)
+    $('cetaceans-key-title').textContent = `Modelled ${CETACEANS[key].plural} per 100 km², summer 2018`
+    const row = $('cetaceans-ticks')
+    row.replaceChildren()
+    breaks.forEach((b, i) => { const t = el('span', fmt2(b)); t.style.left = `${(i + 1) / colours.length * 100}%`; row.append(t) })
+    if (state.cetaceans.on) setStatus('cetaceans', 'ok', cetaceanStatus())
+  }
+  $('cetaceans-species').addEventListener('change', (e) => { if (CETACEANS[e.target.value]) { cet.key = e.target.value; showCetacean() } })
+  $('protected-note').textContent = 'Only the marine parts of protected areas. The land of a park is in Parks and green spaces. Boundaries are approximate. Click an area for its owner, its year and whether it is a no-take area. Not for navigation.'
+  $('srkw-note').textContent = `The area Canada has mapped as critical habitat for Southern Resident killer whales. It is a boundary, not a sighting, and is for general guidance only. ${WHALE_RULES}`
+  $('cetaceans-note').textContent = `A model of summer 2018 ship surveys, not where animals are now. Each square is 5 km across (25 km²). Darker means more animals predicted per 100 km². Canadian waters only. ${WHALE_RULES}`
 
   // ---- weather alerts
   async function loadAlerts(signal) {
@@ -724,6 +776,28 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     }
     map.addLayer({ id: 'ecoregions-line', type: 'line', source: 'ov-ecoregions', layout: hidden, paint: { 'line-color': '#2f6a3d', 'line-width': 1.4 } }, ecoBefore)
 
+    // Marine life and protection. The areas sit under the parks and creeks, so land features stay on top of anything that touches the
+    // shore. The lines and dots sit with the other dots, under the basemap's labels.
+    src('ov-srkw', SRKW_ATTRIB)
+    map.addLayer({ id: 'srkw-fill', type: 'fill', source: 'ov-srkw', layout: hidden, paint: { 'fill-color': '#c0522c', 'fill-opacity': 0.12 } }, ecoBefore)
+    map.addLayer({ id: 'srkw-line', type: 'line', source: 'ov-srkw', layout: hidden, paint: { 'line-color': '#8c2f0f', 'line-width': 2.2, 'line-dasharray': [3, 2] } }, ecoBefore)
+    src('ov-cetaceans', CETACEANS_ATTRIB)
+    map.addLayer({ id: 'cetaceans-fill', type: 'fill', source: 'ov-cetaceans', layout: hidden, paint: { 'fill-color': DENSITY_COLOURS[0], 'fill-opacity': 0.75 } }, ecoBefore)
+    map.addLayer({ id: 'cetaceans-line', type: 'line', source: 'ov-cetaceans', layout: hidden, paint: { 'line-color': '#ffffff', 'line-opacity': 0.5, 'line-width': 0.6 } }, ecoBefore)
+    src('ov-protected', PROTECTED_ATTRIB)
+    map.addLayer({ id: 'protected-fill', type: 'fill', source: 'ov-protected', layout: hidden, paint: { 'fill-color': '#0f7f7b', 'fill-opacity': 0.3 } }, ecoBefore)
+    map.addLayer({ id: 'protected-line', type: 'line', source: 'ov-protected', layout: hidden, paint: { 'line-color': '#0b5f5c', 'line-width': 1.5 } }, ecoBefore)
+    src('ov-kelp', CRIMS_ATTRIB)
+    map.addLayer({ id: 'kelp-fill', type: 'fill', source: 'ov-kelp', layout: hidden, paint: { 'fill-color': '#8a6d0b', 'fill-opacity': 0.7 } }, ecoBefore)
+    map.addLayer({ id: 'kelp-line', type: 'line', source: 'ov-kelp', layout: hidden, paint: { 'line-color': '#6b5408', 'line-width': 1 } }, ecoBefore)
+    src('ov-eelgrass', CRIMS_ATTRIB)
+    map.addLayer({ id: 'eelgrass-fill', type: 'fill', source: 'ov-eelgrass', layout: hidden, paint: { 'fill-color': '#1f9d55', 'fill-opacity': 0.75 } }, ecoBefore)
+    map.addLayer({ id: 'eelgrass-line', type: 'line', source: 'ov-eelgrass', layout: hidden, paint: { 'line-color': '#136b39', 'line-width': 1 } }, ecoBefore)
+    src('ov-herring', CRIMS_ATTRIB)
+    map.addLayer({ id: 'herring-line', type: 'line', source: 'ov-herring', layout: { ...hidden, 'line-cap': 'round' }, paint: { 'line-color': '#e8590c', 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 2, 14, 4] } }, before)
+    src('ov-seabirds', CRIMS_ATTRIB)
+    map.addLayer({ id: 'seabirds-dot', type: 'circle', source: 'ov-seabirds', layout: hidden, paint: { 'circle-radius': 6, 'circle-color': '#ffd23f', 'circle-stroke-width': 2, 'circle-stroke-color': '#3d2f00' } }, before)
+
     src('ov-alerts', ECCC_ATTRIB)
     map.addLayer({ id: 'alerts-fill', type: 'fill', source: 'ov-alerts', layout: hidden, paint: { 'fill-color': ['get', 'colour'], 'fill-opacity': 0.14 } }, before)
     map.addLayer({ id: 'alerts-line', type: 'line', source: 'ov-alerts', layout: hidden, paint: { 'line-color': ['get', 'colour'], 'line-width': 3 } }, before)
@@ -778,7 +852,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
 
   // ---- popups (DOM nodes and textContent only)
   const fmtNum = (n, d = 1) => Number(n).toLocaleString('en-CA', { maximumFractionDigits: d })
-  function popupFor(f, layer, group = [f]) {
+  function popupFor(f, layer, group = [f], hits = []) {
     const p = f.properties, box = el('div')
     const add = (title, tag, lines, src) => {
       box.append(el('h3', title))
@@ -787,6 +861,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       if (src) box.append(el('p', src, 'src'))
     }
     const more = (href, label) => { const a = link(href, label); if (a) { const d = el('p'); d.append(a); box.append(d) } }
+    const addInfo = (i) => add(i.title, i.tag, i.lines, i.source)
     const ECCC = 'Data Source: Environment and Climate Change Canada.'
     if (layer === 'aqhi-dot') {
       add(p.name, 'air quality (AQHI)', [`Air Quality Health Index ${p.shown}: ${p.band}. (${fmtNum(p.aqhi, 2)} before rounding.)`, `Observed ${pacificTime(p.when)}.`, 'The AQHI is a health index from 1 to 10+, not a pollutant measurement.'], ECCC)
@@ -856,6 +931,30 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       body.append(el('p', 'Asking NOAA for this station’s predictions…'))
       box.append(body)
       fillTide(station, body, box)
+    } else if (layer === 'seabirds-dot') {
+      addInfo(seabirdInfo(p))
+    } else if (layer === 'herring-line') {
+      addInfo(herringInfo(p))
+    } else if (layer === 'kelp-fill') {
+      addInfo(kelpInfo(p))
+    } else if (layer === 'eelgrass-fill') {
+      addInfo(eelgrassInfo(p))
+    } else if (layer === 'protected-fill' || layer === 'srkw-fill' || layer === 'cetaceans-fill') {
+      // One popup for everything under the click that is a protected area, the critical habitat or the model, in that order. The
+      // vessel distances are said once, at the end, when any whale is in it.
+      const under = (id) => (hits.length ? hits.filter((h) => h.layer.id === id) : id === layer ? group : [])
+      const seen = new Set(), areas = under('protected-fill').filter((h) => { const k = `${h.properties.name}|${h.properties.type}`; return !seen.has(k) && seen.add(k) })
+      const sections = areas.slice(0, 3).map((h) => protectedInfo(h.properties))
+      if (under('srkw-fill').length) sections.push(srkwInfo(under('srkw-fill')[0].properties))
+      if (under('cetaceans-fill').length) sections.push(cetaceanInfo(under('cetaceans-fill')[0].properties, cet.key))
+      const whales = sections.some((i) => i.lines.includes(WHALE_RULES))
+      sections.forEach((i, k) => { if (k) box.append(el('hr')); addInfo({ ...i, lines: i.lines.filter((l) => l !== WHALE_RULES), source: i.source.replace(` ${OGL_CANADA_LINE}`, '') }) })
+      box.append(el('hr'))
+      if (whales) {
+        box.append(el('p', WHALE_RULES))
+        for (const l of WHALE_RULE_LINKS) more(l.href, l.label)
+      }
+      box.append(el('p', OGL_CANADA_LINE, 'src'))
     } else if (layer === 'ecoregions-fill') {
       add(p.name, 'ecoregion', [`Biome: ${p.biome}.`, `Realm: ${p.realm}.`, 'The shapes come from a worldwide map, so the coast and edges are coarse.'], 'Ecoregions 2017 © Resolve. Licensed under CC BY 4.0. Simplified and clipped to this map’s box.')
       more('https://ecoregions.appspot.com/', 'Ecoregions 2017')
@@ -863,8 +962,11 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     return box
   }
 
-  const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot', 'tides-dot']
+  // Points and lines first, then the small areas, then the big ones, so the most specific thing under a click is the popup.
+  const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot', 'tides-dot', 'seabirds-dot', 'herring-line', 'kelp-fill', 'eelgrass-fill', 'protected-fill', 'srkw-fill', 'cetaceans-fill']
   const POPUP_LAYERS = [...QUERY_LAYERS, 'ecoregions-fill']
+  // Areas of the sea. A click on the sea that reaches one of these also gets the sea readout, above the area's popup.
+  const SEA_AREA_LAYERS = ['kelp-fill', 'eelgrass-fill', 'protected-fill', 'srkw-fill', 'cetaceans-fill']
 
-  return { addLayers, addLabels, popupFor, seaReadout, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, sea, wind, scalar, tideCache, flow, enable, disable, showFrame }
+  return { addLayers, addLabels, popupFor, seaReadout, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, seaAreaLayers: SEA_AREA_LAYERS, defs: DEFS, state, radar, sea, wind, scalar, tideCache, flow, enable, disable, showFrame }
 }

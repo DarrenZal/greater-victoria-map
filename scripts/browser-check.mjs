@@ -24,7 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.geojson': 'application/geo+json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8' }
 const BOWKER = [-123.3165974, 48.4309387]
 // Map layers of the optional overlays that exist from the start, all hidden. The radar layer is made on first use.
-const OVERLAY_LAYERS = ['radar-credit', 'currents-credit', 'wind-credit', 'temperature-credit', 'salinity-credit', 'seafloor', 'tides-dot', 'tides-label', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label']
+const OVERLAY_LAYERS = ['radar-credit', 'currents-credit', 'wind-credit', 'temperature-credit', 'salinity-credit', 'seafloor', 'tides-dot', 'tides-label', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label', 'protected-fill', 'protected-line', 'srkw-fill', 'srkw-line', 'cetaceans-fill', 'cetaceans-line', 'kelp-fill', 'kelp-line', 'eelgrass-fill', 'eelgrass-line', 'herring-line', 'seabirds-dot']
 // What each box asks of the network when ticked: [host, ...] and the file it loads from this site.
 const OVERLAY_NET = {
   radar: { hosts: ['geo.weather.gc.ca'] }, currents: { hosts: ['geo.weather.gc.ca'] }, wind: { hosts: ['geo.weather.gc.ca'] }, alerts: { hosts: ['api.weather.gc.ca'] }, aqhi: { hosts: ['api.weather.gc.ca'] },
@@ -33,6 +33,9 @@ const OVERLAY_NET = {
   tides: { hosts: [] }, seafloor: { hosts: [] },
   conditions: { hosts: ['api.weather.gc.ca'] }, water: { hosts: ['api.weather.gc.ca'] }, quakes: { hosts: ['earthquake.usgs.gov'] },
   life: { hosts: ['api.gbif.org'] }, ecoregions: { hosts: [], file: 'data/ecoregions.geojson' }, industry: { hosts: [], file: 'data/industry-waste.geojson' },
+  // Marine life and protection: one file of this site each, so ticking contacts no outside host.
+  protected: { hosts: [], file: 'data/marine-protected.geojson' }, srkw: { hosts: [], file: 'data/srkw-habitat.geojson' }, cetaceans: { hosts: [], file: 'data/whale-density.geojson' },
+  kelp: { hosts: [], file: 'data/kelp.geojson' }, eelgrass: { hosts: [], file: 'data/eelgrass.geojson' }, herring: { hosts: [], file: 'data/herring-spawn.geojson' }, seabirds: { hosts: [], file: 'data/seabird-colonies.geojson' },
 }
 const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov']
 const ECCC_STATEMENT = 'Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.'
@@ -41,6 +44,7 @@ const OVERLAY_ATTRIB = {
   radar: ECCC_STATEMENT, currents: ECCC_STATEMENT, wind: ECCC_STATEMENT, alerts: ECCC_STATEMENT, aqhi: ECCC_STATEMENT, conditions: ECCC_STATEMENT, water: ECCC_STATEMENT,
   temperature: ECCC_STATEMENT, salinity: ECCC_STATEMENT, tides: 'NOAA/NOS/CO-OPS', seafloor: 'ETOPO1',
   quakes: 'U.S. Geological Survey', life: 'GBIF', ecoregions: 'Ecoregions 2017 \u00a9 Resolve', industry: 'HydroWASTE',
+  protected: 'Protected areas: CPCAD', srkw: 'Killer whale critical habitat', cetaceans: 'Whale and porpoise model', kelp: 'Coastal habitat: CRIMS', eelgrass: 'Coastal habitat: CRIMS', herring: 'Coastal habitat: CRIMS', seabirds: 'Coastal habitat: CRIMS',
 }
 
 function serve() {
@@ -142,7 +146,7 @@ async function checkViewport(browser, base, name, vp, shots) {
   report(info.layers.length === 0, t('all map layers present'), 'missing: ' + info.layers.join(', '))
   report(JSON.stringify(info.defaults) === JSON.stringify({ 'bec-fill': 'none', hillshade: 'visible', 'watersheds-line': 'none', 'parks-local': 'visible', 'parks-bc': 'visible', streams: 'visible', 'streams-flow': 'visible', 'muni-line': 'visible', pins: 'visible' }), t('default layer visibility as specified'), JSON.stringify(info.defaults))
   report(info.flowBox.checked && !info.flowBox.disabled && info.flowRunning && info.terrainChecked, t('Flow box is on and the flow loop is running; Terrain shading box is on'), JSON.stringify({ flowBox: info.flowBox, running: info.flowRunning, terrain: info.terrainChecked, zoom: info.zoom }))
-  report(Object.values(info.overlayDefaults).every((v) => v === 'none') && info.overlayBoxes.length === 15 && info.overlayBoxes.every((b) => !b) && !info.overlayRadarLayer && !info.flowCanvas && !info.seaScalarLayer, t('every new layer exists, is hidden and unticked at load, and the particle canvas and the sea picture do not exist yet (ecoregions, industry, radar, sea currents, wind, sea temperature, sea saltiness, tides, seafloor, alerts, air quality, conditions, river gauges, earthquakes, life observations)'), JSON.stringify([info.overlayDefaults, info.overlayBoxes, info.overlayRadarLayer]))
+  report(Object.values(info.overlayDefaults).every((v) => v === 'none') && info.overlayBoxes.length === 22 && info.overlayBoxes.every((b) => !b) && !info.overlayRadarLayer && !info.flowCanvas && !info.seaScalarLayer, t('every new layer exists, is hidden and unticked at load, and the particle canvas and the sea picture do not exist yet (ecoregions, industry, radar, sea currents, wind, sea temperature, sea saltiness, tides, seafloor, alerts, air quality, conditions, river gauges, earthquakes, life observations)'), JSON.stringify([info.overlayDefaults, info.overlayBoxes, info.overlayRadarLayer]))
   const v = info.view3d
   report(v.box && v.terrain?.source === 'terrain-dem' && v.terrain.exaggeration === 2 && Math.abs(v.pitch - 60) < 1 && v.maxPitch >= 60 && v.rotate && v.sky && v.note, t('3D terrain is on at load: terrain from the elevation tiles, tilted to 60 degrees, rotation unlocked, sky and note shown'), JSON.stringify(v))
   const hosts = [...new Set(requests.map((u) => new URL(u).host))].filter((h) => !h.startsWith('127.0.0.1'))
@@ -190,6 +194,7 @@ async function checkViewport(browser, base, name, vp, shots) {
   await checkSea(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
   await checkTides(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
   await checkSeafloor(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
+  await checkMarine(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
   await page.waitForTimeout(1200)
   if (shots) await page.screenshot({ timeout: 120000, path: join(shots, `${name}-2-bec-watersheds.png`) })
 
@@ -1251,6 +1256,336 @@ async function checkSeafloor(page, requests, t, name, shot) {
   await panel(panelWas)
 }
 
+// Marine life and protection: seven layers drawn from files of this site (no outside host, nothing requested before a box is ticked).
+// Checked on both screen sizes: each box on and off (layers, status line, credit, the one file asked for), a popup for each layer, the
+// species picker and its key, the panel on a phone, and a popup built from text only. On the desktop run the pixels are also read: the colour
+// of each density cell is the colour of its class, and the areas leave the land alone.
+const MARINE = {
+  protected: { file: 'data/marine-protected.geojson', layers: ['protected-fill', 'protected-line'], credit: 'Protected areas: CPCAD', status: (n) => new RegExp(`^${n} marine zones of protected areas in the area this map reaches\\. Click one for its owner, its year and whether it is no-take\\.$`) },
+  srkw: { file: 'data/srkw-habitat.geojson', layers: ['srkw-fill', 'srkw-line'], credit: 'Killer whale critical habitat: Fisheries and Oceans Canada', status: () => /^Southern Resident killer whale critical habitat in the area this map reaches\. A mapped boundary, not a sighting\.$/ },
+  cetaceans: { file: 'data/whale-density.geojson', layers: ['cetaceans-fill', 'cetaceans-line'], credit: 'Whale and porpoise model: Fisheries and Oceans Canada', status: (n) => new RegExp(`^Humpback whale: modelled summer density from the 2018 ship surveys, not where animals are now\\. ${n} cells in Canadian waters\\.$`) },
+  kelp: { file: 'data/kelp.geojson', layers: ['kelp-fill', 'kelp-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n.toLocaleString('en-CA')} kelp beds from a survey that began in 1979\\. Old data, not a current record\\.$`) },
+  eelgrass: { file: 'data/eelgrass.geojson', layers: ['eelgrass-fill', 'eelgrass-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} eelgrass beds, mapped in 1998\\. Old data, not a current record\\.$`) },
+  herring: { file: 'data/herring-spawn.geojson', layers: ['herring-line'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} stretches of shore with herring spawn recorded between 1937 and 1986\\. Old records, not this year’s spawn\\.$`) },
+  seabirds: { file: 'data/seabird-colonies.geojson', layers: ['seabirds-dot'], credit: 'Coastal habitat: CRIMS', status: (n) => new RegExp(`^${n} seabird colonies from a survey that began in 1979\\. Old data\\. Keep well back from nesting birds\\.$`) },
+}
+const WHALE_RULES_TEXT = 'Vessels must stay at least 1,000 m from Southern Resident killer whales from June 1, 2026 to May 31, 2027, at least 200 m from all other killer whales and at least 100 m from all other whales, dolphins and porpoises. Some exceptions apply.'
+const OGL_CANADA_STATEMENT = 'Contains information licensed under the Open Government Licence – Canada.'
+const OGL_BC_STATEMENT = 'Contains information licensed under the Open Government Licence – British Columbia.'
+const SPECIES = { humpback: { name: 'Humpback whale', plural: 'humpback whales' }, harbour: { name: 'Harbour porpoise', plural: 'harbour porpoises' }, dalls: { name: 'Dall’s porpoise', plural: 'Dall’s porpoises' } }
+const bboxCentre = (g) => {
+  const xs = [], ys = []
+  const walk = (c) => { if (typeof c[0] === 'number') { xs.push(c[0]); ys.push(c[1]) } else c.forEach(walk) }
+  walk(g.coordinates)
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]
+}
+
+async function checkMarine(page, requests, t, name, shot) {
+  const panelWas = await page.evaluate(() => document.getElementById('panel-details').open)
+  const panel = (open) => page.evaluate((o) => { document.getElementById('panel-details').open = o }, open)
+  const wide = page.viewportSize().width >= 700
+  const disk = async (file) => JSON.parse(await readFile(join(ROOT, file), 'utf8')).features
+  const data = {}
+  for (const [id, m] of Object.entries(MARINE)) data[id] = await disk(m.file)
+  const fileRequests = (file) => requests.filter((u) => new URL(u).pathname.endsWith(`/${file}`)).length
+  const anyMarineFile = () => Object.values(MARINE).reduce((n, m) => n + fileRequests(m.file), 0)
+  const tick = (id, v = true) => setBox(page, `input[data-overlay=${id}]`, v)
+  const untickAll = async () => { for (const id of Object.keys(MARINE)) await tick(id, false); await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove()) }
+  await setBox(page, '#flow', false)
+  await untickAll()
+  // On the phone run nothing has been ticked yet, so no marine file can have been asked for. (On the desktop run the same is checked, with the other
+  // layers, at the start of the overlay check.)
+  if (name === 'phone') report(anyMarineFile() === 0, t('marine layers: nothing is requested for the seven marine files before a box is ticked'), String(anyMarineFile()))
+  const baseline = requests.length
+
+  // ---- each box: layers, status line, credit, the one file asked for, and everything off again
+  for (const [id, m] of Object.entries(MARINE)) {
+    const before = fileRequests(m.file)
+    await tick(id, true)
+    await waitStatus(page, id, 60000).catch(() => {})
+    await page.waitForTimeout(500)
+    const st = await statusOf(page, id)
+    const vis = await layerStates(page, id)
+    const attrib = await page.evaluate(() => document.querySelector('.maplibregl-ctrl-attrib').textContent)
+    const ui = await page.evaluate((id) => Object.fromEntries((window.__overlays.defs[id].ui || []).map((u) => [u, !document.getElementById(u).hidden])), id)
+    const after = fileRequests(m.file)
+    report(st.state === 'ok' && m.status(data[id].length).test(st.text) && vis.length === m.layers.length && vis.every((v) => v === 'visible') && attrib.includes(m.credit) && Object.values(ui).every(Boolean) && before <= 1 && after === 1, t(`marine ${id}: ticking it shows its layer, a status line that counts the file's features, its credit on the map and its own controls, and asks for its one file once`), JSON.stringify({ st, vis, credit: attrib.includes(m.credit), ui, before, after }))
+    await tick(id, false)
+    await page.waitForTimeout(300)
+    const off = await page.evaluate(([id, layers]) => ({ vis: layers.map((l) => window.__map.getLayoutProperty(l, 'visibility')), status: !document.getElementById('status-' + id).hidden, ui: (window.__overlays.defs[id].ui || []).filter((u) => !document.getElementById(u).hidden), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }), [id, m.layers])
+    report(off.vis.every((v) => v === 'none') && !off.status && off.ui.length === 0 && !off.attrib.includes(m.credit), t(`marine ${id}: unticking hides its layer, status line, controls and credit`), JSON.stringify(off))
+  }
+
+  // ---- a popup for each layer, found by looking for the layer on the screen where its data is
+  await panel(false)
+  const popupInfo = () => page.evaluate(() => {
+    const c = document.querySelector('.maplibregl-popup-content'); if (!c) return null
+    const r = c.getBoundingClientRect()
+    return { title: c.querySelector('h3')?.textContent, titles: [...c.querySelectorAll('h3')].map((h) => h.textContent), tag: c.querySelector('.tag')?.textContent, text: c.innerText.replace(/\n+/g, ' | '), links: [...c.querySelectorAll('a')].map((a) => a.href + ' ' + a.rel), hr: c.querySelectorAll('hr').length, imgs: c.querySelectorAll('img').length, scrollTop: c.scrollTop, within: r.left >= 0 && r.right <= innerWidth }
+  })
+  const view = async (c, z) => {
+    await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z, pitch: 0, bearing: 0 }) }, [c, z])
+    await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+    await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 40000 }).catch(() => {})
+    await page.waitForTimeout(900)
+  }
+  // A place on the screen (not under the banner, the buttons or the panel) where every layer in the list is under a 16 px box,
+  // the one nearest the middle of the screen, as a visitor would click.
+  const scan = (layers) => page.evaluate((layers) => {
+    const m = window.__map
+    let best = null
+    for (let y = 140; y < innerHeight - 110; y += 14) for (let x = 40; x < innerWidth - 60; x += 14) {
+      const box = [[x - 8, y - 8], [x + 8, y + 8]]
+      if (!layers.every((l) => m.queryRenderedFeatures(box, { layers: [l] }).length > 0)) continue
+      const d = Math.hypot(x - innerWidth / 2, y - innerHeight / 2)
+      if (!best || d < best.d) best = { d, at: [x, y] }
+    }
+    return best ? best.at : null
+  }, layers)
+  // Look for the layer on the screen, bring the place to the middle of the screen (a visitor can pan, and on a phone a popup only fits in full
+  // when it opens from near the middle), and click there.
+  const clickLayer = async (layers, c, z) => {
+    await view(c, z)
+    let at = null
+    for (let i = 0; i < 4 && !at; i++) { at = await scan(layers); if (!at) await page.waitForTimeout(900) }
+    if (!at) return { at: null, pop: null }
+    await page.evaluate(([x, y]) => { const m = window.__map; m.jumpTo({ center: m.unproject([x, y]) }) }, at)
+    await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+    await page.waitForTimeout(900)
+    at = await scan(layers)
+    if (!at) return { at: null, pop: null }
+    await page.mouse.click(at[0], at[1])
+    await page.waitForFunction(() => !!document.querySelector('.maplibregl-popup-content'), null, { timeout: 8000 }).catch(() => {})
+    await page.waitForTimeout(500)
+    return { at, pop: await popupInfo() }
+  }
+  const featureAt = (id, pick) => { const f = data[id].find(pick) || data[id][0]; return f.geometry.type === 'Point' ? f.geometry.coordinates : bboxCentre(f.geometry) }
+
+  // protected area: Race Rocks
+  await tick('protected', true); await waitStatus(page, 'protected').catch(() => {})
+  let r = await clickLayer(['protected-fill'], featureAt('protected', (f) => f.properties.name === 'RACE ROCKS ECOLOGICAL RESERVE'), 12.5)
+  let p = r.pop
+  report(!!p && p.title === 'Race Rocks Ecological Reserve' && p.tag === 'ecological reserve' && p.text.includes('Owner: Government of British Columbia.') && p.text.includes('Established 1980.') && p.text.includes('No-take area, as reported to CPCAD: all of it.') && p.text.includes('Source: Canadian Protected and Conserved Areas Database (CPCAD).') && p.text.includes(OGL_CANADA_STATEMENT) && !p.text.includes('1,000 m') && p.imgs === 0 && p.scrollTop === 0 && p.within, t('marine protected: a click on Race Rocks opens its popup with owner, year, the no-take line, the CPCAD source and the Open Government Licence statement'), JSON.stringify(p))
+  if (shot) await shot('marine-protected-popup')
+  // The Gulf Islands National Park Reserve reports "None": no part is no-take. A park (class A) has no no-take line at all.
+  const gulf = data.protected.find((f) => /Gulf Islands/.test(f.properties.name) && f.properties.no_take === 3)
+  const park = data.protected.find((f) => f.properties.type === 'A - Park')
+  r = await clickLayer(['protected-fill'], bboxCentre(gulf.geometry), 11)
+  p = r.pop
+  report(!!p && /Gulf Islands National Park Reserve/.test(p.title) && p.text.includes('No-take area, as reported to CPCAD: none of it.'), t('marine protected: the Gulf Islands marine zone says none of it is no-take, as CPCAD reports'), JSON.stringify(p))
+  r = await clickLayer(['protected-fill'], bboxCentre(park.geometry), 14)
+  p = r.pop
+  report(!!p && p.tag === 'park (class A)' && !p.text.includes('No-take'), t('marine protected: a park (class A) shows no no-take line, because CPCAD gives none'), JSON.stringify(p))
+  await tick('protected', false)
+
+  // critical habitat
+  await tick('srkw', true); await waitStatus(page, 'srkw').catch(() => {})
+  r = await clickLayer(['srkw-fill'], [-123.3, 48.45], 9.6)
+  p = r.pop
+  report(!!p && p.title === 'Southern Resident killer whale critical habitat' && p.text.includes('A mapped boundary, not a sighting. It does not show where the whales are now.') && p.text.includes(WHALE_RULES_TEXT) && p.text.includes('For general guidance only.') && p.text.includes(OGL_CANADA_STATEMENT) && p.links.length === 2 && p.links.every((l) => l.startsWith('https://') && l.includes('noopener')) && p.links[0].includes('tc.canada.ca') && p.links[1].includes('laws-lois.justice.gc.ca') && p.imgs === 0 && p.scrollTop === 0 && p.within, t('marine critical habitat: the popup says it is a boundary and not a sighting, gives the vessel distances word for word with links to the bulletin and the regulations, and says for general guidance only'), JSON.stringify(p))
+  if (shot) await shot('marine-srkw-popup')
+  await tick('srkw', false)
+
+  // density: three species
+  await tick('cetaceans', true); await waitStatus(page, 'cetaceans').catch(() => {})
+  const cells = data.cetaceans
+  const dens = (key) => cells.map((f) => f.properties[`${key}_n`] / f.properties.km2 * 100)
+  const breaksOf = (key) => page.evaluate(async (values) => (await import('/js/overlays-data.js')).densityBreaks(values), dens(key))
+  const keyState = () => page.evaluate(() => ({ title: document.getElementById('cetaceans-key-title').textContent, ticks: [...document.querySelectorAll('#cetaceans-ticks span')].map((x) => x.textContent), lefts: [...document.querySelectorAll('#cetaceans-ticks span')].map((x) => x.style.left), bar: document.getElementById('cetaceans-bar').style.backgroundImage, fill: JSON.stringify(window.__map.getPaintProperty('cetaceans-fill', 'fill-color')), status: document.getElementById('status-cetaceans').textContent, select: document.getElementById('cetaceans-species').value, options: [...document.querySelectorAll('#cetaceans-species option')].map((o) => o.value + ':' + o.textContent), label: document.querySelector('label[for=cetaceans-species]')?.textContent, note: document.getElementById('cetaceans-note').textContent }))
+  // The species is picked with the panel open, as a visitor does, and the panel is closed again so the map can be clicked and read.
+  const pick = async (key) => { await panel(true); await page.selectOption('#cetaceans-species', key); await panel(false) }
+  const seenFills = new Set()
+  for (const [key, sp] of Object.entries(SPECIES)) {
+    await pick(key)
+    await page.waitForTimeout(400)
+    const k = await keyState(), want = await breaksOf(key)
+    const fmt = (b) => Number(Number(b).toPrecision(2)).toLocaleString('en-CA', { maximumFractionDigits: 6 })
+    seenFills.add(k.fill)
+    report(k.select === key && k.title === `Modelled ${sp.plural} per 100 km², summer 2018` && k.ticks.join() === want.map(fmt).join() && want.length === 4 && k.lefts.join() === '20%,40%,60%,80%' && k.fill.includes(`"d_${key}"`) && k.fill.includes(want.join(',').split(',')[0]) && k.bar.startsWith('linear-gradient') && k.status.startsWith(`${sp.name}: modelled summer density from the 2018 ship surveys, not where animals are now.`) && k.options.join() === 'humpback:Humpback whale,harbour:Harbour porpoise,dalls:Dall’s porpoise' && k.label === 'Species', t(`marine cetaceans: picking ${sp.name} colours the cells by its density, puts its class limits (${want.map(fmt).join(', ')}) under the key and says so in the status line`), JSON.stringify({ k, want }))
+  }
+  report(seenFills.size === 3, t('marine cetaceans: each species has its own colour expression'), String(seenFills.size))
+  await pick('harbour')
+  r = await clickLayer(['cetaceans-fill'], [-123.3, 48.45], 9.6)
+  p = r.pop
+  report(!!p && p.title === 'Harbour porpoise: modelled summer numbers' && p.tag === 'model of summer 2018 surveys' && /The model predicts about [\d.,]+ harbour porpoises in this cell \(Nhat, for a cell of [\d.,]+ km²\)\./.test(p.text) && /That is about [\d.,]+ per 100 km²\./.test(p.text) && /Uncertainty \(CV\): \d\.\d\d\. Higher means less certain\./.test(p.text) && p.text.includes('July to early September 2018') && p.text.includes('not where animals are now') && p.text.includes(WHALE_RULES_TEXT) && p.text.includes('Source: Fisheries and Oceans Canada, Pacific Region International Survey of Marine Megafauna (PRISMM)') && p.text.includes(OGL_CANADA_STATEMENT) && p.links.length === 2 && p.imgs === 0 && p.scrollTop === 0 && p.within, t('marine cetaceans: a click on a cell gives the species, the model number (Nhat) and area, the density, the uncertainty, the survey months and year, that it is not where animals are now, and the vessel distances'), JSON.stringify(p))
+  if (shot) await shot('marine-cetaceans-popup')
+  // the number in the popup is the file's number for that cell
+  const nums = (p?.text.match(/predicts about ([\d.,]+) harbour porpoises in this cell \(Nhat, for a cell of ([\d.,]+) km²/) || []).slice(1).map((x) => Number(x.replace(/,/g, '')))
+  report(nums.length === 2 && cells.some((f) => Math.abs(f.properties.harbour_n - nums[0]) <= Math.abs(f.properties.harbour_n) * 0.06 + 1e-9 && Math.abs(f.properties.km2 - nums[1]) <= f.properties.km2 * 0.06 + 1e-9), t('marine cetaceans: the numbers in the popup are numbers of one cell of the file, to two figures'), JSON.stringify(nums))
+  await pick('humpback')
+
+  // the three areas under one click: one popup, the vessel distances and the licence statement said once
+  await tick('protected', true); await tick('srkw', true); await waitStatus(page, 'protected').catch(() => {}); await waitStatus(page, 'srkw').catch(() => {})
+  r = await clickLayer(['protected-fill', 'srkw-fill', 'cetaceans-fill'], featureAt('protected', (f) => f.properties.name === 'OAK BAY ISLANDS ECOLOGICAL RESERVE'), 12.2)
+  p = r.pop
+  const count = (text, s) => text.split(s).length - 1
+  report(!!p && p.titles.length >= 3 && p.titles.includes('Southern Resident killer whale critical habitat') && p.titles.includes('Humpback whale: modelled summer numbers') && p.titles.some((x) => /Oak Bay Islands|Victoria Harbour/.test(x)) && count(p.text, WHALE_RULES_TEXT) === 1 && count(p.text, OGL_CANADA_STATEMENT) === 1 && p.hr >= 3 && p.links.length === 2 && p.scrollTop === 0 && p.within, t('marine areas together: a click where a protected area, the critical habitat and a density cell overlap gives one popup with all three, the vessel distances once and the licence statement once'), JSON.stringify({ ...p, text: p.text.slice(0, 200) }))
+  if (shot) await shot('marine-together-popup')
+  await untickAll()
+
+  // CRIMS layers: a click on each
+  // The survey's records near Victoria, not the ones at the west edge of the map, so the view can be centred on them.
+  const nearVictoria = (f) => { const [x, y] = f.geometry.type === 'Point' ? f.geometry.coordinates : bboxCentre(f.geometry); return x > -123.5 && x < -123.25 && y > 48.3 && y < 48.5 }
+  const crims = [
+    ['kelp', ['kelp-fill'], nearVictoria, 13.2, (x) => / bed$/.test(x.title) && x.tag === 'kelp bed' && (!/Density recorded/.test(x.text) || /Density recorded: (low|high)\./.test(x.text)) && x.text.includes('Mapped in a survey that began in 1979')],
+    ['eelgrass', ['eelgrass-fill'], nearVictoria, 13, (x) => x.title === 'Eelgrass bed' && x.text.includes('Mapped in 1998.')],
+    ['herring', ['herring-line'], nearVictoria, 14, (x) => x.title === 'Herring spawn, shore' && /Spawn magnitude recorded: [a-z ]+\./.test(x.text) && x.text.includes('The records run from 1937 to 1986.') && x.text.includes('These are old records, not this year’s spawn.')],
+    ['seabirds', ['seabirds-dot'], (f) => f.properties.name === 'CHAIN ISLETS', 14, (x) => x.title === 'Chain Islets' && x.tag === 'seabird colony' && x.text.includes('Nesting birds are easily disturbed by boats and people. Keep well back.')],
+  ]
+  for (const [id, layers, pick, z, ok] of crims) {
+    await tick(id, true); await waitStatus(page, id).catch(() => {})
+    r = await clickLayer(layers, featureAt(id, pick), z)
+    p = r.pop
+    report(!!p && ok(p) && p.text.includes('legacy survey that began in 1979 and was only updated now and then') && p.text.includes(OGL_BC_STATEMENT) && p.imgs === 0 && p.scrollTop === 0 && p.within, t(`marine ${id}: a click opens a popup that says the survey is old (began in 1979, only updated now and then) and carries the Open Government Licence – British Columbia statement`), JSON.stringify(p))
+    if (shot && id === 'seabirds') await shot('marine-seabirds-popup')
+    await tick(id, false)
+  }
+
+  // popups are text only
+  const hostile = await page.evaluate(() => {
+    const o = window.__overlays, bad = '<img src=x onerror=alert(1)>'
+    const out = {}
+    for (const [layer, props] of [['protected-fill', { name: bad, type: bad, owner: '<b>y</b>', year: 1999, no_take: 1 }], ['seabirds-dot', { name: bad }], ['kelp-fill', { species: bad, density: bad }], ['herring-line', { magnitude: bad, consistency: bad, first_year: 1937, last_year: 1986 }]]) {
+      const box = o.popupFor({ properties: props }, layer, [{ properties: props }])
+      out[layer] = { img: box.querySelectorAll('img, b').length, text: box.textContent.includes('<img src=x onerror=alert(1)>') || box.textContent.toLowerCase().includes('<img') }
+    }
+    return out
+  })
+  report(Object.values(hostile).every((h) => h.img === 0 && h.text), t('marine popups: built from text only, markup in a record is shown as text and never run'), JSON.stringify(hostile))
+
+  // ---- the panel: all seven on, the notes, the picker, and nothing too wide for the screen
+  await panel(true)
+  await view([-123.35, 48.42], 9.6)
+  for (const id of Object.keys(MARINE)) await tick(id, true)
+  for (const id of Object.keys(MARINE)) await waitStatus(page, id).catch(() => {})
+  await page.waitForTimeout(1500)
+  const lay = await page.evaluate(() => {
+    const pn = document.getElementById('panel-details').getBoundingClientRect(), fs = document.getElementById('marine')
+    const inside = [...fs.querySelectorAll('label, p, div, select, summary')].filter((e) => !e.hidden && e.getBoundingClientRect().width > 0).filter((e) => e.getBoundingClientRect().right > pn.right + 1).map((e) => e.id || e.tagName)
+    const note = (id) => document.getElementById(id).textContent
+    return { overflowPage: document.documentElement.scrollWidth > innerWidth, overflowPanel: document.getElementById('panel-details').scrollWidth > document.getElementById('panel-details').clientWidth + 1, inside, sel: document.getElementById('cetaceans-species').getBoundingClientRect().toJSON(), pn: pn.toJSON(), intro: fs.querySelector('legend + p').textContent, notes: { protected: note('protected-note'), srkw: note('srkw-note'), cetaceans: note('cetaceans-note') }, crims: [...fs.querySelectorAll(':scope > p.empty:not(.sub)')].map((x) => x.textContent), labels: [...fs.querySelectorAll('label > span')].map((x) => x.textContent), hiddenNotes: ['protected-note', 'srkw-note', 'cetaceans-note', 'cetaceans-controls', 'cetaceans-key'].filter((id) => document.getElementById(id).hidden) }
+  })
+  report(!lay.overflowPage && !lay.overflowPanel && lay.inside.length === 0 && lay.sel.height >= 40 && lay.sel.right <= lay.pn.right && lay.hiddenNotes.length === 0, t('marine panel: with all seven boxes on nothing runs past the panel or the screen, the picker is at least 40 px tall, and every note, the picker and the key are shown'), JSON.stringify({ ...lay, notes: undefined }))
+  report(lay.intro === 'Protected areas, a mapped boundary, a model and an old survey. Nothing here shows where an animal is now. Not for navigation.' && lay.crims.includes('Coastal habitat comes from the Province’s Coastal Resource Information Management System (CRIMS). It is a legacy survey that began in 1979 and was only updated now and then, so it is not a current record.') && lay.labels.join('|') === 'Protected marine areas|Southern Resident killer whale critical habitat|Whale and porpoise density (model)|Kelp beds|Eelgrass|Herring spawn|Seabird colonies', t('marine panel: the intro says nothing here shows where an animal is now, the CRIMS sentence says legacy and not a current record, and the seven boxes are named plainly'), JSON.stringify(lay.labels))
+  report(lay.notes.srkw.includes(WHALE_RULES_TEXT) && lay.notes.cetaceans.includes(WHALE_RULES_TEXT) && lay.notes.cetaceans.includes('A model of summer 2018 ship surveys, not where animals are now.') && lay.notes.srkw.includes('It is a boundary, not a sighting') && lay.notes.protected.includes('Not for navigation.'), t('marine panel: the notes of the critical habitat and the density model carry the vessel distances, and say boundary and model, not sighting'), JSON.stringify(lay.notes))
+  if (shot) { await page.evaluate(() => document.getElementById('marine').scrollIntoView({ block: 'start' })); await shot('marine-panel'); await page.evaluate(() => document.getElementById('cetaceans-key').scrollIntoView({ block: 'center' })); await shot('marine-panel-key') }
+  await panel(false)
+  if (shot) await shot('marine-all-on')
+  // no outside host was contacted for any of it
+  const hostsUsed = [...new Set(requests.slice(baseline).map((u) => new URL(u).host))].filter((h) => !h.startsWith('127.0.0.1') && h !== 'tiles.openfreemap.org' && h !== 's3.amazonaws.com')
+  report(hostsUsed.length === 0, t('marine layers: they contact no outside host (only this site, the basemap and the elevation tiles)'), hostsUsed.join(', '))
+  await untickAll()
+
+  // ---- pixels, desktop only: the colour of each cell is its class colour, and the areas leave the land alone
+  if (wide) {
+    await panel(false)
+    const goTo = (c, z) => view(c, z)
+    const samples = () => page.evaluate(() => {
+      const m = window.__map, wl = m.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))
+      const land = [], sea = []
+      for (let y = 110; y < innerHeight - 70; y += 14) for (let x = 24; x < innerWidth - 70; x += 14) {
+        const near = m.queryRenderedFeatures([[x - 6, y - 6], [x + 6, y + 6]], { layers: [wl.id] }).length, here = m.queryRenderedFeatures([x, y], { layers: [wl.id] }).length
+        if (!near) land.push([x, y]); else if (here) sea.push([x, y])
+      }
+      return { land, sea }
+    })
+    const pixels = async (pts) => {
+      const png = await page.screenshot({ timeout: 120000 })
+      return page.evaluate(async ([b64, pts]) => { const img = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob()), c = new OffscreenCanvas(img.width, img.height), g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0); return pts.map(([x, y]) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]) }, [png.toString('base64'), pts])
+    }
+    const diff = (a, b) => Math.max(...[0, 1, 2].map((k) => Math.abs(a[k] - b[k])))
+    const settle = async (ms = 2500) => { await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 }); await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {}); await page.waitForTimeout(ms) }
+
+    // 1. the colour of a full cell in open water is its class colour at 0.75 opacity over the sea of the basemap
+    await goTo([-123.3, 48.45], 8.7)
+    await settle(3000)
+    const centres = cells.filter((f) => f.properties.km2 > 24.9).map((f) => ({ f, c: bboxCentre(f.geometry) }))
+    const proj = await page.evaluate((cs) => cs.map(([x, y]) => { const q = window.__map.project([x, y]); return [Math.round(q.x), Math.round(q.y)] }), centres.map((c) => c.c))
+    const inView = centres.map((c, i) => ({ ...c, px: proj[i] })).filter((c) => c.px[0] > 30 && c.px[0] < 1280 - 80 && c.px[1] > 130 && c.px[1] < 800 - 90)
+    const seaOff = await pixels(inView.map((c) => c.px))
+    await tick('cetaceans', true); await waitStatus(page, 'cetaceans').catch(() => {})
+    const hex = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16))
+    const colours = await page.evaluate(async () => (await import('/js/overlays-data.js')).DENSITY_COLOURS)
+    let worst = 0, mostClasses = 0
+    for (const [key, sp] of Object.entries(SPECIES)) {
+      await pick(key)
+      await settle(2200)
+      const b = await breaksOf(key)
+      const on = await pixels(inView.map((c) => c.px))
+      let good = 0, tested = 0, classes = new Set()
+      inView.forEach((c, i) => {
+        const d = c.f.properties[`${key}_n`] / c.f.properties.km2 * 100, cls = b.filter((x) => d >= x).length
+        const want = hex(colours[cls]).map((v, k) => Math.round(v * 0.75 + seaOff[i][k] * 0.25))
+        tested++; classes.add(cls)
+        if (diff(on[i], want) <= 8) good++
+      })
+      worst = Math.max(worst, tested - good)
+      console.log(`      (${t(`marine cetaceans, ${sp.name}: ${good} of ${tested} cell centres in view have the colour of their class (${[...classes].sort().join(',')} classes seen)`)})`)
+      mostClasses = Math.max(mostClasses, classes.size)
+      report(tested >= 12 && good >= 0.9 * tested && classes.size >= 2, t(`marine cetaceans: for ${sp.name} the pixel at the middle of each full cell has the colour of its density class at 0.75 opacity over the sea (at least 90% of the cells in view, two or more classes in view)`), JSON.stringify({ tested, good, classes: [...classes] }))
+    }
+    report(mostClasses === 5, t('marine cetaceans: all five colours are seen on the screen for at least one species'), String(mostClasses))
+    if (shot) { await pick('harbour'); await settle(2200); await shot('marine-cetaceans-harbour'); await pick('dalls'); await settle(2200); await shot('marine-cetaceans-dalls'); await pick('humpback'); await settle(1800) }
+    await tick('cetaceans', false)
+
+    // 2. the areas leave the land alone (places with no basemap water within 6 px do not change)
+    const landCheck = async (id, c, z, label) => {
+      await goTo(c, z); await settle(2800)
+      const { land, sea } = await samples()
+      const pts = [...land, ...sea]
+      const off1 = await pixels(pts)
+      await tick(id, true); await waitStatus(page, id).catch(() => {})
+      await settle(2500)
+      const on = await pixels(pts)
+      await tick(id, false); await settle(2000)
+      const off2 = await pixels(pts)
+      const n = land.length, stable = pts.map((_, i) => diff(off1[i], off2[i]) <= 3)
+      const landIdx = land.map((_, i) => i).filter((i) => stable[i]), seaIdx = sea.map((_, i) => n + i).filter((i) => stable[i])
+      const landChanged = landIdx.filter((i) => diff(on[i], off1[i]) > 8).length, seaChanged = seaIdx.filter((i) => diff(on[i], off1[i]) > 8).length
+      return { id, label, land: landIdx.length, landChanged, sea: seaIdx.length, seaChanged }
+    }
+    const results = []
+    for (const [id, c, z, label] of [['cetaceans', [-123.45, 48.34], 10.2, 'Juan de Fuca and Haro Strait'], ['srkw', [-123.40, 48.42], 10.2, 'the strait off Victoria'], ['protected', [-123.35, 48.43], 11.2, 'Victoria Harbour and the Oak Bay Islands'], ['kelp', [-123.40, 48.37], 11.6, 'kelp off Victoria'], ['eelgrass', [-123.465, 48.428], 12.8, 'Esquimalt Lagoon']]) results.push(await landCheck(id, c, z, label))
+    for (const x of results) console.log(`      (${t(`marine ${x.id} over ${x.label}: ${x.landChanged} of ${x.land} inland places changed, ${x.seaChanged} of ${x.sea} water places coloured`)})`)
+    const big = results.filter((x) => ['cetaceans', 'srkw', 'protected'].includes(x.id))
+    const shown = { cetaceans: 0.3, srkw: 0.3, protected: 0.05 } // the least share of the water places each should colour in its view
+    report(big.every((x) => x.land > 150 && x.landChanged <= 0.01 * x.land && x.sea > 150 && x.seaChanged > shown[x.id] * x.sea), t('marine areas: the density cells, the critical habitat and the protected areas leave the land alone (no more than 1% of the inland places change by more than 8 of 255) and colour the water'), JSON.stringify(big))
+    const small = results.filter((x) => ['kelp', 'eelgrass'].includes(x.id))
+    report(small.every((x) => x.land > 100 && x.landChanged <= 0.02 * x.land && x.seaChanged > 0), t('marine kelp and eelgrass: the beds colour the water and cover under 2% of the inland places'), JSON.stringify(small))
+    if (shot) {
+      await goTo([-123.35, 48.42], 10.2); await tick('cetaceans', true); await tick('protected', true); await tick('srkw', true); await tick('kelp', true); await tick('herring', true); await tick('seabirds', true)
+      await page.waitForTimeout(1500); await settle(3000); await shot('marine-victoria'); await untickAll()
+    }
+  }
+
+  // ---- with Sea currents on, a click on the sea gives the current first and then the area
+  if (wide) {
+    await tick('cetaceans', true); await waitStatus(page, 'cetaceans').catch(() => {})
+    await setBox(page, 'input[data-overlay=currents]', true)
+    await waitStatus(page, 'currents', 90000).catch(() => {})
+    await page.waitForTimeout(2500)
+    await view([-123.45, 48.34], 10.2)
+    const wet = await page.evaluate(async () => {
+      const D = await import('/js/overlays-data.js'), m = window.__map, g = window.__overlays.sea.shown?.grid
+      if (!g) return null
+      for (let y = 160; y < innerHeight - 120; y += 16) for (let x = 60; x < innerWidth - 80; x += 16) {
+        const ll = m.unproject([x, y])
+        if (D.seaVelocity(g, ll.lng, ll.lat) && m.queryRenderedFeatures([[x - 8, y - 8], [x + 8, y + 8]], { layers: ['cetaceans-fill'] }).length) return [x, y]
+      }
+      return null
+    })
+    let pop = null
+    if (wet) { await page.mouse.click(wet[0], wet[1]); await page.waitForTimeout(900); pop = await popupInfo() }
+    report(!!pop && pop.titles[0] === 'Modelled sea current' && pop.titles.includes('Humpback whale: modelled summer numbers') && pop.hr >= 1, t('marine areas with Sea currents on: a click on the sea gives the modelled current first and then the density cell'), JSON.stringify(pop && { titles: pop.titles, hr: pop.hr }))
+    await setBox(page, 'input[data-overlay=currents]', false)
+    await untickAll()
+  }
+
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+  await setBox(page, '#flow', true)
+  await panel(panelWas)
+}
+
 const waitStatus = (page, id, timeout = 90000) => page.waitForFunction((id) => { const p = document.getElementById('status-' + id); return !!p && !p.hidden && !!p.dataset.state && p.dataset.state !== 'loading' }, id, { timeout })
 const statusOf = (page, id) => page.evaluate((id) => { const p = document.getElementById('status-' + id); return { state: p.dataset.state, text: p.textContent, hidden: p.hidden } }, id)
 const hostCount = (requests, host) => requests.filter((u) => new URL(u).host === host).length
@@ -1263,8 +1598,8 @@ async function checkOverlays(page, requests, t, shot) {
   await page.evaluate(() => { document.querySelector('.maplibregl-popup')?.remove(); document.getElementById('panel-details').open = true })
   // Sea currents and wind were ticked earlier, in checkCurrents3d, which checked that nothing had been requested before that.
   const idle = LIVE_HOSTS.map((h) => requests.filter((u) => new URL(u).host === h && !u.includes('CIOPS-SalishSea') && !u.includes('HRDPS')).length)
-  const files = requests.filter((u) => /data\/(ecoregions|industry-waste)\.geojson/.test(u)).length
-  report(idle.every((n) => n === 0) && files === 0, t('nothing is requested from Environment Canada, USGS or GBIF (apart from the sea currents and wind ticked earlier), or for the ecoregion and industry files, until a box is ticked'), JSON.stringify([idle, files]))
+  const files = requests.filter((u) => /data\/(ecoregions|industry-waste|marine-protected|srkw-habitat|whale-density|kelp|eelgrass|herring-spawn|seabird-colonies)\.geojson/.test(u)).length
+  report(idle.every((n) => n === 0) && files === 0, t('nothing is requested from Environment Canada, USGS or GBIF (apart from the sea currents and wind ticked earlier), or for the ecoregion, industry and marine life and protection files, until a box is ticked'), JSON.stringify([idle, files]))
   const outcome = {}
   for (const [id, net] of Object.entries(OVERLAY_NET)) {
     const before = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
@@ -1395,8 +1730,8 @@ async function checkOverlaysBlocked(browser, base) {
   await page.evaluate(() => document.querySelector('#alerts-list details')?.setAttribute('open', ''))
   const shown = await page.evaluate(() => ({ state: document.getElementById('status-alerts').dataset.state, text: document.querySelector('#alerts-list .alert-text')?.textContent, title: document.querySelector('#alerts-list summary')?.textContent, count: window.__map.getSource('ov-alerts') ? window.__map.querySourceFeatures('ov-alerts').length : 0 }))
   report(shown.state === 'ok' && shown.text === text && shown.title.includes('orange warning') && shown.count > 0, t('an alert is shown word for word as issued, with its area drawn on the map'), JSON.stringify(shown))
-  // the two static layers need no outside service
-  for (const id of ['ecoregions', 'industry']) {
+  // the static layers need no outside service
+  for (const id of ['ecoregions', 'industry', 'protected', 'srkw', 'cetaceans', 'kelp', 'eelgrass', 'herring', 'seabirds']) {
     await setBox(page, `input[data-overlay=${id}]`, true)
     await waitStatus(page, id, 30000).catch(() => {})
     const st = await statusOf(page, id)

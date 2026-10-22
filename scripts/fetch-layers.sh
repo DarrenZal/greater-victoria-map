@@ -10,12 +10,16 @@
 #
 # Options (environment variables):
 #   FETCH=0      skip the downloads and process the files already in $RAW_DIR
-#   RAW_DIR=dir  where the raw WFS downloads go (default raw/, not committed)
+#   RAW_DIR=dir  where the raw downloads go (default raw/, not committed)
 #   MAPSHAPER=   command that runs mapshaper
+#   ONLY=marine  run only the marine life and protection files at the end of this
+#                script and leave every other data file as it is
 #
-# Every layer is clipped to the demo box and simplified for the web. Source,
-# licence and filters per layer are recorded in data/SOURCES.md. Data
-# retrieved for the committed files: 2026-10-21.
+# Every layer is clipped to the demo box and simplified for the web, except the
+# marine files, which are clipped to the area the map reaches (see the marine
+# section below). Source, licence and filters per layer are recorded in
+# data/SOURCES.md. Data retrieved for the committed files: 2026-10-21, and
+# 2026-10-22 for the marine files.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -29,15 +33,115 @@ OUT_OPTS="precision=0.00001 format=geojson"
 mkdir -p "$RAW" data
 
 # version=1.0.0 keeps longitude,latitude axis order in the GeoJSON.
-wfs() {
-  layer="$1"; file="$2"; shift 2
+wfs_box() {
+  box="$1"; layer="$2"; file="$3"; shift 3
   curl -sS -m 300 -G "$WFS" \
     --data-urlencode "service=WFS" --data-urlencode "version=1.0.0" \
     --data-urlencode "request=GetFeature" --data-urlencode "typeName=pub:$layer" \
     --data-urlencode "outputFormat=application/json" --data-urlencode "srsName=EPSG:4326" \
-    --data-urlencode "bbox=$BBOX,EPSG:4326" "$@" -o "$RAW/$file" \
+    --data-urlencode "bbox=$box,EPSG:4326" "$@" -o "$RAW/$file" \
     -w "$layer -> HTTP %{http_code}, %{size_download} bytes\n"
 }
+wfs() { wfs_box "$BBOX" "$@"; }
+
+ms() { $MAPSHAPER "$@"; }
+
+# ---- Marine life and protection
+# Seven files from open government data. They are clipped to the area the map reaches
+# (SEA_BBOX, the same area as the live layers), not to the demo box: a sea layer cut off at
+# the demo box would draw a straight edge through open water and read as a boundary. Run just
+# this part with ONLY=marine. Source, licence, filters and sizes: data/SOURCES.md.
+SEA_BBOX="-124.4,47.9,-122.7,49.1"
+SEA_OPTS="precision=0.0001 format=geojson"
+CPCAD="https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CPCAD/MapServer/0"
+DFO_REST="https://egisp.dfo-mpo.gc.ca/arcgis/rest/services/open_data_donnees_ouvertes"
+
+# One query of an ArcGIS REST layer for the features that touch SEA_BBOX, as GeoJSON in
+# longitude,latitude with 6 decimals.
+arcgis() {
+  base="$1"; file="$2"; where="$3"; fields="$4"
+  curl -sS -m 300 -G "$base/query" \
+    --data-urlencode "where=$where" --data-urlencode "outFields=$fields" \
+    --data-urlencode "geometry=$SEA_BBOX" --data-urlencode "geometryType=esriGeometryEnvelope" \
+    --data-urlencode "inSR=4326" --data-urlencode "spatialRel=esriSpatialRelIntersects" \
+    --data-urlencode "outSR=4326" --data-urlencode "geometryPrecision=6" --data-urlencode "f=geojson" \
+    -o "$RAW/$file" -w "$file -> HTTP %{http_code}, %{size_download} bytes\n"
+}
+
+marine() {
+  if [ "$FETCH" = "1" ]; then
+    # CPCAD splits each protected area into a marine zone and a terrestrial zone (BIOME M and T).
+    arcgis "$CPCAD" cpcad_marine.json "BIOME='M'" "NAME_E,TYPE_E,OWNER_E,ESTYEAR,NO_TAKE"
+    arcgis "$DFO_REST/dfo_sara_critical_habitat/MapServer/0" srkw.json "COMMON_E='Killer Whale' AND POP_E LIKE '%Southern Resident%'" "COMMON_E,POP_E,CH_STATUS_E,Area_Km2"
+    # PRISMM density models, the Salish Sea grid of each species (layer 0 Dall's porpoise, 6 harbour porpoise, 9 humpback whale).
+    arcgis "$DFO_REST/spatial_density_models_cetaceans_canadian_pacific_2018/MapServer/0" density_dalls.json "1=1" "OBJECTID,area_m2,Nhat,CV"
+    arcgis "$DFO_REST/spatial_density_models_cetaceans_canadian_pacific_2018/MapServer/6" density_harbour.json "1=1" "OBJECTID,area_m2,Nhat,CV"
+    arcgis "$DFO_REST/spatial_density_models_cetaceans_canadian_pacific_2018/MapServer/9" density_humpback.json "1=1" "OBJECTID,area_m2,Nhat,CV"
+    wfs_box "$SEA_BBOX" WHSE_WILDLIFE_MANAGEMENT.CRIMS_KELP_BEDS crims_kelp.json
+    wfs_box "$SEA_BBOX" WHSE_WILDLIFE_MANAGEMENT.CRIMS_EELGRASSES crims_eelgrass.json
+    wfs_box "$SEA_BBOX" WHSE_WILDLIFE_MANAGEMENT.CRIMS_HERRING_SPAWN crims_herring.json
+    wfs_box "$SEA_BBOX" WHSE_WILDLIFE_MANAGEMENT.CRIMS_BIRD_COLONIES crims_birds.json
+  fi
+
+  # Protected marine areas: the marine zones only (BIOME M), so a park's land is not drawn twice.
+  # The land parts are in bc-parks.geojson and greenspaces.geojson already. no_take is CPCAD's
+  # "Marine Resource Use" code and is kept only where it says All (1), Part (2) or None (3).
+  ms "$RAW/cpcad_marine.json" \
+    -each 'no_take=(NO_TAKE>=1 && NO_TAKE<=3 ? NO_TAKE : null), year=(ESTYEAR>0 ? ESTYEAR : null)' \
+    -rename-fields name=NAME_E,type=TYPE_E,owner=OWNER_E \
+    -filter-fields name,type,owner,year,no_take \
+    -clip bbox=$SEA_BBOX -simplify percentage=10% keep-shapes \
+    -o data/marine-protected.geojson $SEA_OPTS
+
+  # Southern Resident killer whale critical habitat. One polygon. area_km2 is its whole area, before clipping.
+  ms "$RAW/srkw.json" \
+    -each 'area_km2=Math.round(Area_Km2)' \
+    -rename-fields status=CH_STATUS_E \
+    -filter-fields status,area_km2 \
+    -clip bbox=$SEA_BBOX -simplify percentage=30% keep-shapes \
+    -o data/srkw-habitat.geojson $SEA_OPTS
+
+  # Modelled whale and porpoise numbers: the three species joined on one grid (see the script).
+  node scripts/make-density.mjs "$RAW/density_dalls.json" "$RAW/density_harbour.json" "$RAW/density_humpback.json" "$RAW/density_merged.geojson"
+  ms "$RAW/density_merged.geojson" \
+    -clip bbox=$SEA_BBOX -simplify percentage=12% keep-shapes \
+    -o data/whale-density.geojson $SEA_OPTS
+
+  # Coastal habitat from CRIMS, a legacy survey from 1979 on. Only the fields the popups use.
+  ms "$RAW/crims_kelp.json" \
+    -rename-fields species=SPECIES,density=DENSITY \
+    -filter-fields species,density \
+    -clip bbox=$SEA_BBOX -simplify percentage=20% keep-shapes \
+    -o data/kelp.geojson $SEA_OPTS
+  ms "$RAW/crims_eelgrass.json" \
+    -each 'year=(MAP_DATE ? +String(MAP_DATE).slice(0,4) : null)' \
+    -filter-fields year \
+    -clip bbox=$SEA_BBOX -simplify percentage=30% keep-shapes \
+    -o data/eelgrass.geojson $SEA_OPTS
+  ms "$RAW/crims_herring.json" \
+    -each 'magnitude=(MAGNITUDE||"").trim()||null, consistency=(CONSISTENCY||"").trim()||null, first_year=(BEGINNING_YEAR>0 ? BEGINNING_YEAR : null), last_year=(ENDING_YEAR>0 ? ENDING_YEAR : null)' \
+    -filter-fields magnitude,consistency,first_year,last_year \
+    -clip bbox=$SEA_BBOX -simplify percentage=25% keep-shapes \
+    -o data/herring-spawn.geojson $SEA_OPTS
+  # A colony named for a First Nation is left out, as for the industry sites (this demo shows no First Nations content).
+  ms "$RAW/crims_birds.json" \
+    -filter '!/tsawwassen|tsawout/i.test(LOCATION)' \
+    -rename-fields name=LOCATION \
+    -filter-fields name \
+    -clip bbox=$SEA_BBOX \
+    -o data/seabird-colonies.geojson $SEA_OPTS
+
+  # Rounding to 4 decimals can collapse a very small shape to nothing. Read each file back and drop those.
+  for f in marine-protected srkw-habitat whale-density kelp eelgrass herring-spawn seabird-colonies; do
+    ms "data/$f.geojson" -filter '!this.isNull' -o "data/$f.geojson" force $SEA_OPTS
+  done
+}
+
+if [ "${ONLY:-}" = "marine" ]; then
+  marine
+  echo "Done. Only the marine files were rebuilt. Next: node scripts/check-demo.mjs"
+  exit 0
+fi
 
 if [ "$FETCH" = "1" ]; then
   wfs WHSE_LEGAL_ADMIN_BOUNDARIES.ABMS_MUNICIPALITIES_SP muni.json
@@ -50,8 +154,6 @@ if [ "$FETCH" = "1" ]; then
   wfs WHSE_BASEMAPPING.FWA_NAMED_WATERSHEDS_POLY namedws.json
   wfs WHSE_FOREST_VEGETATION.BEC_BIOGEOCLIMATIC_POLY bec.json
 fi
-
-ms() { $MAPSHAPER "$@"; }
 
 # 13 municipalities of the Capital Regional District. Legal boundaries include
 # adjacent water, so the popup says so.
@@ -138,6 +240,8 @@ ms "$RAW/bec.json" \
   -dissolve BGC_LABEL copy-fields=ZONE_NAME,SUBZONE_NAME,VARIANT_NAME \
   -simplify percentage=4% keep-shapes \
   -o data/bec.geojson $OUT_OPTS
+
+marine
 
 echo "Done. data/pins.geojson is hand-edited and is not touched by this script."
 echo "Next: node scripts/check-demo.mjs"

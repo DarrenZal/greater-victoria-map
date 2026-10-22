@@ -41,10 +41,11 @@ const ALLOWED_HOSTS = [
   'www.opengis.net', // names the coordinate system in a sea currents request (EPSG 4326). It is an identifier, not fetched
   'api.tidesandcurrents.noaa.gov', 'tidesandcurrents.noaa.gov', // NOAA: predictions (fetched after a station is clicked) and its disclaimer and station pages (links)
   'www.w3.org', // the SVG namespace of a tide curve. It is an identifier, not fetched
+  'tc.canada.ca', 'laws-lois.justice.gc.ca', // Transport Canada's Ship Safety Bulletin and the Marine Mammal Regulations: links in the vessel rules, never fetched
 ]
 // Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
 const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov']
-const OVERLAY_IDS = ['radar', 'currents', 'wind', 'temperature', 'salinity', 'tides', 'seafloor', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
+const OVERLAY_IDS = ['radar', 'currents', 'wind', 'temperature', 'salinity', 'tides', 'seafloor', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry', 'protected', 'srkw', 'cetaceans', 'kelp', 'eelgrass', 'herring', 'seabirds']
 const LIVE_SENTENCE = 'These load from outside services when ticked. Nothing loads until you tick one.'
 // Credit text the new layers must carry, word for word, in the credits panel.
 const OVERLAY_STATEMENTS = [
@@ -343,7 +344,171 @@ function ruleIndustry(files) {
   return out
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
+// ---- marine life and protection: seven files cut at the edge of the area the map reaches (not at the demo box, which would draw a
+// straight edge through open water), none of which shows where an animal is now
+const MARINE_FILES = ['marine-protected', 'srkw-habitat', 'whale-density', 'kelp', 'eelgrass', 'herring-spawn', 'seabird-colonies']
+const SEA_REGION = [-124.4, 47.9, -122.7, 49.1]
+// The vessel distances, said wherever whales appear. This copy is kept apart from the one in js/overlays-data.js so that a change in one is caught.
+const WHALE_RULES_TEXT = 'Vessels must stay at least 1,000 m from Southern Resident killer whales from June 1, 2026 to May 31, 2027, at least 200 m from all other killer whales and at least 100 m from all other whales, dolphins and porpoises. Some exceptions apply.'
+const WHALE_LINKS = [
+  'https://tc.canada.ca/en/marine-transportation/marine-safety/ship-safety-bulletins/protecting-killer-whales-waters-southern-british-columbia-2026-ssb-no-08-2026',
+  'https://laws-lois.justice.gc.ca/eng/regulations/SOR-93-56/FullText.html',
+]
+const OGL_CANADA_STATEMENT = 'Contains information licensed under the Open Government Licence – Canada.'
+const OGL_BC_STATEMENT = 'Contains information licensed under the Open Government Licence – British Columbia.'
+const MARINE_NAMES = { protected: 'RACE ROCKS ECOLOGICAL RESERVE', minAreas: 15, minCells: 200, minColonies: 30 }
+
+function marineJson(files, name) {
+  const f = files.find((x) => x.path === `data/${name}.geojson`)
+  if (!f) return { error: `data/${name}.geojson is missing` }
+  try { const fc = JSON.parse(f.text); return Array.isArray(fc.features) ? { fc } : { error: `data/${name}.geojson is not a feature collection` } } catch { return { error: `data/${name}.geojson is not valid JSON` } }
+}
+// Every marine file is a feature collection with at least one feature, no empty shape, and every coordinate inside the area the map reaches.
+function ruleMarineFiles(files) {
+  const out = []
+  for (const name of MARINE_FILES) {
+    const { fc, error } = marineJson(files, name)
+    if (error) { out.push(error); continue }
+    if (!fc.features.length) out.push(`${name}: no features`)
+    const bad = { n: 0 }
+    const nulls = fc.features.filter((x) => !x.geometry).length
+    for (const x of fc.features) if (x.geometry) coordsIn(x.geometry.coordinates, bad, SEA_REGION)
+    if (nulls) out.push(`${name}: ${nulls} features with no shape`)
+    if (bad.n) out.push(`${name}: ${bad.n} coordinates outside the area the map reaches`)
+  }
+  return out
+}
+function coordsIn(coords, bad, box) {
+  if (typeof coords[0] === 'number') {
+    if (coords[0] < box[0] - 1e-4 || coords[0] > box[2] + 1e-4 || coords[1] < box[1] - 1e-4 || coords[1] > box[3] + 1e-4) bad.n++
+  } else for (const c of coords) coordsIn(c, bad, box)
+}
+// Protected marine areas: marine zones with a name and a type, a no-take code only where CPCAD gives one, no held rockfish area, and Race Rocks
+// among them (the positive twin: an empty or wrong file would not have it).
+function ruleProtectedAreas(files) {
+  const { fc, error } = marineJson(files, 'marine-protected')
+  if (error) return [error]
+  const out = []
+  if (fc.features.length < MARINE_NAMES.minAreas) out.push(`only ${fc.features.length} protected areas, expected ${MARINE_NAMES.minAreas} or more`)
+  if (!fc.features.some((x) => x.properties?.name === MARINE_NAMES.protected)) out.push('Race Rocks Ecological Reserve is not in the file')
+  for (const [i, x] of fc.features.entries()) {
+    const p = x.properties || {}
+    if (!p.name || !p.type) out.push(`area ${i}: no name or type`)
+    if (p.no_take != null && ![1, 2, 3].includes(p.no_take)) out.push(`area ${i} (${p.name}): no_take ${p.no_take} is not All, Part or None`)
+    if (/rockfish/i.test(String(p.name))) out.push(`area ${i}: a rockfish conservation area (held, no licence found)`)
+    if (!['Polygon', 'MultiPolygon'].includes(x.geometry?.type)) out.push(`area ${i} (${p.name}): not an area`)
+  }
+  return out
+}
+// Seabird colonies: points, enough of them, and none named for a First Nation (this demo shows no First Nations content and no Nation has been asked).
+function ruleSeabirds(files) {
+  const { fc, error } = marineJson(files, 'seabird-colonies')
+  if (error) return [error]
+  const out = []
+  if (fc.features.length < MARINE_NAMES.minColonies) out.push(`only ${fc.features.length} colonies, expected ${MARINE_NAMES.minColonies} or more`)
+  for (const [i, x] of fc.features.entries()) {
+    if (x.geometry?.type !== 'Point') out.push(`colony ${i}: not a point`)
+    if (/tsawwassen|tsawout/i.test(String(x.properties?.name))) out.push(`colony ${i}: named for a First Nation`)
+  }
+  return out
+}
+// The density cells: every cell has an area and, for each of the three species, the model's number and its uncertainty.
+function ruleDensityCells(files) {
+  const { fc, error } = marineJson(files, 'whale-density')
+  if (error) return [error]
+  const out = []
+  if (fc.features.length < MARINE_NAMES.minCells) out.push(`only ${fc.features.length} cells, expected ${MARINE_NAMES.minCells} or more`)
+  for (const [i, x] of fc.features.entries()) {
+    const p = x.properties || {}
+    if (!(p.km2 > 0 && p.km2 <= 25.0001)) out.push(`cell ${i}: area ${p.km2} km2 is not above 0 and at most 25`)
+    for (const sp of ['humpback', 'harbour', 'dalls']) {
+      if (!(typeof p[`${sp}_n`] === 'number' && p[`${sp}_n`] >= 0)) out.push(`cell ${i}: no ${sp} number`)
+      if (!(typeof p[`${sp}_cv`] === 'number' && p[`${sp}_cv`] > 0)) out.push(`cell ${i}: no ${sp} uncertainty`)
+    }
+    if (!['Polygon', 'MultiPolygon'].includes(x.geometry?.type)) out.push(`cell ${i}: not an area`)
+  }
+  return out.slice(0, 10)
+}
+// The critical habitat file is the Southern Resident killer whale area and nothing else.
+function ruleSrkwHabitat(files) {
+  const { fc, error } = marineJson(files, 'srkw-habitat')
+  if (error) return [error]
+  const out = []
+  if (fc.features.length !== 1) out.push(`${fc.features.length} features, expected one`)
+  else if (!/final/i.test(String(fc.features[0].properties?.status)) || !(fc.features[0].properties?.area_km2 > 1000) || !['Polygon', 'MultiPolygon'].includes(fc.features[0].geometry?.type)) out.push('the feature is not the large final or proposed critical habitat area')
+  return out
+}
+// The credits give the survey years of the CRIMS files, and they must be the years in the data.
+function ruleCrimsVintage(files, credits) {
+  const out = []
+  const herring = marineJson(files, 'herring-spawn'), eelgrass = marineJson(files, 'eelgrass')
+  if (herring.error || eelgrass.error) return [herring.error || eelgrass.error]
+  const ys = (fc, k) => fc.features.map((x) => x.properties?.[k]).filter((y) => Number.isInteger(y))
+  const from = Math.min(...ys(herring.fc, 'first_year')), to = Math.max(...ys(herring.fc, 'last_year')), years = [...new Set(ys(eelgrass.fc, 'year'))]
+  if (!Number.isFinite(from) || !Number.isFinite(to) || years.length !== 1) out.push(`the herring years (${from} to ${to}) or the eelgrass years (${years.join(', ')}) are not usable`)
+  else {
+    if (!credits.includes(`herring spawn records run from ${from} to ${to}`)) out.push(`the credits do not say the herring spawn records run from ${from} to ${to}`)
+    if (!credits.includes(`eelgrass here was mapped in ${years[0]}`)) out.push(`the credits do not say the eelgrass was mapped in ${years[0]}`)
+  }
+  return out
+}
+// Whales: the vessel distances are in the code (one constant), in the credits, and in the panel notes and popups of the two layers that show whales.
+function ruleWhaleRules(html, js) {
+  const out = []
+  const credits = textOf(html.slice(html.indexOf('id="credits"')))
+  const paras = html.split(/<\/p>|<\/li>/).map(textOf)
+  for (const name of ['Southern Resident killer whale critical habitat.', 'Whale and porpoise density.']) {
+    const para = paras.find((p) => p.includes(name))
+    if (!para) out.push(`the credits have no ${name} paragraph`)
+    else if (!para.includes(WHALE_RULES_TEXT)) out.push(`the ${name} paragraph does not carry the vessel distances word for word`)
+  }
+  for (const l of WHALE_LINKS) if (!html.includes(`href="${l}"`)) out.push(`the credits do not link ${l}`)
+  if (!credits.includes('Transport Canada Ship Safety Bulletin 08/2026') || !credits.includes('Marine Mammal Regulations, Schedule VI')) out.push('the credits do not name the bulletin and the regulations')
+  const m = js.match(/export const WHALE_RULES = '([^']*)'/)
+  if (!m || m[1] !== WHALE_RULES_TEXT) out.push('WHALE_RULES in js/overlays-data.js is not the vessel distances word for word')
+  return out
+}
+function ruleWhaleRulesInCode(overlaysJs, dataJs) {
+  const out = []
+  if (!/\$\('srkw-note'\)\.textContent = `[^`]*\$\{WHALE_RULES\}`/.test(overlaysJs)) out.push('the panel note of the critical habitat does not carry the vessel distances')
+  if (!/\$\('cetaceans-note'\)\.textContent = `[^`]*\$\{WHALE_RULES\}`/.test(overlaysJs)) out.push('the panel note of the density model does not carry the vessel distances')
+  if (!/box\.append\(el\('p', WHALE_RULES\)\)/.test(overlaysJs)) out.push('the popup of a whale layer does not end with the vessel distances')
+  const info = (name) => (dataJs.match(new RegExp(`export function ${name}\\([\\s\\S]*?\\n}\\n`)) || [''])[0]
+  for (const name of ['srkwInfo', 'cetaceanInfo']) if (!info(name).includes('WHALE_RULES')) out.push(`${name} does not carry the vessel distances`)
+  return out
+}
+// Wording of the marine layers: the credits and the panel say what they are, how old and not for navigation, and the on-map credits are in the code.
+function ruleMarineCredits(html, js) {
+  const out = []
+  const paras = html.split(/<\/p>|<\/li>/).map(textOf)
+  const find = (name) => paras.find((p) => p.includes(name))
+  const need = (para, name, tests) => {
+    if (!para) { out.push(`the credits have no ${name} paragraph`); return }
+    for (const [re, what] of tests) if (!re.test(para)) out.push(`the ${name} credit does not say ${what}`)
+  }
+  need(find('Marine life and protection (each box'), 'Marine life and protection', [[/none shows where an animal is now/i, 'that none shows where an animal is now'], [/not for navigation/i, 'that it is not for navigation'], [/one file from this site/, 'that each loads one file from this site']])
+  need(find('Protected marine areas.'), 'Protected marine areas', [[/CPCAD/, 'CPCAD'], [/Only the marine zone/, 'that only the marine zone is shown'], [/Marine Resource Use/, 'where the no-take line comes from']])
+  need(find('Whale and porpoise density.'), 'Whale and porpoise density', [[/summer 2018/, 'summer 2018'], [/not where animals are now/, 'that it is not where animals are now'], [/Nhat/, 'what Nhat is'], [/Canadian waters only/, 'that it covers Canadian waters only']])
+  need(find('Coastal habitat (kelp beds'), 'Coastal habitat', [[/legacy dataset that began in 1979/, 'that CRIMS is a legacy dataset that began in 1979'], [/only updated now and then/, 'that it was only updated now and then'], [/no plans to update/, 'that there are no plans to update it'], [new RegExp(OGL_BC_STATEMENT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the Open Government Licence – British Columbia statement']])
+  const federal = find('Federal data in the marine layers above')
+  if (!federal || !federal.includes(OGL_CANADA_STATEMENT)) out.push('the credits do not carry the Open Government Licence – Canada statement for the federal marine data')
+  const panel = textOf(html)
+  if (!panel.includes('Nothing here shows where an animal is now. Not for navigation.')) out.push('the panel does not say that nothing in Marine life and protection shows where an animal is now')
+  if (!/\(CRIMS\)\. It is a legacy survey that began in 1979 and was only updated now and then, so it is not a current record\./.test(panel)) out.push('the panel does not say that CRIMS is a legacy survey from 1979 and not a current record')
+  const attribLine = (attr) => (js.match(new RegExp(`const ${attr} = [^\\n]*`)) || [''])[0]
+  const attribs = { PROTECTED_ATTRIB: /CPCAD[\s\S]*OGL_CANADA_LINK/, SRKW_ATTRIB: /critical habitat[\s\S]*OGL_CANADA_LINK/, CETACEANS_ATTRIB: /Whale and porpoise model[\s\S]*OGL_CANADA_LINK/, CRIMS_ATTRIB: /CRIMS[\s\S]*legacy survey from 1979[\s\S]*OGL_BC_LINK/ }
+  for (const [attr, re] of Object.entries(attribs)) if (!re.test(attribLine(attr))) out.push(`${attr} does not credit its data and name its licence`)
+  for (const [src, attr] of [['ov-protected', 'PROTECTED_ATTRIB'], ['ov-srkw', 'SRKW_ATTRIB'], ['ov-cetaceans', 'CETACEANS_ATTRIB'], ['ov-kelp', 'CRIMS_ATTRIB'], ['ov-eelgrass', 'CRIMS_ATTRIB'], ['ov-herring', 'CRIMS_ATTRIB'], ['ov-seabirds', 'CRIMS_ATTRIB']]) {
+    if (!new RegExp(`src\\('${src}', ${attr}\\)`).test(js)) out.push(`the ${src} source does not carry ${attr}`)
+  }
+  return out
+}
+// Reader-facing text of the marine layers is plain: no em dash and no semicolon.
+function ruleMarinePlain(texts) {
+  return texts.filter((t) => /[—;]/.test(t)).map((t) => `an em dash or semicolon in: ${t.slice(0, 70)}`)
+}
+
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -369,6 +534,27 @@ function selftest() {
   const tidesJs = "const TIDES_ATTRIB = 'Tides: <a href=\"x\">NOAA/NOS/CO-OPS</a> predictions'\nsrc('ov-tides', TIDES_ATTRIB)\nline(`Predictions, not for navigation. Source: NOAA/NOS/CO-OPS, station 1. Not official NOAA material.`)"
   const floorHtml = '<p><strong>Seafloor depth</strong> (off until you switch it on). From the ETOPO1 grid. Its cells are 1 arc-minute. It is not for navigation.</p>'
   const floorJs = "const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'\nmap.addSource('seafloor', { maxzoom: SEAFLOOR_MAX_ZOOM }); map.addLayer({ id: 'seafloor', type: 'color-relief' })"
+  // Marine life and protection fixtures
+  const fc = (features) => JSON.stringify({ type: 'FeatureCollection', features })
+  const sq = (b = [-123.5, 48.3, -123.4, 48.4]) => ({ type: 'Polygon', coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[1]]]] })
+  const area = (name, over = {}) => ({ type: 'Feature', geometry: sq(), properties: { name, type: 'Ecological Reserve', owner: 'Government of British Columbia', year: 1980, no_take: 1, ...over } })
+  const protectedFc = (over = {}, first = 'RACE ROCKS ECOLOGICAL RESERVE') => fc(Array.from({ length: 20 }, (_, i) => area(i ? `AREA ${i}` : first, i === 1 ? over : {})))
+  const colonies = (name, geometry = { type: 'Point', coordinates: [-123.5, 48.4] }) => fc(Array.from({ length: 40 }, (_, i) => ({ type: 'Feature', geometry, properties: { name: i === 3 ? name : `COLONY ${i}` } })))
+  const cells = (over = {}) => fc(Array.from({ length: 220 }, (_, i) => ({ type: 'Feature', geometry: sq(), properties: { km2: 25, humpback_n: 0.5, humpback_cv: 0.5, harbour_n: 3, harbour_cv: 0.5, dalls_n: 1, dalls_cv: 0.5, ...(i === 5 ? over : {}) } })))
+  const srkw = (over = {}) => ({ type: 'Feature', geometry: sq(), properties: { status: 'Final/Proposed', area_km2: 7497, ...over } })
+  const herringFc = (a, b) => fc([{ type: 'Feature', geometry: { type: 'LineString', coordinates: [[-123.4, 48.4], [-123.3, 48.4]] }, properties: { first_year: a, last_year: b } }])
+  const eelFc = (y) => fc([{ type: 'Feature', geometry: sq(), properties: { year: y } }])
+  const marineSet = (kind) => MARINE_FILES.flatMap((n, i) => {
+    const path = `data/${n}.geojson`
+    if (i !== 2) return [f(path, fc([{ type: 'Feature', geometry: sq(), properties: {} }]))]
+    return kind === 'missing' ? [] : [f(path, fc([{ type: 'Feature', geometry: kind === 'null' ? null : sq(kind === 'outside' ? [-120, 40, -119, 41] : undefined), properties: {} }]))]
+  })
+  const whaleHtml = `<section id="credits"><p><strong>Southern Resident killer whale critical habitat.</strong> ${WHALE_RULES_TEXT} Rules: <a href="${WHALE_LINKS[0]}">Transport Canada Ship Safety Bulletin 08/2026</a> and <a href="${WHALE_LINKS[1]}">Marine Mammal Regulations, Schedule VI</a>.</p><p><strong>Whale and porpoise density.</strong> ${WHALE_RULES_TEXT}</p></section>`
+  const whaleJs = `export const WHALE_RULES = '${WHALE_RULES_TEXT}'`
+  const whaleCodeJs = "$('srkw-note').textContent = `The area. ${WHALE_RULES}`\n$('cetaceans-note').textContent = `A model. ${WHALE_RULES}`\nbox.append(el('p', WHALE_RULES))"
+  const whaleDataJs = 'export function srkwInfo(p) {\n  return { lines: [WHALE_RULES] }\n}\nexport function cetaceanInfo(p, key) {\n  return { lines: [WHALE_RULES] }\n}\n'
+  const marineHtml = `<p><strong>Marine life and protection</strong> (each box off until you switch it on). None shows where an animal is now. Not for navigation. Each loads one file from this site.</p><p><strong>Protected marine areas.</strong> From CPCAD. Only the marine zone of each area is shown. The no-take line is the Marine Resource Use field.</p><p><strong>Whale and porpoise density.</strong> A model of summer 2018, not where animals are now. Nhat is the model's number. Canadian waters only.</p><p><strong>Coastal habitat</strong> (kelp beds, eelgrass, herring spawn and seabird colonies). Contains information licensed under the Open Government Licence – British Columbia. CRIMS is a legacy dataset that began in 1979 and was only updated now and then, and the Province has no plans to update it.</p><p><strong>Federal data in the marine layers above</strong> (protected areas). ${OGL_CANADA_STATEMENT}</p><p>Nothing here shows where an animal is now. Not for navigation.</p><p>Coastal habitat comes from the Province's Coastal Resource Information Management System (CRIMS). It is a legacy survey that began in 1979 and was only updated now and then, so it is not a current record.</p>`
+  const marineJs = "const PROTECTED_ATTRIB = `Protected areas: CPCAD (${OGL_CANADA_LINK})`\nconst SRKW_ATTRIB = `Killer whale critical habitat: DFO (${OGL_CANADA_LINK})`\nconst CETACEANS_ATTRIB = `Whale and porpoise model: DFO (${OGL_CANADA_LINK})`\nconst CRIMS_ATTRIB = `Coastal habitat: CRIMS, a legacy survey from 1979 (${OGL_BC_LINK})`\nsrc('ov-protected', PROTECTED_ATTRIB)\nsrc('ov-srkw', SRKW_ATTRIB)\nsrc('ov-cetaceans', CETACEANS_ATTRIB)\nsrc('ov-kelp', CRIMS_ATTRIB)\nsrc('ov-eelgrass', CRIMS_ATTRIB)\nsrc('ov-herring', CRIMS_ATTRIB)\nsrc('ov-seabirds', CRIMS_ATTRIB)"
   const cases = [
     ['ruleForbiddenNames', ruleForbiddenNames, [f('data/native-land.geojson', '{}')], [f('data/streams.geojson', '{}')]],
     ['ruleForbiddenNames (rush)', ruleForbiddenNames, [f('data/rush-map.geojson', '{}')], [f('data/bec.geojson', '{}')]],
@@ -415,6 +601,33 @@ function selftest() {
     ['ruleIndustry (source)', ruleIndustry, [f('data/industry-waste.geojson', industry({ src: 'climate-trace' }))], [f('data/industry-waste.geojson', industry({ src: 'hydrowaste' }))]],
     ['ruleIndustry (kind)', ruleIndustry, [f('data/industry-waste.geojson', industry({ kind: 'river' }))], [f('data/industry-waste.geojson', industry({ kind: 'wastewater' }))]],
     ['ruleIndustry (First Nation name)', ruleIndustry, [f('data/industry-waste.geojson', industry({ name: 'Tsawout WWTP' }))], [f('data/industry-waste.geojson', industry({ name: 'Saanich Peninsula WWTP' }))]],
+    ['ruleMarineFiles (a file with an empty shape)', ruleMarineFiles, marineSet('null'), marineSet()],
+    ['ruleMarineFiles (outside the area the map reaches)', ruleMarineFiles, marineSet('outside'), marineSet()],
+    ['ruleMarineFiles (a missing file)', ruleMarineFiles, marineSet('missing'), marineSet()],
+    ['ruleProtectedAreas (no Race Rocks)', ruleProtectedAreas, [f('data/marine-protected.geojson', protectedFc({}, 'SOME OTHER RESERVE'))], [f('data/marine-protected.geojson', protectedFc())]],
+    ['ruleProtectedAreas (a no-take code of 4)', ruleProtectedAreas, [f('data/marine-protected.geojson', protectedFc({ no_take: 4 }))], [f('data/marine-protected.geojson', protectedFc({ no_take: null }))]],
+    ['ruleProtectedAreas (a rockfish conservation area)', ruleProtectedAreas, [f('data/marine-protected.geojson', protectedFc({ name: 'Bamfield Rockfish Conservation Area' }))], [f('data/marine-protected.geojson', protectedFc({ name: 'Gulf Islands National Park Reserve' }))]],
+    ['ruleProtectedAreas (too few areas)', ruleProtectedAreas, [f('data/marine-protected.geojson', fc([area('RACE ROCKS ECOLOGICAL RESERVE')]))], [f('data/marine-protected.geojson', protectedFc())]],
+    ['ruleSeabirds (First Nation name)', ruleSeabirds, [f('data/seabird-colonies.geojson', colonies('TSAWWASSEN BKWATER'))], [f('data/seabird-colonies.geojson', colonies('CHAIN ISLETS'))]],
+    ['ruleSeabirds (not points)', ruleSeabirds, [f('data/seabird-colonies.geojson', colonies('CHAIN ISLETS', sq()))], [f('data/seabird-colonies.geojson', colonies('CHAIN ISLETS'))]],
+    ['ruleDensityCells (a cell without a species)', ruleDensityCells, [f('data/whale-density.geojson', cells({ dalls_n: null }))], [f('data/whale-density.geojson', cells())]],
+    ['ruleDensityCells (a cell larger than the grid)', ruleDensityCells, [f('data/whale-density.geojson', cells({ km2: 40 }))], [f('data/whale-density.geojson', cells())]],
+    ['ruleSrkwHabitat (two features)', ruleSrkwHabitat, [f('data/srkw-habitat.geojson', fc([srkw(), srkw()]))], [f('data/srkw-habitat.geojson', fc([srkw()]))]],
+    ['ruleSrkwHabitat (another status)', ruleSrkwHabitat, [f('data/srkw-habitat.geojson', fc([srkw({ status: 'Proposed in a draft' })]))], [f('data/srkw-habitat.geojson', fc([srkw()]))]],
+    ['ruleCrimsVintage (years not in the credits)', (files) => ruleCrimsVintage(files.slice(0, 2), files[2].text), [f('data/herring-spawn.geojson', herringFc(1937, 1986)), f('data/eelgrass.geojson', eelFc(1998)), f('x.html', 'the herring spawn records run from 1937 to 1980 and the eelgrass here was mapped in 1998')], [f('data/herring-spawn.geojson', herringFc(1937, 1986)), f('data/eelgrass.geojson', eelFc(1998)), f('x.html', 'the herring spawn records run from 1937 to 1986 and the eelgrass here was mapped in 1998')]],
+    ['ruleWhaleRules (a distance changed in the density paragraph)', (files) => ruleWhaleRules(files[0].text, files[1].text), [f('x.html', whaleHtml.replace(/<p><strong>Whale and porpoise density\.<\/strong>[^]*$/, `<p><strong>Whale and porpoise density.</strong> ${WHALE_RULES_TEXT.replace('100 m', '50 m')}</p></section>`)), f('x.js', whaleJs)], [f('x.html', whaleHtml), f('x.js', whaleJs)]],
+    ['ruleWhaleRules (a link missing)', (files) => ruleWhaleRules(files[0].text, files[1].text), [f('x.html', whaleHtml.replace(WHALE_LINKS[1], 'https://example.org/')), f('x.js', whaleJs)], [f('x.html', whaleHtml), f('x.js', whaleJs)]],
+    ['ruleWhaleRules (the code constant changed)', (files) => ruleWhaleRules(files[0].text, files[1].text), [f('x.html', whaleHtml), f('x.js', whaleJs.replace('at least 100 m', 'at least 10 m'))], [f('x.html', whaleHtml), f('x.js', whaleJs)]],
+    ['ruleWhaleRulesInCode (panel note without the distances)', (files) => ruleWhaleRulesInCode(files[0].text, files[1].text), [f('x.js', whaleCodeJs.replace("A model. ${WHALE_RULES}", 'A model.')), f('x.js', whaleDataJs)], [f('x.js', whaleCodeJs), f('x.js', whaleDataJs)]],
+    ['ruleWhaleRulesInCode (popup without the distances)', (files) => ruleWhaleRulesInCode(files[0].text, files[1].text), [f('x.js', whaleCodeJs.replace("box.append(el('p', WHALE_RULES))", '')), f('x.js', whaleDataJs)], [f('x.js', whaleCodeJs), f('x.js', whaleDataJs)]],
+    ['ruleWhaleRulesInCode (density info without the distances)', (files) => ruleWhaleRulesInCode(files[0].text, files[1].text), [f('x.js', whaleCodeJs), f('x.js', whaleDataJs.replace('export function cetaceanInfo(p, key) {\n  return { lines: [WHALE_RULES] }', 'export function cetaceanInfo(p, key) {\n  return { lines: [] }'))], [f('x.js', whaleCodeJs), f('x.js', whaleDataJs)]],
+    ['ruleMarineCredits (no legacy statement)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml.replace('legacy dataset that began in 1979', 'dataset')), f('x.js', marineJs)], [f('x.html', marineHtml), f('x.js', marineJs)]],
+    ['ruleMarineCredits (no federal licence statement)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml.replace(OGL_CANADA_STATEMENT, 'Thanks.')), f('x.js', marineJs)], [f('x.html', marineHtml), f('x.js', marineJs)]],
+    ['ruleMarineCredits (no model date in the density credit)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml.replace('A model of summer 2018, not where animals are now.', 'A model.')), f('x.js', marineJs)], [f('x.html', marineHtml), f('x.js', marineJs)]],
+    ['ruleMarineCredits (a source without its credit)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml), f('x.js', marineJs.replace("src('ov-herring', CRIMS_ATTRIB)", "src('ov-herring', USGS_ATTRIB)"))], [f('x.html', marineHtml), f('x.js', marineJs)]],
+    ['ruleMarineCredits (the credit does not name its licence)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml), f('x.js', marineJs.replace('(${OGL_CANADA_LINK})', ''))], [f('x.html', marineHtml), f('x.js', marineJs)]],
+    ['ruleMarinePlain (em dash)', (files) => ruleMarinePlain(files.map((x) => x.text)), [f('x', 'old data — not current')], [f('x', 'old data, not current')]],
+    ['ruleMarinePlain (semicolon)', (files) => ruleMarinePlain(files.map((x) => x.text)), [f('x', 'old data; not current')], [f('x', 'old data, not current')]],
   ]
   let ok = true
   for (const [name, rule, bad, clean] of cases) {
@@ -504,6 +717,11 @@ function checkTree() {
   report(...pair(ruleFlowDirection(files), 'flow lines end at the creek mouths (Colquitz River, Bowker Creek): dashes march downstream'))
   report(...pair(ruleFlowCanals(files), `flow lines include the canals and not the pipes: Bowker Creek open channel ${BOWKER_OPEN_M[0]} to ${BOWKER_OPEN_M[1]} m`))
   report(...pair(ruleIndustry(files), 'industry and waste sites: only open-licence sources, only landfill, power and wastewater kinds, no site named for a First Nation'))
+  report(...pair(ruleMarineFiles(files), `marine life and protection: ${MARINE_FILES.length} data files, valid GeoJSON, no empty shapes, every coordinate inside the area the map reaches`))
+  report(...pair(ruleProtectedAreas(files), 'protected marine areas: marine zones with a name and a type, a no-take code only where CPCAD gives one, Race Rocks present, no rockfish conservation area'))
+  report(...pair(ruleSrkwHabitat(files), 'killer whale critical habitat: one final or proposed Southern Resident area'))
+  report(...pair(ruleDensityCells(files), 'whale and porpoise density: every cell has an area and, for all three species, the model number and its uncertainty'))
+  report(...pair(ruleSeabirds(files), 'seabird colonies: points, enough of them, none named for a First Nation'))
   report(...pair(ruleSize(files), `total size under 10 MB (${(files.reduce((a, f) => a + f.size, 0) / 1048576).toFixed(2)} MB)`))
 
   // require rules (the positive twins)
@@ -546,6 +764,11 @@ function checkTree() {
   report(...pair(ruleEcccLicence(html), 'Environment and Climate Change Canada data is not credited to the Open Government Licence'))
   report(...pair(rulePrivacyHosts(html), 'the privacy note names every third-party host the page fetches from after a box is ticked'))
   const overlaysJs = byPath['js/overlays.js']?.text || '', flowJs = byPath['js/flow.js']?.text || ''
+  const dataJs = byPath['js/overlays-data.js']?.text || ''
+  report(...pair(ruleWhaleRules(html, dataJs), 'whales: the vessel distances are in the code and in the credits word for word, with links to the Transport Canada bulletin and the Marine Mammal Regulations'))
+  report(...pair(ruleWhaleRulesInCode(overlaysJs, dataJs), 'whales: the panel notes of the critical habitat and the density model, and their popups, carry the vessel distances'))
+  report(...pair(ruleMarineCredits(html, overlaysJs), 'marine life and protection: the credits and the panel say what each layer is, how old it is and that it is not for navigation, and every source carries its credit on the map'))
+  report(...pair(ruleCrimsVintage(files, textOf(credits)), 'coastal habitat: the survey years in the credits are the years in the data (herring spawn records, eelgrass mapping)'))
   report(...pair(ruleCurrentsCredit(html, overlaysJs), 'sea currents carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
   report(...pair(ruleWindCredit(html, overlaysJs), 'wind carries the Environment and Climate Change Canada credit on the map, says it is a forecast and not for navigation, and is named in the privacy note'))
   report(...pair(ruleScalarCredit(html, overlaysJs), 'sea temperature and sea saltiness carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
@@ -559,7 +782,7 @@ function checkTree() {
   report(missingOverlay.length === 0, 'credits carry the Environment Canada, USGS, ecoregion and industry source statements word for word', missingOverlay.join(' | '))
 
   const sources = byPath['data/SOURCES.md']?.text || ''
-  report(LAYER_FILES.filter((n) => n !== 'pins').every((n) => sources.includes(`${n}.geojson`)), 'data/SOURCES.md lists every data file')
+  report([...LAYER_FILES.filter((n) => n !== 'pins'), ...MARINE_FILES].every((n) => sources.includes(`${n}.geojson`)), 'data/SOURCES.md lists every data file')
   const licence = byPath['LICENSE']?.text || ''
   report(licence.startsWith('MIT License') && licence.includes('Copyright (c) 2026 Darren Zal') && licence.includes('Permission is hereby granted, free of charge'), 'LICENSE is the MIT licence with the Darren Zal copyright line')
   const readme = byPath['README.md']?.text || ''
@@ -843,6 +1066,40 @@ async function checkOverlayData() {
     report(dx[0] === 'interpolate' && dx[2][0] === 'elevation' && elev.every((v, i) => i === 0 || v > elev[i - 1]) && elev[0] === -300 && elev.at(-1) === 0 && alpha(cols.at(-1)) === 0 && alpha(cols.at(-2)) === 0 && elev.at(-2) === -D.DEPTH_FADE_FROM && cols.slice(0, -2).every((c) => alpha(c) === 1) && cols.every((c) => /^rgba\(\d+,\d+,\d+,[\d.]+\)$/.test(c)), 'seafloor: the colour ramp runs by elevation from the deepest colour up, and is transparent at the waterline and above and down to 10 m, then fades in to the first colour')
     const dsLum = D.DEPTH_STOPS.map((p) => lum(p[1]))
     report(D.DEPTH_STOPS.every((p, i) => i === 0 || p[0] > D.DEPTH_STOPS[i - 1][0]) && dsLum.every((l, i) => i === 0 || l < dsLum[i - 1]) && D.DEPTH_STOPS[0][0] > D.DEPTH_FADE_FROM && D.DEPTH_TICKS.every((t) => D.DEPTH_STOPS.some((p) => p[0] === t)) && D.depthGradient().startsWith('linear-gradient(to right, rgba(150, 202, 222, 0) 0%') && D.depthGradient().endsWith('rgb(32, 66, 128) 100%)'), 'seafloor: the colours get darker with depth, the ticks of the key are depths that have a colour, and the key fades in from nothing')
+
+    // marine life and protection
+    report(D.tidyName('RACE ROCKS ECOLOGICAL RESERVE') === 'Race Rocks Ecological Reserve' && D.tidyName('SAYSUTSHUN (NEWCASTLE ISLAND MARINE) PARK') === 'Saysutshun (Newcastle Island Marine) Park' && D.tidyName('BAY OF FUNDY') === 'Bay of Fundy' && D.tidyName('Gulf Islands National Park Reserve Of Canada') === 'Gulf Islands National Park Reserve Of Canada' && D.tidyName('SANDHEADS (8 Dolphs)') === 'SANDHEADS (8 Dolphs)' && D.tidyName('  ') === null && D.tidyName(null) === null, 'marine layers: a name published in capitals is shown in capitals and small letters, a name with small letters already is left as published, and a blank name is none')
+    const rr = D.protectedInfo({ name: 'RACE ROCKS ECOLOGICAL RESERVE', type: 'Ecological Reserve', owner: 'Government of British Columbia', year: 1980, no_take: 1 })
+    const gs = D.protectedInfo({ name: 'GOLDSTREAM PARK', type: 'A - Park', owner: 'Government of British Columbia', year: 1958, no_take: null })
+    const nt = (code) => D.protectedInfo({ name: 'X', type: 'Park', owner: 'Y', year: 2000, no_take: code }).lines.some((l) => /No-take/.test(l))
+    report(rr.title === 'Race Rocks Ecological Reserve' && rr.tag === 'ecological reserve' && rr.lines.includes('Owner: Government of British Columbia.') && rr.lines.includes('Established 1980.') && rr.lines.includes('No-take area, as reported to CPCAD: all of it.') && gs.tag === 'park (class A)' && !gs.lines.some((l) => /No-take/.test(l)) && nt(1) && nt(2) && nt(3) && !nt(0) && !nt(4) && !nt(null) && rr.source.includes(OGL_CANADA_STATEMENT) && D.protectedInfo({}).title === 'Protected marine area' && !D.protectedInfo({ name: 'X', year: 0 }).lines.some((l) => /Established/.test(l)), 'protected marine areas: the popup gives name, type, owner, year and the no-take line only where CPCAD gives one, with the Open Government Licence statement', JSON.stringify(rr))
+    const srkwI = D.srkwInfo({ status: 'Final/Proposed' })
+    report(srkwI.title === 'Southern Resident killer whale critical habitat' && srkwI.lines.includes(D.WHALE_RULES) && srkwI.lines.some((l) => /not a sighting/.test(l)) && srkwI.source.includes('For general guidance only') && srkwI.source.includes(OGL_CANADA_STATEMENT) && D.WHALE_RULES === WHALE_RULES_TEXT && D.WHALE_RULE_LINKS.map((l) => l.href).join() === WHALE_LINKS.join(), 'critical habitat: the popup says it is a boundary and not a sighting, gives the vessel distances word for word and the Open Government Licence statement, and "for general guidance only"')
+    report(near(D.cetaceanDensity(0.61, 7.25), 0.61 / 7.25 * 100) && D.cetaceanDensity(2.5, 25) === 10 && threw(() => D.cetaceanDensity(1, 0)) && threw(() => D.cetaceanDensity(-1, 5)) && threw(() => D.cetaceanDensity(NaN, 5)), 'whale and porpoise density: animals per 100 km2 is the model number over the cell area, and a bad number or area is refused')
+    const cell = (over = {}) => ({ geometry: { type: 'Polygon', coordinates: [] }, properties: { km2: 10, humpback_n: 1, humpback_cv: 0.5, harbour_n: 5, harbour_cv: 0.6, dalls_n: 2, dalls_cv: 0.4, ...over } })
+    const cc = D.cetaceanCells({ features: [cell(), cell({ dalls_n: null }), cell({ km2: 0 }), { ...cell(), geometry: null }, cell({ humpback_n: -1 }), cell({ harbour_cv: 'x' })] })
+    report(cc.features.length === 1 && near(cc.features[0].properties.d_humpback, 10) && near(cc.features[0].properties.d_harbour, 50) && near(cc.features[0].properties.d_dalls, 20) && threw(() => D.cetaceanCells({})), 'whale and porpoise density: a cell without an area, a shape or all three species is dropped, and the density of each species is added')
+    const spread = Array.from({ length: 15 }, (_, i) => i + 1)
+    report(sameValues(D.densityBreaks(spread), [4, 7, 10, 13]) && sameValues(D.densityBreaks(Array.from({ length: 223 }, (_, i) => i * i / 1000)), [1.9, 7.9, 18, 32]) && sameValues(D.densityBreaks([5, 5, 5, 5, 5, 5]), [5]) && sameValues(D.densityBreaks([0, 0, 0, 0, 0, 0, 7, 8, 9, 10]), [7, 9]) && threw(() => D.densityBreaks([1, 2, 3])) && D.densityBreaks(spread).every((b, i, a) => i === 0 || b > a[i - 1]), 'whale and porpoise density: the class limits are at equal shares of the cells, shown to two figures, strictly rising, and fewer when the values do not spread')
+    report(D.densityClass(3, [4, 7, 10, 13]) === 0 && D.densityClass(4, [4, 7, 10, 13]) === 1 && D.densityClass(12.9, [4, 7, 10, 13]) === 3 && D.densityClass(13, [4, 7, 10, 13]) === 4 && D.densityClass(100, [4, 7, 10, 13]) === 4 && D.densityClass(5, [5]) === 1, 'whale and porpoise density: a value falls in the class above the highest limit it reaches')
+    const dExpr = D.densityExpression('d_humpback', [4, 7, 10, 13])
+    report(dExpr[0] === 'step' && dExpr[1][1] === 'd_humpback' && dExpr.length === 3 + 8 && dExpr[2] === D.DENSITY_COLOURS[0] && dExpr[3] === 4 && dExpr.at(-1) === D.DENSITY_COLOURS[4] && D.densityExpression('d_x', [5]).length === 5 && threw(() => D.densityExpression('d_x', [1, 2, 3, 4, 5])), 'whale and porpoise density: the colour expression is a step on the density of the species, with one more colour than limits')
+    const dc = D.DENSITY_COLOURS.map((c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16))), sea = [194, 200, 202]
+    const over = dc.map((c) => c.map((v, k) => Math.round(v * 0.75 + sea[k] * 0.25))), gap = (a, b) => Math.max(...a.map((v, k) => Math.abs(v - b[k])))
+    report(D.DENSITY_COLOURS.length === D.CETACEAN_CLASSES && dc.every((c, i) => i === 0 || lum(c) < lum(dc[i - 1])) && over.every((c, i) => i === 0 || gap(c, over[i - 1]) >= 20) && gap(over[0], sea) >= 12, 'whale and porpoise density: the five colours get darker, each differs from the one before by 20 of 255 or more at 0.75 opacity, and the lightest still shows against the basemap sea')
+    const grad5 = D.stepGradient(D.DENSITY_COLOURS)
+    report(grad5.startsWith(`linear-gradient(to right, ${D.DENSITY_COLOURS[0]} 0%, ${D.DENSITY_COLOURS[0]} 20%, `) && grad5.endsWith(`${D.DENSITY_COLOURS[4]} 80%, ${D.DENSITY_COLOURS[4]} 100%)`) && (grad5.match(/#/g) || []).length === 10, 'whale and porpoise density: the key is five blocks, one colour each')
+    report(D.fmt2(0.0123) === '0.012' && D.fmt2(3.456) === '3.5' && D.fmt2(1234.5) === '1,200' && D.fmt2(7.25) === '7.3' && D.fmt2(0.00010892857) === '0.00011', 'whale and porpoise density: numbers are shown to two figures, with the thousands separator')
+    const cp = { km2: 7.25, humpback_n: 0.61, humpback_cv: 0.67, harbour_n: 3.63, harbour_cv: 0.59, dalls_n: 1, dalls_cv: 0.45 }
+    const ci = D.cetaceanInfo(cp, 'humpback'), cd = D.cetaceanInfo(cp, 'dalls'), ch = D.cetaceanInfo(cp, 'harbour')
+    report(ci.title === 'Humpback whale: modelled summer numbers' && ci.tag === 'model of summer 2018 surveys' && ci.lines[0] === 'The model predicts about 0.61 humpback whales in this cell (Nhat, for a cell of 7.3 km²).' && ci.lines[1] === 'That is about 8.4 per 100 km².' && ci.lines[2] === 'Uncertainty (CV): 0.67. Higher means less certain.' && /July to early September 2018/.test(ci.lines[3]) && /not where animals are now/.test(ci.lines[3]) && ci.lines.at(-1) === D.WHALE_RULES && ci.source.includes(OGL_CANADA_STATEMENT) && cd.lines[0].includes('about 1 Dall’s porpoise in this cell') && ch.lines[0].includes('harbour porpoises') && ch.lines[2].includes('0.59') && threw(() => D.cetaceanInfo(cp, 'orca')) && threw(() => D.cetaceanInfo({ km2: 5 }, 'humpback')), 'whale and porpoise density: the popup gives the species, the model number as the service names it (Nhat), the density, the uncertainty, the survey months and year, that it is not where animals are now, and the vessel distances', JSON.stringify(ci.lines))
+    const ki = D.kelpInfo({ species: 'Bull Kelp', density: 'Low' }), kn = D.kelpInfo({ species: null, density: null })
+    const ei = D.eelgrassInfo({ year: 1998 }), hi = D.herringInfo({ magnitude: 'Very Large', consistency: 'Consistent', first_year: 1937, last_year: 1986 }), hn = D.herringInfo({ magnitude: null, consistency: null, first_year: null, last_year: null }), si = D.seabirdInfo({ name: 'CHAIN ISLETS' })
+    report(ki.title === 'Bull kelp bed' && ki.lines[0] === 'Density recorded: low.' && kn.title === 'Kelp bed' && kn.lines.length === 1 && ei.lines[0] === 'Mapped in 1998.' && hi.lines.includes('The records run from 1937 to 1986.') && hi.lines.includes('Spawn magnitude recorded: very large.') && hi.lines.includes('Spawning here was recorded as consistent.') && hn.lines.length === 1 && si.title === 'Chain Islets' && si.lines.some((l) => /easily disturbed/.test(l)) && [ki, kn, ei, hi, hn, si].every((i) => i.source.includes('legacy survey that began in 1979') && i.source.includes(OGL_BC_STATEMENT) && i.lines.some((l) => /1979|old|may have changed|not this year|out of date/i.test(l))), 'coastal habitat: every popup says the survey is old (began in 1979) and carries the Open Government Licence – British Columbia statement, and a field the survey leaves blank is not said')
+    report(D.marineMessage('kelp', new Array(1118).fill({})).startsWith('1,118 kelp beds from a survey that began in 1979') && D.marineMessage('kelp', [{}]).startsWith('1 kelp bed ') && D.marineMessage('eelgrass', [{ properties: { year: 1998 } }]).includes('mapped in 1998') && D.marineMessage('herring', [{ properties: { first_year: 1937, last_year: 1986 } }, { properties: { first_year: 1950, last_year: 1966 } }]).includes('between 1937 and 1986') && /^81 seabird colonies/.test(D.marineMessage('seabirds', new Array(81).fill({}))) && /^22 marine zones of protected areas/.test(D.marineMessage('protected', new Array(22).fill({}))) && /not a sighting/.test(D.marineMessage('srkw', [{}])) && threw(() => D.marineMessage('orcas', [])), 'marine layers: the status line gives the count with a thousands separator, the years found in the data, and says the data is old or a boundary and not a sighting')
+    report(Object.keys(D.MARINE_FILES).join() === 'protected,srkw,cetaceans,kelp,eelgrass,herring,seabirds' && Object.values(D.MARINE_FILES).every((v) => /^data\/[a-z-]+\.geojson$/.test(v)) && Object.values(D.MARINE_FILES).map((v) => v.slice(5, -8)).join() === MARINE_FILES.join(), 'marine layers: seven data files, each a relative path in data/, the same files this check looks at')
+    const plain = [D.WHALE_RULES, ...D.WHALE_RULE_LINKS.map((l) => l.label), ci, cd, ch, ki, kn, ei, hi, hn, si, rr, gs, srkwI].flatMap((x) => (typeof x === 'string' ? [x] : [x.title, x.tag, x.source, ...(x.lines || [])].filter(Boolean)))
+    report(ruleMarinePlain(plain).length === 0 && ruleMarinePlain([D.marineMessage('kelp', [{}]), D.marineMessage('herring', []), D.marineMessage('seabirds', []), D.marineMessage('protected', []), D.marineMessage('srkw', []), D.marineMessage('eelgrass', [])]).length === 0, 'marine layers: the text of every popup and status line has no em dash and no semicolon', ruleMarinePlain(plain).join(' | '))
 
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
