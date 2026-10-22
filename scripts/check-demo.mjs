@@ -27,8 +27,9 @@ const PIN_STATUS = ['draft', 'approved']
 // Hosts the page may name. Most appear only as credit links. The page fetches from
 // tiles.openfreemap.org (basemap) on load. After the matching box is ticked it also fetches from
 // s3.amazonaws.com (elevation tiles for Terrain shading and 3D terrain), api.weather.gc.ca and
-// geo.weather.gc.ca (Environment and Climate Change Canada: radar, sea currents, wind, alerts, air quality,
-// conditions, river gauges), earthquake.usgs.gov (earthquakes) and api.gbif.org (life observations).
+// geo.weather.gc.ca (Environment and Climate Change Canada: radar, sea currents, wind, sea temperature, sea saltiness,
+// alerts, air quality, conditions, river gauges), earthquake.usgs.gov (earthquakes), api.gbif.org (life observations)
+// and api.tidesandcurrents.noaa.gov (tides and tidal currents, after a station is clicked).
 const ALLOWED_HOSTS = [
   'tiles.openfreemap.org', 'openfreemap.org', 'www2.gov.bc.ca', 'www.openstreetmap.org',
   'www.openmaptiles.org', 'crd.ca', 'www.crd.ca', 'catalogue.data.gov.bc.ca',
@@ -38,10 +39,12 @@ const ALLOWED_HOSTS = [
   'earthquake.usgs.gov', 'www.usgs.gov', 'api.gbif.org', 'www.gbif.org', 'creativecommons.org',
   'ecoregions.appspot.com', 'www.hydrosheds.org', 'doi.org', 'datasets.wri.org',
   'www.opengis.net', // names the coordinate system in a sea currents request (EPSG 4326). It is an identifier, not fetched
+  'api.tidesandcurrents.noaa.gov', 'tidesandcurrents.noaa.gov', // NOAA: predictions (fetched after a station is clicked) and its disclaimer and station pages (links)
+  'www.w3.org', // the SVG namespace of a tide curve. It is an identifier, not fetched
 ]
 // Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
-const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org']
-const OVERLAY_IDS = ['radar', 'currents', 'wind', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
+const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov']
+const OVERLAY_IDS = ['radar', 'currents', 'wind', 'temperature', 'salinity', 'tides', 'seafloor', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry']
 const LIVE_SENTENCE = 'These load from outside services when ticked. Nothing loads until you tick one.'
 // Credit text the new layers must carry, word for word, in the credits panel.
 const OVERLAY_STATEMENTS = [
@@ -246,6 +249,63 @@ function ruleWindCredit(html, js) {
   return out
 }
 
+// Sea temperature and Sea saltiness carry the same Environment and Climate Change Canada credit on the map as the other
+// live layers, and say in the credits and the status line that the model is experimental and not for navigation.
+function ruleScalarCredit(html, js) {
+  const out = []
+  const para = html.split(/<\/p>|<\/li>/).filter((p) => p.includes('<strong>Sea temperature and Sea saltiness</strong>')).map(textOf)[0]
+  if (!para) out.push('the credits have no Sea temperature and Sea saltiness paragraph')
+  else {
+    if (!/CIOPS-SalishSea/.test(para)) out.push('the sea temperature credit does not name the CIOPS-SalishSea model')
+    if (!/experimental/i.test(para)) out.push('the sea temperature credit does not say the model is experimental')
+    if (!/not for navigation/i.test(para)) out.push('the sea temperature credit does not say it is not for navigation')
+  }
+  for (const kind of ['temperature', 'salinity']) if (!new RegExp(`src\\('ov-${kind}-credit', ECCC_ATTRIB\\)`).test(js)) out.push(`the ${kind} credit source does not carry ECCC_ATTRIB`)
+  if (!/\(experimental, not for navigation\)\./.test((js.match(/const scalarMessage = [^\n]*/) || [''])[0])) out.push('the sea temperature status line does not say experimental, not for navigation')
+  return out
+}
+
+// Tides and tidal currents carry NOAA's attribution on the map, in the credits and in every popup, say that they are
+// predictions and not for navigation, and say that the curves are drawn here and are not official NOAA material.
+function ruleTidesCredit(html, js) {
+  const out = []
+  const para = html.split(/<\/p>|<\/li>/).filter((p) => p.includes('<strong>Tides and tidal currents</strong>')).map(textOf)[0]
+  if (!para) out.push('the credits have no Tides and tidal currents paragraph')
+  else {
+    if (!/NOAA\/NOS\/CO-OPS/.test(para)) out.push('the tides credit does not name NOAA/NOS/CO-OPS')
+    if (!/in the public domain/.test(para)) out.push('the tides credit does not quote NOAA saying its information is in the public domain')
+    if (!/not official NOAA material/.test(para)) out.push('the tides credit does not say the curves are not official NOAA material')
+    if (!/not for navigation/i.test(para)) out.push('the tides credit does not say predictions are not for navigation')
+  }
+  if (!/const TIDES_ATTRIB = [^\n]*NOAA\/NOS\/CO-OPS/.test(js)) out.push('the on-map tides credit does not name NOAA/NOS/CO-OPS')
+  if (!/src\('ov-tides', TIDES_ATTRIB\)/.test(js)) out.push('the tides source does not carry TIDES_ATTRIB')
+  if (!js.includes('Predictions, not for navigation. Source: NOAA/NOS/CO-OPS') || !js.includes('Not official NOAA material.')) out.push('the tide popup does not carry the not-for-navigation and not-official lines')
+  return out
+}
+
+// Seafloor depth says where its depths come from, how coarse they are and that they are not for navigation, and is
+// drawn as a colour relief from an elevation source of its own on the existing tile address.
+function ruleSeafloorCredit(html, js) {
+  const out = []
+  const para = html.split(/<\/p>|<\/li>/).filter((p) => p.includes('<strong>Seafloor depth</strong>')).map(textOf)[0]
+  if (!para) out.push('the credits have no Seafloor depth paragraph')
+  else {
+    if (!/ETOPO1/.test(para)) out.push('the seafloor credit does not name ETOPO1')
+    if (!/1 arc-minute/.test(para)) out.push('the seafloor credit does not say how coarse the grid is')
+    if (!/not for navigation/i.test(para)) out.push('the seafloor credit does not say it is not for navigation')
+  }
+  if (!/const SEAFLOOR_ATTRIB = [^\n]*ETOPO1[^\n]*not for navigation/.test(js)) out.push('the on-map seafloor credit does not name ETOPO1 and say not for navigation')
+  if (!/type: 'color-relief'/.test(js) || !/maxzoom: SEAFLOOR_MAX_ZOOM/.test(js)) out.push('the seafloor layer is not a colour relief on a source with a maximum zoom')
+  return out
+}
+
+// Held ocean data stays out of the code and the page: Canadian Hydrographic Service tides, bathymetry and currents (their
+// licences are not accepted), DFO conservation areas and shellfish closures, seal haulouts, whale sighting feeds and AIS.
+const HELD_OCEAN = /iwls|nonna|chs-shc|dfo-mpo|rockfish|shellfish|haulout|acartia|obis\.org|inaturalist|aisstream|whalemuseum|orcanetwork/i
+function ruleHeldOcean(files) {
+  return files.filter((f) => f.text != null && HELD_OCEAN.test(f.text)).map((f) => `held ocean data named in ${f.path}: ${f.text.match(HELD_OCEAN)[0]}`)
+}
+
 // Every third-party host the page fetches from once a box is ticked is named in the privacy note.
 function rulePrivacyHosts(html) {
   const privacy = textOf(html.slice(html.indexOf('<strong>Privacy.</strong>'), html.indexOf('<strong>Software.</strong>')))
@@ -283,7 +343,7 @@ function ruleIndustry(files) {
   return out
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -303,6 +363,12 @@ function selftest() {
   const currentsJs = "src('ov-currents-credit', ECCC_ATTRIB); const m = `(experimental, not for navigation).`"
   const windHtml = '<p><strong>Wind</strong> (off until you switch it on). The HRDPS model. It is a forecast model and is not for navigation.</p><p><strong>Privacy.</strong> Environment and Climate Change Canada for radar, sea currents, wind and alerts. <strong>Software.</strong></p>'
   const windJs = "src('ov-wind-credit', ECCC_ATTRIB); const m = `(forecast, not for navigation).`"
+  const scalarHtml = '<p><strong>Sea temperature and Sea saltiness</strong> (each off until you switch it on). From the CIOPS-SalishSea model. It is an experimental model, and it is not for navigation.</p>'
+  const scalarJs = "src('ov-temperature-credit', ECCC_ATTRIB); src('ov-salinity-credit', ECCC_ATTRIB)\nconst scalarMessage = (kind, time) => `Modelled for ${time}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`\nconst z = 1"
+  const tidesHtml = '<p><strong>Tides and tidal currents</strong> (off until you switch it on). From NOAA/NOS/CO-OPS, whose disclaimer says its information is &ldquo;in the public domain&rdquo;. The curves are not official NOAA material. Predictions are not for navigation.</p>'
+  const tidesJs = "const TIDES_ATTRIB = 'Tides: <a href=\"x\">NOAA/NOS/CO-OPS</a> predictions'\nsrc('ov-tides', TIDES_ATTRIB)\nline(`Predictions, not for navigation. Source: NOAA/NOS/CO-OPS, station 1. Not official NOAA material.`)"
+  const floorHtml = '<p><strong>Seafloor depth</strong> (off until you switch it on). From the ETOPO1 grid. Its cells are 1 arc-minute. It is not for navigation.</p>'
+  const floorJs = "const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'\nmap.addSource('seafloor', { maxzoom: SEAFLOOR_MAX_ZOOM }); map.addLayer({ id: 'seafloor', type: 'color-relief' })"
   const cases = [
     ['ruleForbiddenNames', ruleForbiddenNames, [f('data/native-land.geojson', '{}')], [f('data/streams.geojson', '{}')]],
     ['ruleForbiddenNames (rush)', ruleForbiddenNames, [f('data/rush-map.geojson', '{}')], [f('data/bec.geojson', '{}')]],
@@ -332,6 +398,16 @@ function selftest() {
     ['ruleWindCredit (credit source missing)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml), f('x.js', windJs.replace('ECCC_ATTRIB', 'USGS_ATTRIB'))], [f('x.html', windHtml), f('x.js', windJs)]],
     ['ruleWindCredit (status line)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml), f('x.js', windJs.replace('forecast, not for navigation)', 'a model)'))], [f('x.html', windHtml), f('x.js', windJs)]],
     ['ruleWindCredit (privacy note)', (files) => ruleWindCredit(files[0].text, files[1].text), [f('x.html', windHtml.replace('sea currents, wind and alerts', 'sea currents and alerts')), f('x.js', windJs)], [f('x.html', windHtml), f('x.js', windJs)]],
+    ['ruleScalarCredit (no model, experimental or navigation line)', (files) => ruleScalarCredit(files[0].text, files[1].text), [f('x.html', '<p><strong>Sea temperature and Sea saltiness</strong> (each off until you switch it on). Modelled.</p>'), f('x.js', scalarJs)], [f('x.html', scalarHtml), f('x.js', scalarJs)]],
+    ['ruleScalarCredit (credit source missing)', (files) => ruleScalarCredit(files[0].text, files[1].text), [f('x.html', scalarHtml), f('x.js', scalarJs.replace("src('ov-salinity-credit', ECCC_ATTRIB)", "src('ov-salinity-credit', USGS_ATTRIB)"))], [f('x.html', scalarHtml), f('x.js', scalarJs)]],
+    ['ruleScalarCredit (status line)', (files) => ruleScalarCredit(files[0].text, files[1].text), [f('x.html', scalarHtml), f('x.js', scalarJs.replace('(experimental, not for navigation).', 'a model).'))], [f('x.html', scalarHtml), f('x.js', scalarJs)]],
+    ['ruleTidesCredit (no attribution, quote or caveat)', (files) => ruleTidesCredit(files[0].text, files[1].text), [f('x.html', '<p><strong>Tides and tidal currents</strong> (off until you switch it on). Predictions.</p>'), f('x.js', tidesJs)], [f('x.html', tidesHtml), f('x.js', tidesJs)]],
+    ['ruleTidesCredit (on-map credit)', (files) => ruleTidesCredit(files[0].text, files[1].text), [f('x.html', tidesHtml), f('x.js', tidesJs.replace('NOAA/NOS/CO-OPS</a> predictions', 'NOAA</a> predictions'))], [f('x.html', tidesHtml), f('x.js', tidesJs)]],
+    ['ruleTidesCredit (popup lines)', (files) => ruleTidesCredit(files[0].text, files[1].text), [f('x.html', tidesHtml), f('x.js', tidesJs.replace('Not official NOAA material.', 'Thanks.'))], [f('x.html', tidesHtml), f('x.js', tidesJs)]],
+    ['ruleSeafloorCredit (no grid, coarseness or navigation line)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', '<p><strong>Seafloor depth</strong> (off until you switch it on). Depth.</p>'), f('x.js', floorJs)], [f('x.html', floorHtml), f('x.js', floorJs)]],
+    ['ruleSeafloorCredit (layer type)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', floorHtml), f('x.js', floorJs.replace("type: 'color-relief'", "type: 'raster'"))], [f('x.html', floorHtml), f('x.js', floorJs)]],
+    ['ruleHeldOcean', ruleHeldOcean, [f('js/a.js', "const u = 'api-iwls.dfo-mpo.gc.ca'")], [f('js/a.js', "const u = 'api.tidesandcurrents.noaa.gov'")]],
+    ['ruleHeldOcean (whale feed)', ruleHeldOcean, [f('index.html', '<p>Sightings from Acartia.</p>')], [f('index.html', '<p>Modelled density only.</p>')]],
     ['rulePrivacyHosts', (files) => rulePrivacyHosts(files[0].text), [f('x.html', '<strong>Privacy.</strong> tiles.openfreemap.org <strong>Software.</strong>')], [f('x.html', `<strong>Privacy.</strong> ${FETCH_HOSTS.join(' ')} <strong>Software.</strong>`)]],
     ['ruleOverlayBoxes (on by default)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(true))], [f('x.html', boxes(false))]],
     ['ruleOverlayBoxes (3D terrain off)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(false, false))], [f('x.html', boxes(false))]],
@@ -472,6 +548,10 @@ function checkTree() {
   const overlaysJs = byPath['js/overlays.js']?.text || '', flowJs = byPath['js/flow.js']?.text || ''
   report(...pair(ruleCurrentsCredit(html, overlaysJs), 'sea currents carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
   report(...pair(ruleWindCredit(html, overlaysJs), 'wind carries the Environment and Climate Change Canada credit on the map, says it is a forecast and not for navigation, and is named in the privacy note'))
+  report(...pair(ruleScalarCredit(html, overlaysJs), 'sea temperature and sea saltiness carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
+  report(...pair(ruleTidesCredit(html, overlaysJs), 'tides and tidal currents carry the NOAA/NOS/CO-OPS attribution, say predictions are not for navigation and that the curves are not official NOAA material'))
+  report(...pair(ruleSeafloorCredit(html, overlaysJs), 'seafloor depth says it comes from ETOPO1, how coarse that is and that it is not for navigation, and is a colour relief on its own capped source'))
+  report(...pair(ruleHeldOcean(scanned.filter((f) => /^(index\.html$|js\/|css\/)/.test(f.path))), 'no held ocean data in the code or the page (Canadian Hydrographic Service data, conservation areas, shellfish closures, haulouts, whale sighting feeds, ship tracking)'))
   report(flowJs.includes('motionQuery') && flowJs.includes('visibilitychange') && flowJs.includes('cancelAnimationFrame') && flowJs.includes("'movestart'"), 'the particle loop of sea currents and wind honours reduced motion, stops when the tab is hidden and while the map moves')
   report(!byPath['js/currents.js'] && /createFlow/.test(overlaysJs) && (overlaysJs.match(/createFlow\(/g) || []).length === 1 && !/new Path2D/.test(overlaysJs), 'sea currents and wind use one particle engine (js/flow.js), made once, with no second copy of it in overlays.js')
   report(overlaysJs.includes('Contains information licenced under the <a href="${ECCC_LICENCE}" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada.') && overlaysJs.includes("const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'"), 'on-map attribution carries the Environment and Climate Change Canada licence statement and a link to the licence')
@@ -695,6 +775,75 @@ async function checkOverlayData() {
     const readable = (kind) => { const r = ramp(kind), b = F.FLOW_PROFILES[kind].bands; return r.every((c) => c >= 3.5) && r.every((c, i) => i === 0 || c > r[i - 1]) && b[0].from === 0 && b.every((x, i) => i === 0 || x.from > b[i - 1].from) }
     report(readable('currents') && readable('wind') && contrastOn('rgba(214, 240, 248, 0.45)') < 3.5 && contrastOn('rgba(255, 255, 255, 1)') < 3.5, 'particles: every speed band of the currents and the wind has a contrast of at least 3.5 to 1 against the basemap sea (the old white and pale cyan had 1.2 to 1.9) and the bands get darker with speed', JSON.stringify([ramp('currents').map((x) => +x.toFixed(1)), ramp('wind').map((x) => +x.toFixed(1))]))
     report(F.FLOW_PROFILES.currents.pxPerMs === 60 && F.FLOW_PROFILES.wind.pxPerMs > 0 && F.FLOW_PROFILES.currents.bands[0].colour !== F.FLOW_PROFILES.wind.bands[0].colour && rgba(F.FLOW_PROFILES.currents.bands[0].colour)[2] > rgba(F.FLOW_PROFILES.currents.bands[0].colour)[0] && rgba(F.FLOW_PROFILES.wind.bands[0].colour)[0] > rgba(F.FLOW_PROFILES.wind.bands[0].colour)[1], 'particles: the currents are drawn in blue and the wind in purple, so the two are not mixed up, and a current of 0.5 m/s moves at 30 px a second')
+
+    // sea temperature and saltiness (one picture for each hour, from the same model as the currents)
+    const tAt = (kind, h) => xml(D.SCALARS[kind].layer, h)
+    const tHours = '2026-10-22T07:00:00Z/2026-10-24T06:00:00Z/PT1H'
+    const tTimes = D.scalarTimes('temperature', tAt('temperature', tHours))
+    report(tTimes.length === 48 && tTimes[0] === '2026-10-22T07:00:00Z' && tTimes.at(-1) === '2026-10-24T06:00:00Z' && threw(() => D.scalarTimes('temperature', tAt('salinity', tHours))) && threw(() => D.scalarTimes('salinity', xml('CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m', tHours))) && threw(() => D.scalarTimes('salinity', tAt('salinity', '2026-10-22T07:00:00Z/2026-10-24T06:00:00Z/P1D'))) && threw(() => D.scalarTimes('wave', tHours)), 'sea temperature and saltiness: the 48 hours are read from their own layer and not a sibling, an unreadable step and an unknown layer are refused')
+    const tNow = Date.parse('2026-10-22T12:40:00Z')
+    report(D.scalarHour(tTimes, null, tNow) === '2026-10-22T12:00:00Z' && D.scalarHour(tTimes, null, Date.parse('2026-10-20T00:00:00Z')) === tTimes[0] && D.scalarHour(tTimes, null, Date.parse('2026-10-30T00:00:00Z')) === tTimes.at(-1), 'sea temperature and saltiness: with no sea currents the hour shown is the latest hour not after now (the first hour on offer before the range, the last after it)')
+    report(D.scalarHour(tTimes, '2026-10-22T18:00:00Z', tNow) === '2026-10-22T18:00:00Z' && D.scalarHour(tTimes, '2026-10-21T19:00:00Z', tNow) === tTimes[0] && D.scalarHour(tTimes, '2026-10-22T18:20:00Z', tNow) === '2026-10-22T18:00:00Z' && D.nearestHour(tTimes, '2026-10-22T08:30:00Z') === '2026-10-22T08:00:00Z' && threw(() => D.nearestHour([], '2026-10-22T08:00:00Z')) && threw(() => D.nearestHour(tTimes, 'soon')), 'sea temperature and saltiness: with the sea currents on, the hour shown is the hour of the currents (the nearest one on offer when the currents have an hour this layer lacks)')
+    const iu = D.scalarImageUrl('temperature', '2026-10-22T13:00:00Z'), su = D.scalarImageUrl('salinity', '2026-10-22T13:00:00Z')
+    report(iu.startsWith('https://geo.weather.gc.ca/geomet?') && iu.includes('request=GetMap') && iu.includes('layers=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && iu.includes('styles=SEA_TEMPSURF-DEFAULT') && iu.includes('crs=EPSG%3A3857') && iu.includes('width=720') && iu.includes('height=767') && iu.includes('transparent=true') && iu.includes('time=2026-10-22T13%3A00%3A00Z') && su.includes('layers=CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m') && su.includes('styles=SEA_SALT-COASTAL') && threw(() => D.scalarImageUrl('temperature', 'soon')) && threw(() => D.scalarImageUrl('wind', '2026-10-22T13:00:00Z')), 'sea temperature and saltiness: a picture request names the layer, its colour style, web Mercator, the map area at 720 x 767 pixels and one hour, and refuses a bad hour or layer')
+    report(D.scalarCapabilitiesUrl('temperature').includes('LAYER=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && !D.scalarCapabilitiesUrl('salinity').includes('LAYERS=') && D.scalarCapabilitiesUrl('salinity').includes('LAYER=CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m'), 'sea temperature and saltiness: the hours are asked for with the layer-specific description (a few KB, not the whole service)')
+    const fi = D.scalarInfoUrl('temperature', -123.2, 48.35, '2026-10-22T13:00:00Z')
+    report(fi.includes('request=GetFeatureInfo') && fi.includes('info_format=application%2Fjson') && fi.includes('width=3') && fi.includes('height=3') && fi.includes('i=1') && fi.includes('j=1') && fi.includes('bbox=48.34000%2C-123.21000%2C48.36000%2C-123.19000') && fi.includes('query_layers=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && threw(() => D.scalarInfoUrl('temperature', -100, 48.35, '2026-10-22T13:00:00Z')) && threw(() => D.scalarInfoUrl('salinity', -123.2, 48.35, 'soon')), 'sea temperature and saltiness: the value at a place is asked for with a 3 x 3 pixel request around it (latitude first, as WMS 1.3.0 wants), and a place outside the map is refused')
+    const reply = (value) => ({ type: 'FeatureCollection', features: [{ properties: { value, class: '283.95 - 290.35', time: '2026-10-22T13:00:00Z' } }] })
+    const kt = D.scalarReading('temperature', reply(284.66406)), ks = D.scalarReading('salinity', reply(29.919922))
+    report(near(kt, 11.51406) && near(ks, 29.919922) && D.scalarText('temperature', kt) === '11.5 °C' && D.scalarText('salinity', ks) === '29.9 psu' && D.scalarText('temperature', 9.04) === '9.0 °C' && D.scalarReading('temperature', {}) === null && D.scalarReading('temperature', { features: [] }) === null && D.scalarReading('temperature', reply(0)) === null && D.scalarReading('temperature', reply(1e20)) === null && D.scalarReading('salinity', reply(-1)) === null && D.scalarReading('salinity', reply(60)) === null && D.scalarReading('salinity', reply('29.9')) === null && D.scalarReading('salinity', null) === null && threw(() => D.scalarText('salinity', NaN)), 'sea temperature and saltiness readout: kelvin becomes degrees Celsius, saltiness stays in psu, one decimal, and land (an empty reply), a fill value or a value that is not believable gives no reading')
+    const T = D.SCALES.temperature, S = D.SCALES.salinity
+    const increasing = (scale) => scale.every((p, i) => i === 0 || p[0] > scale[i - 1][0]) && scale.every((p) => p[1].length === 3 && p[1].every((c) => Number.isInteger(c) && c >= 0 && c <= 255))
+    report(increasing(T) && increasing(S) && D.SCALE_TICKS.temperature[0] >= T[0][0] && D.SCALE_TICKS.temperature.at(-1) <= T.at(-1)[0] && D.SCALE_TICKS.salinity[0] >= S[0][0] && D.SCALE_TICKS.salinity.at(-1) <= S.at(-1)[0], 'sea temperature and saltiness keys: the measured colours are in order of value, with whole-number channels, and the ticks written under each key lie inside them')
+    const c10 = D.scaleColour(T, 10), c9 = D.scaleColour(T, 9), cLow = D.scaleColour(T, 0), cHigh = D.scaleColour(T, 40)
+    report(sameValues(c10, [45, 231, 208]) && sameValues(c9, [37, 203, 216]) && sameValues(cLow, T[0][1]) && sameValues(cHigh, T.at(-1)[1]) && sameValues(D.scaleColour(S, 24), [2, 253, 252]) && sameValues(D.scaleColour(S, 10), [0, 0, 167]) && sameValues(D.scaleColour(S, 40), S.at(-1)[1]) && threw(() => D.scaleColour(T, NaN)) && threw(() => D.scaleColour([], 1)), 'sea temperature and saltiness keys: the colour at a value is read from the measured points, in between by straight lines, and the end colour beyond them', JSON.stringify([c10, c9]))
+    const grad = D.scaleGradient(T, 6, 18)
+    report(grad.startsWith('linear-gradient(to right, rgb(14, 118, 239) 0%') && grad.endsWith('rgb(253, 247, 1) 100%)') && (grad.match(/rgb\(/g) || []).length === T.length && !/NaN|undefined/.test(grad), 'sea temperature and saltiness keys: the gradient under each box runs from the first to the last value with a stop at each measured point')
+
+    // tides and tidal currents (NOAA CO-OPS predictions)
+    const tNowMs = Date.parse('2026-10-22T12:00:00Z')
+    report(D.TIDE_STATIONS.map((x) => x.id).join(',') === '9444090,9449880,PUG1640,PUG1636,PUG1718,PCT1391,PCT1416' && new Set(D.TIDE_STATIONS.map((x) => x.id)).size === 7 && D.TIDE_STATIONS.filter((x) => x.kind === 'level').length === 2 && D.TIDE_STATIONS.every((x) => D.REGION[0] <= x.coords[0] && x.coords[0] <= D.REGION[2] && D.REGION[1] <= x.coords[1] && x.coords[1] <= D.REGION[3] && x.name && x.short) && D.tideFeatures().features.length === 7 && D.tideFeatures().features.every((f) => f.geometry.type === 'Point' && f.properties.id && f.properties.short) && D.tideStation('PCT1416').series === false && D.tideStation('PCT1391').series === false && D.tideStation('PUG1718').series === true && D.tideStation('nope') === null, 'tides: two water level stations (Port Angeles, Friday Harbor) and five current stations (Race Rocks, Discovery Island, Haro Strait, Trial Island, Cattle Point), each with a name and a place inside the map; the two that give only slack and maximum times have no series')
+    const lvl = D.tideStation('9444090'), cur = D.tideStation('PUG1640'), sub = D.tideStation('PCT1416')
+    const lu = D.tideUrls(lvl, tNowMs), cu2 = D.tideUrls(cur, tNowMs), su2 = D.tideUrls(sub, tNowMs)
+    const all = [lu.events, lu.series, cu2.events, cu2.series, su2.events]
+    report(all.every((u) => u.startsWith('https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?') && u.includes('application=greater-victoria-map') && u.includes('format=json') && u.includes('time_zone=gmt') && u.includes('begin_date=20261022+04%3A00') && u.includes('end_date=20261023+18%3A00')) && lu.events.includes('product=predictions') && lu.events.includes('interval=hilo') && lu.events.includes('datum=MLLW') && lu.events.includes('units=metric') && lu.events.includes('station=9444090') && lu.series.includes('interval=30') && cu2.events.includes('product=currents_predictions') && cu2.events.includes('interval=MAX_SLACK') && cu2.events.includes('units=english') && cu2.series.includes('interval=30') && su2.series === null && threw(() => D.tideUrls({ id: 'PUG1640; drop', kind: 'current' })) && threw(() => D.tideUrls(null)), 'tides: a request names NOAA, the application, UTC times from 8 hours before now to 30 hours after, the highs and lows or the slacks and maximums and, where NOAA gives one, a series every 30 minutes (none for a station that gives only events), and refuses an unknown station')
+    const levelEvents = { predictions: [{ t: '2026-10-22 20:10', v: '2.029', type: 'H' }, { t: '2026-10-22 13:21', v: '0.606', type: 'L' }, { t: '2026-10-22 06:55', v: '1.512', type: 'H' }, { t: '2026-10-22 02:14', v: '1.223', type: 'L' }, { t: '2026-10-23 02:37', v: '0.912', type: 'L' }, { t: 'bad', v: '1', type: 'H' }, { t: '2026-10-23 08:05', v: 'x', type: 'H' }] }
+    const wave = (n, f) => Array.from({ length: n }, (_, i) => f(i, Date.UTC(2026, 9, 22, 4, 0) + i * 1800e3))
+    const stamp = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
+    const levelSeries = { predictions: wave(77, (i, ms) => ({ t: stamp(ms), v: String((1.4 + 0.6 * Math.sin(i / 4)).toFixed(3)) })) }
+    const nl = D.normaliseTide(lvl, levelEvents, levelSeries)
+    report(nl.kind === 'level' && nl.events.length === 5 && nl.events.map((e) => e.type).join() === 'low,high,low,high,low' && nl.events.every((e, i) => i === 0 || e.ms > nl.events[i - 1].ms) && near(nl.events[1].value, 1.512) && nl.events[0].ms === Date.UTC(2026, 9, 22, 2, 14) && nl.series.length === 77 && D.normaliseTide(lvl, levelEvents, null).series === null && D.normaliseTide(lvl, levelEvents, levelEvents).series === null && D.normaliseTide(lvl, levelEvents, { predictions: levelSeries.predictions.slice(0, 10) }).series === null && threw(() => D.normaliseTide(lvl, { error: { message: 'The station is not a valid station' } })) && threw(() => D.normaliseTide(lvl, {})) && threw(() => D.normaliseTide(lvl, { predictions: [] })) && threw(() => D.normaliseTide(lvl, { predictions: [{ t: 'bad', v: '1', type: 'H' }] })), 'tides: water level replies are read to times (UTC) and heights in metres, sorted, with rows that do not parse dropped, a series only when it has enough points and no event types, and an error reply, an empty reply or a reply of garbage refused')
+    const cpRow = (Type, Time, v, extra = {}) => ({ ...(Type ? { Type } : {}), meanFloodDir: 91, Bin: '18', meanEbbDir: 268, Time, Depth: '60', Velocity_Major: v, ...extra })
+    const currentEvents = { current_predictions: { units: 'feet, knots', cp: [cpRow('ebb', '2026-10-22 13:07', -1.76), cpRow('slack', '2026-10-22 17:09', -0), cpRow('flood', '2026-10-22 19:30', 0.93), cpRow('slack', '2026-10-22 23:10', 0), cpRow('ebb', '2026-10-23 01:18', -1.67), cpRow('wobble', '2026-10-23 03:00', 1)] } }
+    const currentSeries = { current_predictions: { cp: wave(77, (i, ms) => cpRow(null, stamp(ms), Math.round(Math.sin(i / 4) * 150) / 100)) } }
+    const nc = D.normaliseTide(cur, currentEvents, currentSeries)
+    report(nc.kind === 'current' && nc.events.map((e) => e.type).join() === 'ebb,slack,flood,slack,ebb' && Object.is(nc.events[1].value, 0) && nc.events[0].value === -1.76 && nc.feet === 60 && nc.floodDir === 91 && nc.ebbDir === 268 && nc.bin === '18' && nc.series.length === 77 && D.normaliseTide(cur, currentEvents, currentEvents).series === null && D.normaliseTide(cur, currentEvents, null).series === null && D.normaliseTide({ ...cur, id: 'PCT1416' }, { current_predictions: { cp: [cpRow('slack', '2026-10-22 08:11', 0, { Depth: null, Bin: '1' })] } }).feet === null && threw(() => D.normaliseTide(cur, { error: { message: 'x' } })), 'tides: current replies are read to times, signed knots (ebb below zero, slack exactly zero), the depth in feet, the flood and ebb directions and the bin, an unknown event type is dropped, and a reply of events only gives no series')
+    const nxt = D.tideNext(nl, tNowMs), nxc = D.tideNext(nc, tNowMs), onTheDot = D.tideNext(nl, Date.UTC(2026, 9, 22, 13, 21))
+    report(nxt.high.ms === Date.UTC(2026, 9, 22, 20, 10) && nxt.low.ms === Date.UTC(2026, 9, 22, 13, 21) && nxc.ebb.ms === Date.UTC(2026, 9, 22, 13, 7) && nxc.slack.ms === Date.UTC(2026, 9, 22, 17, 9) && nxc.flood.ms === Date.UTC(2026, 9, 22, 19, 30) && onTheDot.low.ms === Date.UTC(2026, 9, 23, 2, 37) && D.tideNext(nl, Date.UTC(2026, 9, 24)).high === null, 'tides: the next high and low, or the next slack, flood and ebb, are the first of each kind after now (an event at this very minute is not next), and none is said to be none')
+    const line = [{ ms: 0, v: 0 }, { ms: 1000, v: 10 }, { ms: 3000, v: 30 }]
+    report(D.valueAt(line, 500) === 5 && D.valueAt(line, 2000) === 20 && D.valueAt(line, 0) === 0 && D.valueAt(line, 3000) === 30 && D.valueAt(line, -1) === null && D.valueAt(line, 3001) === null && D.valueAt([], 1) === null, 'tides: a value between two points of a series is found by a straight line, and there is none outside it')
+    const from = tNowMs - 3 * 3600e3, to = tNowMs + 21 * 3600e3
+    const cs = D.tideCurve(nl, from, to)
+    report(!cs.drawn && cs.points[0].ms === from && cs.points.at(-1).ms === to && cs.points.length > 40 && cs.points.every((p, i) => i === 0 || p.ms > cs.points[i - 1].ms) && near(cs.points[0].v, D.valueAt(nl.series, from)), 'tides: a curve from NOAA\'s own series runs from three hours before now to 21 hours after, from points of that series, with the ends found on it')
+    const ev = { kind: 'current', series: null, events: [{ ms: 0, type: 'slack', value: 0 }, { ms: 3600e3, type: 'ebb', value: -1.6 }, { ms: 7200e3, type: 'slack', value: 0 }, { ms: 10800e3, type: 'flood', value: 1 }] }
+    const ce = D.tideCurve(ev, 0, 10800e3), vAt = (ms) => ce.points.find((p) => p.ms === ms)?.v
+    report(ce.drawn && ce.points.length === 19 && Math.abs(vAt(0)) < 1e-9 && Math.abs(vAt(3600e3) + 1.6) < 1e-9 && Math.abs(vAt(1800e3) + 0.8) < 1e-9 && Math.abs(vAt(5400e3) + 0.8) < 1e-9 && Math.abs(vAt(10800e3) - 1) < 1e-9 && D.tideCurve(ev, -7200e3, -3600e3).points.length === 0 && D.tideCurve(ev, 12000e3, 14000e3).points.length === 0, 'tides: a station with no series is drawn between its events, easing from each to the next (halfway between slack and a 1.6 knot ebb is 0.8 knots), and nothing is drawn where there is no event to draw from')
+    const geo = D.curveGeometry(cs.points, 'level', { from, to, now: tNowMs })
+    const gc = D.curveGeometry([{ ms: from, v: -1.5 }, { ms: tNowMs, v: 0 }, { ms: to, v: 1 }], 'current', { from, to, now: tNowMs })
+    report(geo.d.startsWith('M8 ') && (geo.d.match(/L/g) || []).length === cs.points.length - 1 && geo.nowX === 38.5 && geo.nowY != null && Math.abs(geo.nowValue - D.valueAt(cs.points, tNowMs)) < 1e-9 && geo.zeroY === null && geo.y(geo.max) < geo.y(geo.min) && gc.zeroY != null && Math.abs((gc.zeroY - gc.top) - (gc.bottom - gc.zeroY)) < 0.2 && gc.y(1) < gc.zeroY && gc.y(-1.5) > gc.zeroY && threw(() => D.curveGeometry([{ ms: 0, v: 1 }], 'level', { from: 0, to: 1, now: 0 })), 'tides: the drawing puts "now" at three 24ths of the way across, a higher height higher up, a current about a zero line with flood above it and ebb below it, and refuses a curve of one point')
+    const ticks = D.curveTicks(from, to)
+    report(ticks.length === 4 && sameValues(ticks.map((t) => t.hour).sort((a, b) => a - b), [0, 6, 12, 18]) && ticks.every((t) => t.ms >= from && t.ms <= to && new Date(t.ms).getUTCMinutes() === 0), 'tides: the axis of a 24 hour curve is marked at midnight, 6, noon and 18, Pacific time')
+    const clockNow = Date.parse('2026-10-22T19:00:00Z')
+    report(D.tideClock(Date.parse('2026-10-22T21:09:00Z'), clockNow) === '2:09 p.m.' && D.tideClock(Date.parse('2026-10-23T12:05:00Z'), clockNow) === 'Oct 23, 5:05 a.m.' && D.tideClock(Date.parse('2026-10-22T08:00:00Z'), clockNow) === '1:00 a.m.' && D.tideClock(Date.parse('2026-10-22T08:00:00Z'), Date.parse('2026-10-23T08:00:00Z')) === 'Oct 22, 1:00 a.m.', 'tides: a time is shown in Pacific time, as the clock alone for today and with the date for another day')
+
+    // seafloor depth
+    const dx = D.depthExpression()
+    const elev = dx.slice(3).filter((_, i) => i % 2 === 0), cols = dx.slice(3).filter((_, i) => i % 2 === 1)
+    const alpha = (c) => Number(c.match(/,([\d.]+)\)$/)[1])
+    report(dx[0] === 'interpolate' && dx[2][0] === 'elevation' && elev.every((v, i) => i === 0 || v > elev[i - 1]) && elev[0] === -300 && elev.at(-1) === 0 && alpha(cols.at(-1)) === 0 && alpha(cols.at(-2)) === 0 && elev.at(-2) === -D.DEPTH_FADE_FROM && cols.slice(0, -2).every((c) => alpha(c) === 1) && cols.every((c) => /^rgba\(\d+,\d+,\d+,[\d.]+\)$/.test(c)), 'seafloor: the colour ramp runs by elevation from the deepest colour up, and is transparent at the waterline and above and down to 10 m, then fades in to the first colour')
+    const dsLum = D.DEPTH_STOPS.map((p) => lum(p[1]))
+    report(D.DEPTH_STOPS.every((p, i) => i === 0 || p[0] > D.DEPTH_STOPS[i - 1][0]) && dsLum.every((l, i) => i === 0 || l < dsLum[i - 1]) && D.DEPTH_STOPS[0][0] > D.DEPTH_FADE_FROM && D.DEPTH_TICKS.every((t) => D.DEPTH_STOPS.some((p) => p[0] === t)) && D.depthGradient().startsWith('linear-gradient(to right, rgba(150, 202, 222, 0) 0%') && D.depthGradient().endsWith('rgb(32, 66, 128) 100%)'), 'seafloor: the colours get darker with depth, the ticks of the key are depths that have a colour, and the key fades in from nothing')
+
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 

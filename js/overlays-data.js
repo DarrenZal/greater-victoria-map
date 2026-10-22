@@ -473,3 +473,248 @@ export function currentReadout([east, north]) {
   if (!Number.isFinite(ms)) throw new Error('the current is not a number')
   return { ms, knots: ms * 3600 / 1852, still: ms < STILL_MS, toward: ms < STILL_MS ? null : compassWord(Math.atan2(east, north) * 180 / Math.PI) }
 }
+
+// ---- sea temperature and saltiness (ECCC GeoMet WMS, the CIOPS-SalishSea model): one picture for each hour
+// The service draws the picture with its own colour style, so the key under the box is made by hand from
+// colours measured in that picture (see data/SOURCES.md). The temperature layer is in kelvin, the key is in
+// degrees Celsius.
+export const SCALARS = {
+  temperature: { layer: 'CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m', style: 'SEA_TEMPSURF-DEFAULT', what: 'sea temperature', unit: '°C' },
+  salinity: { layer: 'CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m', style: 'SEA_SALT-COASTAL', what: 'sea saltiness', unit: 'psu' },
+}
+// The colour the service draws for a value, as [value, [red, green, blue]], measured from its own pictures on
+// 2026-10-22. Temperature: the Salish Sea values 10 to 13 degrees were read from the Salish Sea picture itself,
+// the others from the East coast model drawn with the same style, shifted to line up (good to about half a degree).
+// Saltiness: the whole range was read from the Salish Sea picture. Below 20 psu the style is one dark blue and
+// above 32 psu one dark red.
+export const SCALES = {
+  temperature: [[6, [14, 118, 239]], [8, [29, 174, 224]], [10, [45, 231, 208]], [11, [58, 253, 195]], [12, [89, 253, 164]], [13, [120, 253, 134]], [14, [141, 253, 112]], [16, [188, 254, 66]], [18, [253, 247, 1]]],
+  salinity: [[20, [0, 0, 167]], [21, [0, 0, 234]], [22, [0, 61, 255]], [23, [0, 158, 255]], [24, [2, 253, 252]], [25, [75, 253, 178]], [26, [156, 254, 97]], [27, [225, 254, 28]], [28, [254, 203, 0]], [29, [254, 122, 0]], [30, [254, 52, 0]], [30.5, [254, 15, 0]], [31, [231, 0, 0]], [31.5, [201, 0, 0]], [32, [170, 0, 0]]],
+}
+// The ticks written under each key.
+export const SCALE_TICKS = { temperature: [6, 8, 10, 12, 14, 16, 18], salinity: [20, 22, 24, 26, 28, 30, 32] }
+
+export function scalarCapabilitiesUrl(kind) {
+  return `${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&LAYER=${scalarOf(kind).layer}`
+}
+function scalarOf(kind) {
+  const s = SCALARS[kind]
+  if (!s) throw new Error('the sea layer must be temperature or salinity')
+  return s
+}
+export const scalarTimes = (kind, xml) => layerTimes(xml, scalarOf(kind).layer, scalarOf(kind).what)
+// The hour nearest `time` among the hours on offer (the first one wins a tie). Used to follow the sea currents.
+export function nearestHour(times, time) {
+  const t = Date.parse(time)
+  if (!times.length || !Number.isFinite(t)) throw new Error('an hour is needed')
+  return times.reduce((best, x) => (Math.abs(Date.parse(x) - t) < Math.abs(Date.parse(best) - t) ? x : best))
+}
+// The hour to show: the one nearest `follow` (the hour of the sea currents) when there is one, otherwise the
+// latest hour not after now.
+export function scalarHour(times, follow, now = Date.now()) {
+  if (follow) return nearestHour(times, follow)
+  const w = hourWindow(times, now)
+  return w.times[w.at]
+}
+// One picture of the map area for one hour, in web Mercator like the radar.
+export function scalarImageUrl(kind, time, geometry = radarGeometry()) {
+  const s = scalarOf(kind)
+  if (!Number.isFinite(Date.parse(time))) throw new Error('an hour is needed')
+  const p = new URLSearchParams({ service: 'WMS', version: '1.3.0', request: 'GetMap', layers: s.layer, styles: s.style, crs: 'EPSG:3857', bbox: geometry.bbox.join(','), width: String(geometry.width), height: String(geometry.height), format: 'image/png', transparent: 'true', time })
+  return `${GEOMET}?${p}`
+}
+// The value at one place, asked of the service by a tiny 3 x 3 pixel request around it (WMS 1.3.0 gives a
+// latitude, longitude box).
+export function scalarInfoUrl(kind, lng, lat, time) {
+  const s = scalarOf(kind), d = 0.01
+  if (!(inBox(lng, lat, REGION)) || !Number.isFinite(Date.parse(time))) throw new Error('a place inside the map and an hour are needed')
+  const p = new URLSearchParams({ service: 'WMS', version: '1.3.0', request: 'GetFeatureInfo', layers: s.layer, query_layers: s.layer, crs: 'EPSG:4326', bbox: [lat - d, lng - d, lat + d, lng + d].map((x) => x.toFixed(5)).join(','), width: '3', height: '3', i: '1', j: '1', info_format: 'application/json', feature_count: '1', time })
+  return `${GEOMET}?${p}`
+}
+// The value from a GetFeatureInfo reply: degrees Celsius for the temperature (the service gives kelvin) or psu
+// for the saltiness. null where there is no model value (land gives an empty reply) or the number is not
+// believable.
+export function scalarReading(kind, reply) {
+  scalarOf(kind)
+  const raw = num(reply?.features?.[0]?.properties?.value)
+  if (raw == null) return null
+  if (kind === 'temperature') return raw >= 250 && raw <= 330 ? raw - 273.15 : null
+  return raw >= 0 && raw <= 45 ? raw : null
+}
+export const scalarText = (kind, value) => {
+  if (!Number.isFinite(value)) throw new Error('the value is not a number')
+  return `${(Math.round(value * 10) / 10).toFixed(1)} ${scalarOf(kind).unit}`
+}
+// The colour of a key at a value: between the measured points, and the end colour beyond them.
+export function scaleColour(scale, v) {
+  if (!scale.length || !Number.isFinite(v)) throw new Error('a scale and a number are needed')
+  if (v <= scale[0][0]) return scale[0][1].slice()
+  for (let i = 1; i < scale.length; i++) {
+    if (v <= scale[i][0]) {
+      const [v0, c0] = scale[i - 1], [v1, c1] = scale[i], f = (v - v0) / (v1 - v0)
+      return c0.map((x, k) => Math.round(x + (c1[k] - x) * f))
+    }
+  }
+  return scale.at(-1)[1].slice()
+}
+// A CSS gradient for a key, left (`from`) to right (`to`), with a stop at each measured point inside it.
+export function scaleGradient(scale, from, to) {
+  const stops = [from, ...scale.map((s) => s[0]).filter((v) => v > from && v < to), to].map((v) => `rgb(${scaleColour(scale, v).join(', ')}) ${(Math.round((v - from) / (to - from) * 1000) / 10)}%`)
+  return `linear-gradient(to right, ${stops.join(', ')})`
+}
+
+// ---- tides and tidal currents (NOAA CO-OPS predictions)
+export const NOAA_API = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter'
+const TIDE_APP = 'greater-victoria-map' // the application name NOAA asks callers to send
+export const TIDE_STATIONS = [
+  // Names and positions are NOAA's, from its station metadata read on 2026-10-22. `series` says whether NOAA gave a
+  // continuous series (every 30 minutes) as well as the highs and lows or the slacks and maximums on that day. The two
+  // stations that do not are drawn between their predicted times, and the popup says so.
+  { id: '9444090', kind: 'level', name: 'Port Angeles', short: 'Port Angeles', coords: [-123.44, 48.125], series: true },
+  { id: '9449880', kind: 'level', name: 'Friday Harbor', short: 'Friday Harbor', coords: [-123.0125, 48.54528], series: true },
+  { id: 'PUG1640', kind: 'current', name: 'Race Rocks, 4.5 mi. S of', short: 'Race Rocks', coords: [-123.5323, 48.2232], series: true },
+  { id: 'PUG1636', kind: 'current', name: 'Discovery Island, 7.6 mi. SSE of', short: 'Discovery Island', coords: [-123.16716, 48.30015], series: true },
+  { id: 'PUG1718', kind: 'current', name: 'Haro Strait, 1.2 nm west of Kellett Bluff', short: 'Haro Strait', coords: [-123.22583, 48.58872], series: true },
+  { id: 'PCT1391', kind: 'current', name: 'Trial Island, 5.2 miles SSW of', short: 'Trial Island', coords: [-123.36667, 48.31667], series: false },
+  { id: 'PCT1416', kind: 'current', name: 'Cattle Point, 2.8 miles SSW of', short: 'Cattle Point', coords: [-123, 48.4], series: false },
+]
+export const tideStation = (id) => TIDE_STATIONS.find((s) => s.id === id) || null
+export function tideFeatures() {
+  return collection(TIDE_STATIONS.map((s) => feature(s.coords, { id: s.id, kind: s.kind, name: s.name, short: s.short })))
+}
+const TIDE_BEFORE_H = 8, TIDE_AFTER_H = 30 // the span asked for, in hours around now: wide enough that an event lies each side of the curve
+// "20261022 08:00", the time format NOAA asks for, in UTC.
+const noaaStamp = (t) => new Date(t).toISOString().slice(0, 16).replace('T', ' ').replace(/-/g, '')
+// The requests for one station: the highs and lows (water level) or the slacks and maximums (currents), and, where
+// NOAA gives one, a series every 30 minutes for the curve. Times are asked for and read in UTC.
+export function tideUrls(station, now = Date.now()) {
+  if (!tideStation(station?.id)) throw new Error('unknown tide station')
+  const level = station.kind === 'level'
+  const base = { application: TIDE_APP, format: 'json', time_zone: 'gmt', begin_date: noaaStamp(now - TIDE_BEFORE_H * 3600e3), end_date: noaaStamp(now + TIDE_AFTER_H * 3600e3), station: station.id }
+  Object.assign(base, level ? { product: 'predictions', datum: 'MLLW', units: 'metric' } : { product: 'currents_predictions', units: 'english' })
+  const url = (interval) => `${NOAA_API}?${new URLSearchParams({ ...base, interval })}`
+  return { events: url(level ? 'hilo' : 'MAX_SLACK'), series: station.series ? url('30') : null }
+}
+const noaaMs = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s) ? Date.parse(`${s.replace(' ', 'T')}:00Z`) : NaN)
+const noaaNum = (v) => { const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v; return typeof n === 'number' && Number.isFinite(n) ? n : null }
+// The replies for one station as one plain object: { events: [{ ms, type, value }], series: [{ ms, v }] or null,
+// feet, floodDir, ebbDir, bin }. Types are high and low for a water level and slack, flood and ebb for currents.
+// Heights are metres above the chart datum (MLLW), speeds are knots (flood positive, ebb negative).
+export function normaliseTide(station, eventsReply, seriesReply = null) {
+  const level = station.kind === 'level'
+  if (eventsReply?.error) throw new Error('NOAA gave no predictions for this station')
+  const rows = level ? eventsReply?.predictions : eventsReply?.current_predictions?.cp
+  if (!Array.isArray(rows)) throw new Error('the reply held no predictions')
+  const out = { id: station.id, kind: station.kind, events: [], series: null, feet: null, floodDir: null, ebbDir: null, bin: null }
+  const typeOf = level ? { H: 'high', L: 'low' } : { slack: 'slack', flood: 'flood', ebb: 'ebb' }
+  for (const r of rows) {
+    const ms = noaaMs(level ? r?.t : r?.Time), type = typeOf[level ? r?.type : r?.Type], v = noaaNum(level ? r?.v : r?.Velocity_Major)
+    if (!Number.isFinite(ms) || !type || v == null) continue
+    out.events.push({ ms, type, value: v === 0 ? 0 : v })
+    if (!level && out.bin === null) {
+      out.feet = noaaNum(r.Depth); out.floodDir = noaaNum(r.meanFloodDir); out.ebbDir = noaaNum(r.meanEbbDir)
+      out.bin = typeof r.Bin === 'string' && /^\d{1,3}$/.test(r.Bin) ? r.Bin : null
+    }
+  }
+  out.events.sort((a, b) => a.ms - b.ms)
+  if (!out.events.length) throw new Error('the reply held no usable predictions')
+  // A continuous series has no event type. A reply that holds only events (some stations) is not one.
+  const serial = level ? seriesReply?.predictions : seriesReply?.current_predictions?.cp
+  if (Array.isArray(serial)) {
+    const pts = serial.filter((r) => !(level ? r?.type : r?.Type)).map((r) => ({ ms: noaaMs(level ? r?.t : r?.Time), v: noaaNum(level ? r?.v : r?.Velocity_Major) })).filter((p) => Number.isFinite(p.ms) && p.v != null).sort((a, b) => a.ms - b.ms)
+    if (pts.length >= 24) out.series = pts
+  }
+  return out
+}
+// The next event of each kind after now.
+export function tideNext(tide, now = Date.now()) {
+  const next = (type) => tide.events.find((e) => e.type === type && e.ms > now) || null
+  return tide.kind === 'level' ? { high: next('high'), low: next('low') } : { slack: next('slack'), flood: next('flood'), ebb: next('ebb') }
+}
+// Linear interpolation of a series [{ ms, v }] at a time, or null outside it.
+export function valueAt(points, ms) {
+  if (!points.length || ms < points[0].ms || ms > points.at(-1).ms) return null
+  const i = points.findIndex((p) => p.ms >= ms)
+  if (i === 0 || points[i].ms === ms) return points[i].v
+  const a = points[i - 1], b = points[i]
+  return a.v + (b.v - a.v) * (ms - a.ms) / (b.ms - a.ms)
+}
+// The points of the curve between `from` and `to`: NOAA's own series where it gave one. Where it did not, a curve
+// drawn between the predicted events, easing from each to the next like a half cosine (`drawn` is then true).
+export function tideCurve(tide, from, to, stepMs = 600e3) {
+  const pts = []
+  if (tide.series) {
+    const inside = tide.series.filter((p) => p.ms > from && p.ms < to)
+    const a = valueAt(tide.series, from), b = valueAt(tide.series, to)
+    if (a != null) pts.push({ ms: from, v: a })
+    pts.push(...inside)
+    if (b != null) pts.push({ ms: to, v: b })
+    return { points: pts, drawn: false }
+  }
+  const ev = tide.events
+  for (let t = from; t <= to; t += stepMs) {
+    const j = ev.findIndex((e) => e.ms >= t)
+    if (j <= 0 && !(j === 0 && ev[0].ms === t)) continue // before the first event or after the last: nothing to draw from
+    const e1 = ev[j], e0 = j === 0 ? e1 : ev[j - 1], f = e1.ms === e0.ms ? 1 : (t - e0.ms) / (e1.ms - e0.ms)
+    pts.push({ ms: t, v: e0.value + (e1.value - e0.value) * (1 - Math.cos(Math.PI * f)) / 2 })
+  }
+  return { points: pts, drawn: true }
+}
+// The drawing of a curve, as numbers for an SVG: the path, the place of "now" on it and of the zero line (currents).
+// Heights fill the plot with a margin. Currents are drawn about zero, so that flood is above the line and ebb below it.
+export function curveGeometry(points, kind, { from, to, now, width = 260, height = 92, pad = { l: 8, r: 8, t: 8, b: 20 } }) {
+  if (points.length < 2) throw new Error('a curve needs two points')
+  const vs = points.map((p) => p.v)
+  let lo = Math.min(...vs), hi = Math.max(...vs)
+  if (kind === 'current') { const m = Math.max(Math.abs(lo), Math.abs(hi), 0.5) * 1.1; lo = -m; hi = m } else { const m = (hi - lo || 1) * 0.08; lo -= m; hi += m }
+  const x = (ms) => pad.l + (ms - from) / (to - from) * (width - pad.l - pad.r)
+  const y = (v) => pad.t + (hi - v) / (hi - lo) * (height - pad.t - pad.b)
+  const r = (n) => Math.round(n * 10) / 10
+  const at = valueAt(points, now)
+  return {
+    d: points.map((p, i) => `${i ? 'L' : 'M'}${r(x(p.ms))} ${r(y(p.v))}`).join(' '),
+    nowX: r(x(now)), nowY: at == null ? null : r(y(at)), nowValue: at,
+    zeroY: kind === 'current' ? r(y(0)) : null, top: pad.t, bottom: height - pad.b, left: pad.l, right: width - pad.r,
+    min: Math.min(...vs), max: Math.max(...vs), x, y,
+  }
+}
+// A time in Pacific time for a tide popup: the clock time ("10:09 a.m.") for today, and the date too for another day.
+export function tideClock(ms, now = Date.now()) {
+  const zone = { timeZone: 'America/Vancouver' }
+  const day = (t) => new Intl.DateTimeFormat('en-CA', { ...zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(t)
+  const clock = new Intl.DateTimeFormat('en-CA', { ...zone, hour: 'numeric', minute: '2-digit' }).format(ms)
+  if (day(ms) === day(now)) return clock
+  return `${new Intl.DateTimeFormat('en-CA', { ...zone, month: 'short', day: 'numeric' }).format(ms)}, ${clock}`
+}
+// Pacific clock hours that fall on a multiple of six (midnight, 6, noon, 18) between two times, for the axis.
+export function curveTicks(from, to) {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+  const out = []
+  for (let t = Math.ceil(from / 3600e3) * 3600e3; t <= to; t += 3600e3) {
+    const parts = Object.fromEntries(fmt.formatToParts(t).map((p) => [p.type, p.value]))
+    if (Number(parts.minute) === 0 && Number(parts.hour) % 6 === 0) out.push({ ms: t, hour: Number(parts.hour) })
+  }
+  return out
+}
+
+// ---- seafloor depth, drawn from the elevation tiles (ETOPO1 below the waterline at tile zoom 10 and under)
+// Metres below sea level and the colour of each, shallow to deep. The colour fades in between DEPTH_FADE_FROM and the
+// first depth and is left out above that: the coarse data puts the shore a kilometre or so out, so colouring the
+// shallows would tint land.
+export const DEPTH_FADE_FROM = 10
+export const DEPTH_STOPS = [[25, [150, 202, 222]], [50, [105, 170, 214]], [100, [66, 130, 192]], [200, [44, 92, 160]], [300, [32, 66, 128]]]
+export const DEPTH_TICKS = [50, 100, 200, 300]
+// The MapLibre colour ramp over elevation (metres, negative below the sea): transparent from the waterline down to
+// DEPTH_FADE_FROM, then fading in to the first colour and deepening to the last.
+export function depthExpression(stops = DEPTH_STOPS, fadeFrom = DEPTH_FADE_FROM) {
+  const rgb = (c, a = 1) => `rgba(${c.join(',')},${a})`
+  const ramp = []
+  for (const [d, c] of [...stops].reverse()) ramp.push(-d, rgb(c))
+  return ['interpolate', ['linear'], ['elevation'], ...ramp, -fadeFrom, rgb(stops[0][1], 0), 0, rgb(stops[0][1], 0)]
+}
+// The key under the box: transparent from `from` metres, fading in to the first colour and deepening to `to`.
+export function depthGradient(from = DEPTH_FADE_FROM, to = DEPTH_STOPS.at(-1)[0], stops = DEPTH_STOPS) {
+  const at = (d) => `${Math.round((d - from) / (to - from) * 1000) / 10}%`
+  const parts = [`rgba(${stops[0][1].join(', ')}, 0) 0%`, ...stops.map(([d, c]) => `rgb(${c.join(', ')}) ${at(d)}`)]
+  return `linear-gradient(to right, ${parts.join(', ')})`
+}

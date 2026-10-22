@@ -289,7 +289,7 @@ map.once('load', () => {
 
   // Optional overlays: ecoregions, industry and waste sites, and the live layers. All start hidden
   // and none requests anything until its box is ticked.
-  overlays.addLayers({ before: under, ecoBefore: 'watersheds-fill', water })
+  overlays.addLayers({ before: under, ecoBefore: 'watersheds-fill', water, demTiles: TERRAIN_TILES })
 
   map.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: {
     'circle-radius': 9, 'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff',
@@ -411,13 +411,15 @@ map.on('click', (e) => {
     from = id
     break
   }
-  const reading = !content || AREA_LAYERS.includes(from) ? overlays.seaReadout(e.lngLat) : null
+  const reading = !content || AREA_LAYERS.includes(from) ? overlays.seaReadout(e) : null
   if (reading) {
     if (content) { reading.append(el('hr')); reading.append(content) }
     content = reading
   }
   if (!content) return
-  new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
+  const popup = new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
+  // A popup whose text arrives later (a tide prediction, a temperature) says so, and is placed again for its new size.
+  content.addEventListener('filled', () => popup.setLngLat(e.lngLat))
 })
 for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })

@@ -1,8 +1,8 @@
 // Optional overlays for the Greater Victoria demo map. Plain ES module, no build step.
 //
-// Nine live layers load from outside services straight from the visitor's browser, and two
-// static layers (ecoregions, industry and waste sites) load their own data file. Every one is
-// off by default and makes no request until its box is ticked. Each shows a plain status line,
+// Twelve live layers load from outside services straight from the visitor's browser, and three
+// static layers (ecoregions, industry and waste sites, seafloor depth) draw from files and tiles this
+// page already has. Every one is off by default and makes no request until its box is ticked. Each shows a plain status line,
 // and a plain failure line if its request fails. Parsing and filtering live in
 // js/overlays-data.js, which has no DOM code so the checks can run it in Node.
 import {
@@ -12,7 +12,10 @@ import {
   conditionsUrl, normaliseConditions, waterStationsUrl, waterReadingUrl, nearestGauges, gaugeFeature,
   lifeUrls, normaliseLife,
   PLAY_HOURS, hourWindow, currentsCapabilitiesUrl, currentsTimes, currentsUrl, currentsGrid, windCapabilitiesUrl, windTimes, windUrl, windGrid,
-  readGeoTiff, pacificHour, seaVelocity, currentReadout,
+  readGeoTiff, pacificHour, seaVelocity, currentReadout, compassWord,
+  SCALARS, SCALES, SCALE_TICKS, scalarCapabilitiesUrl, scalarTimes, scalarHour, nearestHour, scalarImageUrl, scalarInfoUrl, scalarReading, scalarText, scaleGradient,
+  tideStation, tideFeatures, tideUrls, normaliseTide, tideNext, tideCurve, curveGeometry, curveTicks, tideClock, TIDE_STATIONS,
+  DEPTH_TICKS, DEPTH_FADE_FROM, depthExpression, depthGradient,
 } from './overlays-data.js'
 import { createFlow, FLOW_PROFILES } from './flow.js'
 
@@ -23,6 +26,8 @@ export const ECCC_ATTRIB = `Contains information licenced under the <a href="${E
 const USGS_ATTRIB = 'Earthquakes: <a href="https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits" target="_blank" rel="noopener">U.S. Geological Survey</a>'
 const GBIF_ATTRIB = 'Observations: <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a>, CC0 or CC BY 4.0 per record'
 const ECO_ATTRIB = 'Ecoregions 2017 &copy; <a href="https://ecoregions.appspot.com/" target="_blank" rel="noopener">Resolve</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>'
+const TIDES_ATTRIB = 'Tides and tidal currents: <a href="https://tidesandcurrents.noaa.gov/disclaimers.html" target="_blank" rel="noopener">NOAA/NOS/CO-OPS</a> predictions'
+const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'
 const INDUSTRY_ATTRIB = 'Industry and waste sites: Statistics Canada (OGL &ndash; Canada), HydroWASTE (CC BY 4.0), WRI (CC BY 4.0)'
 
 // The full attribution of each industry and waste source, shown in the popup of its sites.
@@ -34,6 +39,9 @@ const INDUSTRY_SOURCES = {
 const KIND_LABEL = { landfill: 'landfill or waste site', power: 'power plant', wastewater: 'wastewater plant or pump station' }
 
 const EMPTY = collection([])
+const SEAFLOOR_MAX_ZOOM = 8 // the last tile zoom with sea floor depth all the way to the coast
+const SEAFLOOR_OPACITY = 0.75
+const SCALAR_OPACITY = 0.6 // the sea temperature and saltiness picture, over the pale sea of the basemap
 const text = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text() }
 const json = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
@@ -62,6 +70,11 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     radar: { label: 'Precipitation radar', ids: ['radar', 'radar-credit'], ttl: 5 * 60e3, load: loadRadar },
     currents: { label: 'Sea currents', ids: ['currents-credit'], ttl: 30 * 60e3, load: (s) => loadHourly('currents', s) },
     wind: { label: 'Wind', ids: ['wind-credit'], ttl: 30 * 60e3, load: (s) => loadHourly('wind', s) },
+    // Sea temperature and saltiness share one picture (one layer, drawn from one canvas), so only one can be on.
+    temperature: { label: 'Sea temperature', ids: ['sea-scalar', 'temperature-credit'], ui: ['temperature-key', 'temperature-note'], ttl: 30 * 60e3, load: (s) => loadScalar('temperature', s) },
+    salinity: { label: 'Sea saltiness', ids: ['sea-scalar', 'salinity-credit'], ui: ['salinity-key', 'salinity-note'], ttl: 30 * 60e3, load: (s) => loadScalar('salinity', s) },
+    tides: { label: 'Tides and tidal currents', ids: ['tides-dot', 'tides-label'], ui: ['tides-note'], source: 'ov-tides', ttl: Infinity, load: loadTides },
+    seafloor: { label: 'Seafloor depth', ids: ['seafloor'], ui: ['seafloor-key', 'seafloor-note'], ttl: Infinity, load: loadSeafloor },
     alerts: { label: 'Weather alerts', ids: ['alerts-fill', 'alerts-line'], source: 'ov-alerts', ttl: 5 * 60e3, load: loadAlerts },
     aqhi: { label: 'Air quality', ids: ['aqhi-dot', 'aqhi-label'], source: 'ov-aqhi', ttl: 15 * 60e3, load: loadAqhi },
     quakes: { label: 'Earthquakes', ids: ['quakes-dot', 'quakes-label'], source: 'ov-quakes', ttl: 5 * 60e3, load: loadQuakes },
@@ -80,6 +93,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     await whenReady
     if (!st.on) return // unticked while waiting
     setVisible(def, true)
+    for (const u of def.ui || []) $(u).hidden = false
     if (id === 'radar') $('radar-controls').hidden = false
     if (HOURLY[id]) showHourlyControls(id, true)
     if (st.loading) { showStatus(id); return }
@@ -118,6 +132,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     st.loading = false
     setVisible(def, false)
     hideStatus(id)
+    for (const u of def.ui || []) $(u).hidden = true
+    if (SCALARS[id]) {
+      // Let go of the hours kept and start fresh next time. The picture stays on the map only while one of the two is on.
+      st.loadedAt = 0
+      if (scalar.shown?.kind === id) { scalar.shown = null; scalar.times = [] }
+      if (!activeScalar()) scalar.blobs.clear()
+    }
+    if (id === 'tides') { tideCache.clear(); st.loadedAt = 0 }
     if (id === 'radar') {
       // Drop the frames (about 2 MB each in memory) and start fresh next time.
       $('radar-controls').hidden = true
@@ -133,11 +155,13 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       flow.hide()
       showHourlyControls(id, false)
       syncHourlyPlay(id)
+      if (id === 'currents') syncScalar() // a sea temperature or saltiness picture goes back to the latest hour not after now
     }
   }
   const boxes = document.querySelectorAll('input[data-overlay]')
-  // Sea currents and wind share one canvas and one engine, so ticking one unticks the other.
-  const EXCLUSIVE = { currents: 'wind', wind: 'currents' }
+  // Sea currents and wind share one canvas and one engine, and sea temperature and saltiness share one picture,
+  // so ticking one unticks the other.
+  const EXCLUSIVE = { currents: 'wind', wind: 'currents', temperature: 'salinity', salinity: 'temperature' }
   for (const box of boxes) {
     box.addEventListener('change', () => {
       const id = box.dataset.overlay
@@ -377,7 +401,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     return grid
   }
   // Put one hour on the map and remember it, for the click readout.
-  function showHour(id, time, grid) { HOURLY[id].run.shown = { time, grid }; flow.show(grid, id) }
+  function showHour(id, time, grid) { HOURLY[id].run.shown = { time, grid }; flow.show(grid, id); if (id === 'currents') syncScalar() } // a sea temperature or saltiness picture follows the hour
   function syncHourlyPlay(id) {
     const { run } = HOURLY[id], b = $(`${id}-play`), reduced = motionQuery.matches
     b.textContent = run.playing ? 'Pause' : 'Play'
@@ -440,23 +464,231 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     }
   }
 
-  // ---- the readout for a click on the sea: the modelled current of the hour shown, from the grid already loaded
-  function seaReadout(lngLat) {
-    const shown = sea.shown
-    if (!state.currents.on || !shown) return null
-    const uv = seaVelocity(shown.grid, lngLat.lng, lngLat.lat)
-    if (!uv) return null // land, or outside the model
-    const r = currentReadout(uv), box = el('div')
-    box.append(el('h3', 'Modelled sea current'))
+  // ---- sea temperature and saltiness: one picture of the map area for each hour, from the same CIOPS model
+  // The hour shown is the one of the sea currents while that layer is on (and it follows its Play), and the latest
+  // hour not after now otherwise. Only the hour shown is fetched, and while the currents play the one after it.
+  // The pictures kept are the small PNG replies, not the decoded images, so a loop of Play costs no second request.
+  const scalar = { kind: null, times: [], shown: null, blobs: new Map(), canvas: null, busy: false, dirty: false, before: null }
+  const activeScalar = () => (state.temperature.on ? 'temperature' : state.salinity.on ? 'salinity' : null)
+  const seaFollow = () => (state.currents.on && sea.shown ? sea.shown.time : null)
+  const scalarMessage = (kind, time) => `Modelled ${SCALARS[kind].what} for ${pacificHour(time)}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`
+  async function scalarBlob(kind, time, signal) {
+    const key = `${kind}|${time}`, kept = scalar.blobs.get(key)
+    if (kept) { scalar.blobs.delete(key); scalar.blobs.set(key, kept); return kept } // most recently used last
+    const r = await fetch(scalarImageUrl(kind, time, geo), { signal })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    // Out of range, the service answers HTTP 200 with a description of the error.
+    if (!/image\/png/i.test(r.headers.get('content-type') || '')) throw new Error('the service sent no image')
+    const blob = await r.blob()
+    if (blob.size > 1e6) throw new Error('unexpected image size')
+    scalar.blobs.set(key, blob)
+    while (scalar.blobs.size > HOURS_KEPT) scalar.blobs.delete(scalar.blobs.keys().next().value)
+    return blob
+  }
+  function scalarSourceReady() {
+    if (map.getSource('sea-scalar')) return
+    // No url: each picture is handed over with updateImage(), as for the radar. It sits above the sea of the basemap and
+    // the ecosystem and ecoregion sea masks, and under the creeks, parks and boundaries.
+    map.addSource('sea-scalar', { type: 'image', coordinates: geo.coordinates })
+    map.addLayer({ id: 'sea-scalar', type: 'raster', source: 'sea-scalar', paint: { 'raster-opacity': SCALAR_OPACITY, 'raster-fade-duration': 0 } }, scalar.before)
+  }
+  async function drawScalar(kind, time, blob) {
+    const bitmap = await createImageBitmap(blob)
+    if (bitmap.width !== geo.width || bitmap.height !== geo.height) { bitmap.close(); throw new Error('unexpected image size') }
+    if (!scalar.canvas) { scalar.canvas = document.createElement('canvas'); scalar.canvas.width = geo.width; scalar.canvas.height = geo.height }
+    const g = scalar.canvas.getContext('2d')
+    g.clearRect(0, 0, geo.width, geo.height); g.drawImage(bitmap, 0, 0); bitmap.close()
+    if (activeScalar() !== kind) return // unticked while the picture was being made
+    scalarSourceReady()
+    map.getSource('sea-scalar').updateImage({ image: scalar.canvas, coordinates: geo.coordinates })
+    map.triggerRepaint()
+    scalar.shown = { kind, time }
+  }
+  // Bring the picture to the hour it should show now: after the sea currents step, or when they are switched on or off.
+  async function syncScalar() {
+    if (!activeScalar() || !scalar.times.length) return
+    if (scalar.busy) { scalar.dirty = true; return }
+    scalar.busy = true
+    try {
+      do {
+        scalar.dirty = false
+        const kind = activeScalar()
+        if (!kind) break
+        const time = scalarHour(scalar.times, seaFollow())
+        if (scalar.shown?.kind === kind && scalar.shown.time === time) continue
+        const signal = state[kind].abort?.signal, had = scalar.shown?.kind === kind ? scalar.shown.time : null
+        if (!scalar.blobs.has(`${kind}|${time}`)) setStatus(kind, 'loading', `Loading ${SCALARS[kind].what} for ${pacificHour(time)}…`)
+        try {
+          await drawScalar(kind, time, await scalarBlob(kind, time, signal))
+          if (activeScalar() !== kind) break
+          setStatus(kind, 'ok', scalarMessage(kind, time))
+          // While the currents play, the next hour is ready before it is wanted. It is the hour after the one shown, and no more.
+          if (sea.playing) scalarBlob(kind, nearestHour(scalar.times, sea.hours[(sea.at + 1) % sea.hours.length]), signal).catch(() => {})
+        } catch (e) {
+          if (signal?.aborted || activeScalar() !== kind) break
+          setStatus(kind, 'fail', had ? `The next hour of ${SCALARS[kind].what} could not be loaded just now. The map still shows ${pacificHour(had)}.` : failureLine(kind, DEFS[kind]))
+        }
+      } while (scalar.dirty)
+    } finally { scalar.busy = false }
+  }
+  async function loadScalar(kind, signal) {
+    const times = scalarTimes(kind, await text(scalarCapabilitiesUrl(kind), signal))
+    const time = scalarHour(times, seaFollow())
+    const blob = await scalarBlob(kind, time, signal)
+    return {
+      data: null,
+      message: scalarMessage(kind, time),
+      after() {
+        if (state[kind].on) {
+          scalar.times = times
+          drawScalar(kind, time, blob).catch(() => setStatus(kind, 'fail', failureLine(kind, DEFS[kind])))
+        }
+      },
+    }
+  }
+  // The keys under the boxes: a gradient of the colours the service draws, and the values at its ticks.
+  function buildKey(id, gradient, ticks, from, to) {
+    $(`${id}-bar`).style.backgroundImage = gradient
+    const row = $(`${id}-ticks`)
+    for (const v of ticks) { const t = el('span', String(v)); t.style.left = `${(v - from) / (to - from) * 100}%`; row.append(t) }
+  }
+  for (const kind of Object.keys(SCALARS)) {
+    const t = SCALE_TICKS[kind], from = t[0], to = t.at(-1)
+    buildKey(kind, scaleGradient(SCALES[kind], from, to), t, from, to)
+  }
+  buildKey('seafloor', depthGradient(), DEPTH_TICKS, DEPTH_FADE_FROM, DEPTH_TICKS.at(-1))
+
+  // ---- seafloor depth: no request of its own. The colour is drawn in the browser from the elevation tiles.
+  async function loadSeafloor() {
+    return { data: null, message: 'Depth in metres from NOAA’s ETOPO1 grid, in the elevation tiles. Its cells are 1 arc-minute, about 1.2 by 1.85 km here, so only broad shapes show. Not for navigation.' }
+  }
+
+  // ---- tides and tidal currents: markers from a list of stations, and NOAA's predictions fetched when one is opened
+  const tideCache = new Map() // station id -> { at, tide }
+  const TIDE_STALE_MS = 6 * 3600e3 // a station opened again after this long is asked for afresh, so "next" stays ahead of now
+  async function loadTides() {
+    const levels = TIDE_STATIONS.filter((s) => s.kind === 'level').length, currents = TIDE_STATIONS.length - levels
+    return { data: tideFeatures(), message: `${plural(levels, 'water level station', 'water level stations')} and ${plural(currents, 'tidal current station', 'tidal current stations')}. Click one to ask NOAA for its predictions. Predictions, not for navigation.` }
+  }
+  async function tideFor(station) {
+    const kept = tideCache.get(station.id)
+    if (kept && Date.now() - kept.at < TIDE_STALE_MS) return kept.tide
+    // Own timeout, and the tick's own signal, so unticking the box cancels it.
+    const ac = new AbortController(), parent = state.tides.abort?.signal
+    const timer = setTimeout(() => ac.abort(), 25000)
+    parent?.addEventListener('abort', () => ac.abort(), { once: true })
+    try {
+      const now = Date.now(), urls = tideUrls(station, now)
+      const [events, series] = await Promise.all([json(urls.events, ac.signal), urls.series ? json(urls.series, ac.signal).catch(() => null) : null]) // no series is not a failure: the curve is then drawn between the events
+      const tide = normaliseTide(station, events, series)
+      if (state.tides.on) tideCache.set(station.id, { at: now, tide })
+      return tide
+    } finally { clearTimeout(timer) }
+  }
+  const SVG = 'http://www.w3.org/2000/svg'
+  const svgEl = (name, attrs = {}, text) => { const n = document.createElementNS(SVG, name); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v)); if (text != null) n.textContent = text; return n }
+  const clock = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', hour: 'numeric' })
+  // The 24 hours of a curve from three hours ago, with "now" marked.
+  function tideSvg(station, tide, now) {
+    const from = now - 3 * 3600e3, to = now + 21 * 3600e3, { points, drawn } = tideCurve(tide, from, to)
+    if (points.length < 2) return { svg: null, drawn }
+    const level = station.kind === 'level', g = curveGeometry(points, station.kind, { from, to, now })
+    const svg = svgEl('svg', { viewBox: '0 0 260 92', width: '100%', role: 'img', class: 'tide-curve' })
+    svg.setAttribute('aria-label', level ? `Predicted tide height for the 24 hours around now, from ${g.min.toFixed(1)} to ${g.max.toFixed(1)} metres. A red line marks now.` : `Predicted current speed for the 24 hours around now, flood above the line and ebb below it, up to ${Math.max(Math.abs(g.min), Math.abs(g.max)).toFixed(1)} knots. A red line marks now.`)
+    svg.append(svgEl('rect', { x: g.left, y: g.top, width: g.right - g.left, height: g.bottom - g.top, fill: '#f3f6f4' }))
+    if (g.zeroY != null) svg.append(svgEl('line', { x1: g.left, x2: g.right, y1: g.zeroY, y2: g.zeroY, stroke: '#8a948e', 'stroke-width': 1, 'stroke-dasharray': '3 3' }))
+    for (const t of curveTicks(from, to)) {
+      const x = g.x(t.ms)
+      svg.append(svgEl('line', { x1: x, x2: x, y1: g.top, y2: g.bottom + 3, stroke: '#c9d0cb', 'stroke-width': 1 }))
+      svg.append(svgEl('text', { x, y: g.bottom + 13, 'text-anchor': 'middle', 'font-size': 10, fill: '#4a554f' }, clock.format(t.ms)))
+    }
+    svg.append(svgEl('path', { d: g.d, fill: 'none', stroke: '#1d5f86', 'stroke-width': 2, 'stroke-linejoin': 'round' }))
+    if (g.nowY != null) {
+      svg.append(svgEl('line', { x1: g.nowX, x2: g.nowX, y1: g.top, y2: g.bottom, stroke: '#b3261e', 'stroke-width': 1.5 }))
+      svg.append(svgEl('circle', { cx: g.nowX, cy: g.nowY, r: 3.5, fill: '#b3261e', stroke: '#ffffff', 'stroke-width': 1 }))
+    }
+    svg.append(svgEl('text', { x: Math.min(g.nowX + 3, g.right - 18), y: g.top + 9, 'font-size': 10, fill: '#b3261e' }, 'now'))
+    // The scale: the highest and lowest height, or which side of the line is flood and which is ebb.
+    const small = { 'font-size': 10, fill: '#4a554f', x: g.left + 3 }
+    if (level) {
+      svg.append(svgEl('text', { ...small, y: g.top + 20 }, `${g.max.toFixed(1)} m`))
+      svg.append(svgEl('text', { ...small, y: g.bottom - 4 }, `${g.min.toFixed(1)} m`))
+    } else {
+      svg.append(svgEl('text', { ...small, y: g.top + 20 }, 'flood'))
+      svg.append(svgEl('text', { ...small, y: g.bottom - 4 }, 'ebb'))
+    }
+    return { svg, drawn, nowValue: g.nowValue }
+  }
+  // The text and the curve of a popup for one station: a small table of the next events, soonest first, the curve and
+  // its notes. Times are Pacific, said once in the notes.
+  function tideNodes(station, tide, now = Date.now()) {
+    const nodes = [], next = tideNext(tide, now), level = station.kind === 'level'
+    const speed = (v) => `${Math.abs(v).toFixed(1)} knots`
+    const rows = level
+      ? [['High tide', next.high, (e) => `${e.value.toFixed(2)} m`], ['Low tide', next.low, (e) => `${e.value.toFixed(2)} m`]]
+      : [['Slack water', next.slack, () => ''], ['Max flood', next.flood, (e) => speed(e.value)], ['Max ebb', next.ebb, (e) => speed(e.value)]]
+    rows.sort((a, b) => (a[1]?.ms ?? Infinity) - (b[1]?.ms ?? Infinity))
+    const { svg, drawn, nowValue } = tideSvg(station, tide, now)
+    const table = el('table', null, 'tide-events'), body = el('tbody')
+    const row = (label, time, value) => { const tr = el('tr'); tr.append(el('th', label), el('td', time), el('td', value)); body.append(tr) }
+    for (const [label, e, say] of rows) row(label, e ? tideClock(e.ms, now) : 'none in 30 h', e ? say(e) : '')
+    if (nowValue != null) row('Right now', '', level ? `${nowValue.toFixed(2)} m` : Math.abs(nowValue) < 0.05 ? 'slack' : `${speed(nowValue)} ${nowValue > 0 ? 'flood' : 'ebb'}`)
+    table.append(body); nodes.push(table)
+    if (svg) { const wrap = el('div', null, 'tide-curve-box'); wrap.append(svg); nodes.push(wrap) }
+    const toward = (deg) => compassWord(deg)
+    const notes = ['Predicted, in Pacific time.']
+    if (level) notes.push('Heights are metres above chart datum (MLLW).')
+    else {
+      if (tide.floodDir != null && tide.ebbDir != null) notes.push(`Flood flows toward the ${toward(tide.floodDir)}, ebb toward the ${toward(tide.ebbDir)}.`)
+      if (tide.feet != null) notes.push(`About ${Math.round(tide.feet * 0.3048)} m (${tide.feet} ft) below the surface.`)
+    }
+    if (drawn) notes.push('NOAA gives only the times and speeds of slack water and the strongest current here, so the curve is drawn between them.')
+    const line = (t, cls) => nodes.push(el('p', t, cls))
+    line(notes.join(' '), 'src')
+    line(`Predictions, not for navigation. Source: NOAA/NOS/CO-OPS, station ${station.id}, drawn here from NOAA’s numbers. Not official NOAA material.`, 'src')
+    const href = level ? `https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=${encodeURIComponent(station.id)}` : (tide.bin ? `https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=${encodeURIComponent(`${station.id}_${tide.bin}`)}` : null)
+    const a = href ? link(href, 'This station on NOAA’s site') : null
+    if (a) { const d = el('p'); d.append(a); nodes.push(d) }
+    return nodes
+  }
+  // Ask for the station's predictions and put them in the popup when they arrive. The popup is told, so it can resize.
+  function fillTide(station, body, box) {
+    const done = (nodes) => { body.replaceChildren(...nodes); box.dispatchEvent(new Event('filled')) }
+    tideFor(station).then((tide) => done(tideNodes(station, tide)), () => done([el('p', 'Predictions for this station could not be loaded just now. Try again later.'), el('p', 'Predictions, not for navigation. Source: NOAA/NOS/CO-OPS.', 'src')]))
+  }
+
+  // ---- the readout for a click on the sea: the modelled current of the hour shown, from the grid already loaded,
+  // and the temperature or saltiness at the place, which is asked of the service for that one place when that layer is on.
+  const waterLayerId = () => map.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))?.id
+  function seaReadout(e) {
+    const { lngLat, point } = e, shown = sea.shown, kind = activeScalar()
+    const uv = state.currents.on && shown ? seaVelocity(shown.grid, lngLat.lng, lngLat.lat) : null // null on land, or outside the model
+    // With only a temperature or saltiness picture on, the click has to be on the basemap's water.
+    const wet = !uv && kind && scalar.shown?.kind === kind && (() => { const id = waterLayerId(); return !!id && map.queryRenderedFeatures(point, { layers: [id] }).length > 0 })()
+    if (!uv && !wet) return null
+    const box = el('div')
+    box.append(el('h3', uv ? 'Modelled sea current' : `Modelled ${SCALARS[kind].what}`))
     box.append(el('span', 'model estimate', 'tag'))
-    box.append(el('p', r.still ? `Almost still: ${r.knots.toFixed(2)} knots (${r.ms.toFixed(2)} m/s).` : `${r.knots.toFixed(1)} knots (${r.ms.toFixed(2)} m/s), flowing toward the ${r.toward}.`))
-    box.append(el('p', `Surface current for ${pacificHour(shown.time)}.`))
-    box.append(el('p', 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 1 km grid.', 'src'))
+    if (uv) {
+      const r = currentReadout(uv)
+      box.append(el('p', r.still ? `Almost still: ${r.knots.toFixed(2)} knots (${r.ms.toFixed(2)} m/s).` : `${r.knots.toFixed(1)} knots (${r.ms.toFixed(2)} m/s), flowing toward the ${r.toward}.`))
+      box.append(el('p', `Surface current for ${pacificHour(shown.time)}.`))
+    }
+    if (kind && scalar.shown?.kind === kind) {
+      const word = el('p', `Surface ${SCALARS[kind].what}: reading the model…`), at = scalar.shown.time
+      box.append(word)
+      const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000)
+      json(scalarInfoUrl(kind, lngLat.lng, lngLat.lat, at), ac.signal).then((reply) => {
+        const v = scalarReading(kind, reply)
+        word.textContent = v == null ? `Surface ${SCALARS[kind].what}: the model has no value here.` : `Surface ${SCALARS[kind].what}: ${scalarText(kind, v)} (for ${pacificHour(at)}).`
+      }, () => { word.textContent = `Surface ${SCALARS[kind].what}: could not be read just now.` }).finally(() => { clearTimeout(timer); box.dispatchEvent(new Event('filled')) })
+    }
+    box.append(el('p', uv ? 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 1 km grid.' : 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 500 m grid.', 'src'))
     return box
   }
 
   // ---- add the map layers (called once, when the basemap style is in)
-  function addLayers({ before, ecoBefore, water }) {
+  function addLayers({ before, ecoBefore, water, demTiles }) {
     const src = (id, attribution, data = EMPTY) => map.addSource(id, { type: 'geojson', data, ...(attribution ? { attribution } : {}) })
     const hidden = { visibility: 'none' }
     // The image source of the radar cannot carry an attribution, so an empty point source does.
@@ -468,6 +700,21 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
 
     src('ov-wind-credit', ECCC_ATTRIB)
     map.addLayer({ id: 'wind-credit', type: 'circle', source: 'ov-wind-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
+
+    src('ov-temperature-credit', ECCC_ATTRIB)
+    map.addLayer({ id: 'temperature-credit', type: 'circle', source: 'ov-temperature-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
+
+    src('ov-salinity-credit', ECCC_ATTRIB)
+    map.addLayer({ id: 'salinity-credit', type: 'circle', source: 'ov-salinity-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
+
+    // Seafloor depth: colours drawn in the browser from the elevation tiles (ETOPO1 below the waterline), on its own copy of the
+    // source with its tiles stopped at zoom 8, so the colours still show at street zoom from the zoom 8 tile and no deeper
+    // tile is asked for. Measured 2026-10-22: from tile zoom 9 the Canadian and U.S. land data masks the sea near the coast to
+    // 0 m (a hole round Victoria's waters), and from zoom 11 the sea is flat 0 m everywhere. Same address as the other two
+    // elevation sources, so no new host.
+    scalar.before = ecoBefore
+    map.addSource('seafloor', { type: 'raster-dem', tiles: [demTiles], encoding: 'terrarium', tileSize: 256, maxzoom: SEAFLOOR_MAX_ZOOM, attribution: SEAFLOOR_ATTRIB })
+    map.addLayer({ id: 'seafloor', type: 'color-relief', source: 'seafloor', layout: hidden, paint: { 'color-relief-color': depthExpression(), 'color-relief-opacity': SEAFLOOR_OPACITY } }, ecoBefore)
 
     src('ov-ecoregions', ECO_ATTRIB)
     map.addLayer({ id: 'ecoregions-fill', type: 'fill', source: 'ov-ecoregions', layout: hidden, paint: { 'fill-color': '#4f8a5b', 'fill-opacity': 0.22 } }, ecoBefore)
@@ -486,6 +733,11 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       'circle-radius': ['case', ['has', 'facts'], 7, 5],
       'circle-color': ['match', ['get', 'kind'], 'landfill', '#8a6a3b', 'wastewater', '#2d7f9a', 'power', '#c79a1d', '#555555'],
       'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } }, before)
+
+    src('ov-tides', TIDES_ATTRIB)
+    map.addLayer({ id: 'tides-dot', type: 'circle', source: 'ov-tides', layout: hidden, paint: {
+      'circle-radius': 8, 'circle-color': ['match', ['get', 'kind'], 'level', '#0e7c86', 'current', '#4338ca', '#555555'],
+      'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff' } }, before)
 
     src('ov-life', GBIF_ATTRIB)
     map.addLayer({ id: 'life-dot', type: 'circle', source: 'ov-life', layout: hidden, paint: {
@@ -520,6 +772,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     label('aqhi-label', 'ov-aqhi', ['get', 'shown'], { 'text-size': 13 }, { 'text-halo-width': 0 })
     label('conditions-label', 'ov-conditions', ['get', 'label'], { 'text-size': 12 }, { 'text-halo-width': 0 })
     label('water-label', 'ov-water', ['get', 'label'], { 'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-size': 11 }, { 'text-color': '#0b4f73' })
+    label('tides-label', 'ov-tides', ['get', 'short'], { 'text-offset': [0, 1.4], 'text-anchor': 'top', 'text-size': 11, 'text-optional': true }, { 'text-color': '#2b2a63' })
     label('quakes-label', 'ov-quakes', ['get', 'label'], { 'text-offset': [0, 1.6], 'text-anchor': 'top', 'text-size': 11, 'text-optional': true }, { 'text-color': '#7a1a14' })
   }
 
@@ -595,6 +848,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       ], s ? s.text : null)
       if (p.note_url) more(p.note_url, 'Capital Regional District page')
       if (s) more(s.href, s.label)
+    } else if (layer === 'tides-dot') {
+      const station = tideStation(p.id)
+      if (!station) return null
+      add(station.name, station.kind === 'level' ? 'tide predictions' : 'tidal current predictions', [], null)
+      const body = el('div', null, 'tide-body')
+      body.append(el('p', 'Asking NOAA for this station’s predictions…'))
+      box.append(body)
+      fillTide(station, body, box)
     } else if (layer === 'ecoregions-fill') {
       add(p.name, 'ecoregion', [`Biome: ${p.biome}.`, `Realm: ${p.realm}.`, 'The shapes come from a worldwide map, so the coast and edges are coarse.'], 'Ecoregions 2017 © Resolve. Licensed under CC BY 4.0. Simplified and clipped to this map’s box.')
       more('https://ecoregions.appspot.com/', 'Ecoregions 2017')
@@ -602,8 +863,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     return box
   }
 
-  const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot']
+  const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot', 'tides-dot']
   const POPUP_LAYERS = [...QUERY_LAYERS, 'ecoregions-fill']
 
-  return { addLayers, addLabels, popupFor, seaReadout, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, sea, wind, flow, enable, disable, showFrame }
+  return { addLayers, addLabels, popupFor, seaReadout, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, defs: DEFS, state, radar, sea, wind, scalar, tideCache, flow, enable, disable, showFrame }
 }
