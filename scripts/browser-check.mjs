@@ -2025,9 +2025,29 @@ async function checkOverlaysBlocked(browser, base) {
   await ctx.close()
 }
 
-// The GeoMet server is slow or fails now and then. A stand-in answers some requests for Sea currents: one 503 and then a reply, a reply held for 7 s,
-// a server that always sends 503 or never answers, and a box unticked between the two tries. The replies are the real service's, read once at the start
-// and played back at once, so the checks do not depend on how slow the real server is on the day (it took 8 s to describe its hours on a busy afternoon).
+// A classic GeoTIFF of 32-bit floats in one strip, as the GeoMet server sends one (the same layout as the reader in js/overlays-data.js expects):
+// `w` x `h` cells of the values `at(x, y)`, the upper left corner at `tie` and cells `scale` degrees across.
+function geoTiff(w, h, at, scale, tie) {
+  const entries = [[256, 3, [w]], [257, 3, [h]], [258, 3, [32]], [259, 3, [1]], [273, 4, [0]], [277, 3, [1]], [278, 3, [h]], [279, 4, [w * h * 4]], [339, 3, [3]], [33550, 12, [...scale, 0]], [33922, 12, [0, 0, 0, ...tie, 0]]]
+  const size = { 3: 2, 4: 4, 12: 8 }
+  let extra = 8 + 2 + entries.length * 12 + 4
+  const at2 = entries.map(([, type, vals]) => { if (size[type] * vals.length <= 4) return null; const o = extra; extra += size[type] * vals.length; return o })
+  const dataStart = extra, buf = Buffer.alloc(dataStart + w * h * 4)
+  buf.write('II', 0, 'latin1'); buf.writeUInt16LE(42, 2); buf.writeUInt32LE(8, 4); buf.writeUInt16LE(entries.length, 8)
+  const put = (o, type, v) => (type === 3 ? buf.writeUInt16LE(v, o) : type === 4 ? buf.writeUInt32LE(v, o) : buf.writeDoubleLE(v, o))
+  entries.forEach(([tag, type, vals], i) => {
+    const list = tag === 273 ? [dataStart] : vals, o = 10 + i * 12
+    buf.writeUInt16LE(tag, o); buf.writeUInt16LE(type, o + 2); buf.writeUInt32LE(list.length, o + 4)
+    if (at2[i] == null) list.forEach((v, k) => put(o + 8 + k * size[type], type, v))
+    else { buf.writeUInt32LE(at2[i], o + 8); list.forEach((v, k) => put(at2[i] + k * size[type], type, v)) }
+  })
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) buf.writeFloatLE(at(x, y), dataStart + (y * w + x) * 4)
+  return buf
+}
+// The GeoMet server is slow or fails now and then. A stand-in answers the requests for Sea currents: a reply, one 503 and then a reply, a reply held for
+// 7 s, a server that always sends 503 or never answers, an answer of the wrong kind, and a box unticked between the two tries. Its good replies are made
+// here (the description of the hours and two grids of a gentle current over the box), so the checks do not depend on the real server, which was down for
+// every CIOPS-SalishSea request on 23 October and took 8 s to describe its hours on a busy afternoon of the 22nd.
 async function checkGeomet(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, userAgent: userAgent(browser) })
   const page = await ctx.newPage()
@@ -2037,19 +2057,21 @@ async function checkGeomet(browser, base) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const CORS = { 'access-control-allow-origin': '*' }
   const counts = { caps: 0, grid: 0 }
-  const played = new Map() // url -> the real reply, kept the first time it is asked for
-  let plan = () => 'real' // what to do with a request: 'real', '503', 'abort', 'hold' or 'xml'
+  // The box of the sea currents, west -124.5, south 47.8, east -122.6, north 49.2, in 0.1 degree cells: 19 across and 14 down, all sea but the corner.
+  const grid = (u) => geoTiff(19, 14, (x, y) => (x < 2 && y < 2 ? 0 : u.includes('VelocityX') ? 0.3 : 0.1), [0.1, 0.1], [-124.5, 49.2])
+  const hour = new Date(Math.floor(Date.now() / 3600e3) * 3600e3 - 3 * 3600e3).toISOString().replace('.000Z', 'Z'), last = new Date(Date.parse(hour) + 47 * 3600e3).toISOString().replace('.000Z', 'Z')
+  const caps = `<Capabilities><Layer><Name>CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m</Name><Dimension name="time" units="ISO8601">${hour}/${last}/PT1H</Dimension></Layer></Capabilities>`
+  let plan = () => 'real' // what to do with a request: 'real' (the stand-in's good reply), '503', 'abort', 'hold' or 'xml'
   await page.route('https://geo.weather.gc.ca/**', async (route) => {
-    const u = route.request().url(), caps = u.includes('GetCapabilities') && u.includes('SeaWaterVelocity'), grid = u.includes('service=WCS') && u.includes('SeaWaterVelocity')
-    if (!caps && !grid) { await route.continue(); return }
-    const n = ++counts[caps ? 'caps' : 'grid'], what = plan(caps ? 'caps' : 'grid', n)
+    const u = route.request().url(), isCaps = u.includes('GetCapabilities') && u.includes('SeaWaterVelocity'), isGrid = u.includes('service=WCS') && u.includes('SeaWaterVelocity')
+    if (!isCaps && !isGrid) { await route.continue(); return }
+    const n = ++counts[isCaps ? 'caps' : 'grid'], what = plan(isCaps ? 'caps' : 'grid', n)
     if (what === '503') await route.fulfill({ status: 503, headers: CORS, body: 'busy' })
     else if (what === 'xml') await route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/xml' }, body: '<ServiceExceptionReport><ServiceException code="NoMatch" locator="time">Unable to access file.</ServiceException></ServiceExceptionReport>' })
     else if (what === 'abort') await route.abort()
     else {
       if (what === 'hold') await sleep(7000)
-      if (!played.has(u)) { const real = await route.fetch(); played.set(u, { status: real.status(), headers: real.headers(), body: await real.body() }) }
-      await route.fulfill(played.get(u))
+      await route.fulfill(isCaps ? { status: 200, headers: { ...CORS, 'content-type': 'text/xml' }, body: caps } : { status: 200, headers: { ...CORS, 'content-type': 'image/tiff' }, body: grid(u) })
     }
   })
   await page.goto(base + '/index.html?test', { waitUntil: 'load' })
@@ -2069,9 +2091,10 @@ async function checkGeomet(browser, base) {
     return { st: await statusOf(page, 'currents'), lines: await page.evaluate(() => [...window.__lines]), caps: counts.caps, grid: counts.grid }
   }
   const SLOW = 'Environment Canada’s server is slow to answer. Loading sea currents…', RETRY = 'Environment Canada’s server did not answer. Trying once more. Loading sea currents…'
-  // Read the real replies once: the description of the hours and the two components of the first hour.
+  // The stand-in's good reply: the layer loads from it, with a grid the page can read, and Play is offered.
   const primed = await run(() => 'real')
-  report(primed.st.state === 'ok' && played.size >= 3, t('currents: the real service describes its hours and gives the first hour, to be played back for the checks below'), JSON.stringify({ st: primed.st, kept: played.size }))
+  const loaded = await page.evaluate(() => ({ canvas: !!document.getElementById('flow-canvas'), play: document.getElementById('currents-play').disabled, hours: window.__overlays.sea.hours.length, cells: window.__overlays.sea.shown?.grid.sea.reduce((a, b) => a + b, 0) }))
+  report(primed.st.state === 'ok' && primed.caps === 1 && primed.grid === 2 && loaded.canvas && !loaded.play && loaded.hours === 13 && loaded.cells === 19 * 14 - 4, t('currents: the stand-in describes its hours and gives the first hour in one try each, and the layer loads from them with its usual line'), JSON.stringify({ st: primed.st, caps: primed.caps, grid: primed.grid, loaded }))
   await setBox(page, 'input[data-overlay=currents]', false)
 
   // One 503 on the description of the hours, then the real reply: the line says it is trying once more, and the layer loads.

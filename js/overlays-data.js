@@ -250,6 +250,8 @@ export function normaliseLife(results) {
 export const GEOMET_TRY_MS = 15000 // the time limit of one try
 export const GEOMET_SLOW_MS = 6000 // after this long without an answer the status line says the server is slow
 export const GEOMET_WAIT_MS = 1500 // between the first try and the second
+export const GEOMET_BUSY_MS = 1000 // a time limit that fires this late means the page was busy, not that the server was slow
+export const GEOMET_GRACE_MS = 1000 // and the answer, which may be waiting to be handled, then gets this long more
 export const GEOMET_SLOW_LINE = 'Environment Canada’s server is slow to answer.'
 export const GEOMET_RETRY_LINE = 'Environment Canada’s server did not answer. Trying once more.'
 const RETRY_STATUS = [408, 425, 429, 500, 502, 503, 504]
@@ -262,9 +264,9 @@ export function geometWhy(e) {
   return ''
 }
 // The reply to `url` as `as` ('text', 'arrayBuffer' or 'blob'). `say('slow')` is called once if the first try is slow, and `say('retry')`
-// as the wait before the second begins. `type` is a pattern the content type must match. `tryMs`, `slowMs`, `waitMs` and `fetchImpl` are for the checks.
+// as the wait before the second begins. `type` is a pattern the content type must match. `tryMs`, `slowMs`, `waitMs`, `busyMs`, `graceMs` and `fetchImpl` are for the checks.
 // A failure carries `reason`: 'down' (no answer), 'error' (the server's own error, with `status`), 'wrong' (the wrong kind of file) or 'cancelled'.
-export async function geometGet(url, as, { signal, say, type, tryMs = GEOMET_TRY_MS, slowMs = GEOMET_SLOW_MS, waitMs = GEOMET_WAIT_MS, fetchImpl = (...a) => fetch(...a) } = {}) {
+export async function geometGet(url, as, { signal, say, type, tryMs = GEOMET_TRY_MS, slowMs = GEOMET_SLOW_MS, waitMs = GEOMET_WAIT_MS, busyMs = GEOMET_BUSY_MS, graceMs = GEOMET_GRACE_MS, fetchImpl = (...a) => fetch(...a) } = {}) {
   if (!['text', 'arrayBuffer', 'blob'].includes(as)) throw new Error('the reply must be read as text, arrayBuffer or blob')
   let failure
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -276,9 +278,15 @@ export async function geometGet(url, as, { signal, say, type, tryMs = GEOMET_TRY
         if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true })
       })
     }
-    let limited = false
+    let limited = false, graced = false, due = performance.now() + tryMs, limit = 0
     const ac = new AbortController(), stop = () => ac.abort(), slow = say ? setTimeout(() => { if (!attempt) say('slow') }, slowMs) : 0
-    const limit = setTimeout(() => { limited = true; ac.abort() }, tryMs)
+    // A page starved of time (a phone drawing a 3D view) may run the limit's timer long after it was due, with the answer already in and not yet handled.
+    // Then the time limit is not up: the timer is set again, once, for a moment more.
+    const arm = (ms) => setTimeout(() => {
+      if (!graced && performance.now() - due > busyMs) { graced = true; due = performance.now() + graceMs; limit = arm(graceMs); return }
+      limited = true; ac.abort()
+    }, ms)
+    limit = arm(tryMs)
     signal?.addEventListener('abort', stop, { once: true })
     try {
       const reply = await fetchImpl(url, { signal: ac.signal })

@@ -1016,6 +1016,14 @@ async function checkOverlayData() {
       const missing = await ask([reply('', { status: 404 }), reply('ok')])
       const wrong = await ask([reply('<ServiceException/>', { type: 'text/xml' }), reply('ok')], { type: /image\/tiff/i })
       report(missing.calls === 1 && missing.error?.reason === 'error' && missing.error.status === 404 && wrong.calls === 1 && wrong.error?.reason === 'wrong' && !(await ask([reply('ok')], { type: /image\/tiff/i })).error, 'GeoMet requests: a request the server refuses for its own sake (HTTP 404) or answers with the wrong kind of file is not tried twice, and the right kind passes the check')
+      // A busy page: the limit's timer runs late, after the answer has come and before it is handled. The answer is handled, and a request that really never answers is still cut off.
+      const busyFetch = (url, { signal }) => new Promise((resolve, reject) => { setTimeout(() => resolve(reply('ok')), 30); signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }) })
+      const spin = (ms) => { const t = performance.now(); while (performance.now() - t < ms) { /* a page that is busy drawing */ } }
+      const busyAsk = (extra) => { const p = D.geometGet('u', 'arrayBuffer', { tryMs: 20, slowMs: 1000, waitMs: 5, busyMs: 15, graceMs: 120, fetchImpl: busyFetch, ...extra }).then((body) => ({ body }), (error) => ({ error })); spin(70); return p }
+      const busy = await busyAsk({})
+      const noGrace = await busyAsk({ busyMs: 1e9 })
+      const quick = await ask([reply('ok')], { tryMs: 1000, busyMs: 15, graceMs: 120 })
+      report(busy.body === 'ok' && noGrace.body !== 'ok' && quick.body === 'ok' && (await ask(['hang', 'hang'], { busyMs: 15, graceMs: 20 })).error?.reason === 'down', 'GeoMet requests: a time limit whose timer runs late (the page was busy) is not taken as the server being slow, the answer waiting to be handled gets a moment more, and a request that never answers is still cut off', JSON.stringify([busy, noGrace.error?.reason]))
       const stalled = await ask(['stall', reply('ok')])
       report(stalled.body === 'ok' && stalled.calls === 2, 'GeoMet requests: the time limit covers the reply to its last byte, so a body that stalls is cut off and tried again')
       const ac = new AbortController(), fetchImpl = player(['hang', reply('ok')]), cancelled = D.geometGet('https://geo.weather.gc.ca/geomet?x', 'arrayBuffer', { ...fast, tryMs: 1000, fetchImpl, signal: ac.signal }).then(() => null, (e) => e)
@@ -1026,7 +1034,7 @@ async function checkOverlayData() {
       report(cancelErr?.reason === 'cancelled' && fetchImpl.calls.length === 1 && earlyErr?.reason === 'cancelled', 'GeoMet requests: unticking the box (the caller\'s signal) stops the request and the second try at once')
       const badWay = await D.geometGet('u', 'json', {}).then(() => null, (e) => e)
       report(!!badWay?.message.includes('text, arrayBuffer or blob'), 'GeoMet requests: a way of reading the reply that is not one of the three is refused')
-      report(D.GEOMET_TRY_MS === 15000 && D.GEOMET_SLOW_MS < D.GEOMET_TRY_MS && D.GEOMET_WAIT_MS <= 2000 && D.geometWhy({ reason: 'down' }) === ' Environment Canada’s server is not answering.' && D.geometWhy({ reason: 'error', status: 503 }) === ' Environment Canada’s server sent an error.' && D.geometWhy({ reason: 'wrong' }) === ' Environment Canada’s server sent an error.' && D.geometWhy({ reason: 'cancelled' }) === '' && D.geometWhy(new Error('x')) === '' && !/[;—]/.test(D.GEOMET_SLOW_LINE + D.GEOMET_RETRY_LINE), 'GeoMet requests: each try has 15 s, the status line says slow after 6 s, the wait is under 2 s, and the sentences added to a failure are plain')
+      report(D.GEOMET_TRY_MS === 15000 && D.GEOMET_SLOW_MS < D.GEOMET_TRY_MS && D.GEOMET_WAIT_MS <= 2000 && D.GEOMET_BUSY_MS === 1000 && D.GEOMET_GRACE_MS === 1000 && D.geometWhy({ reason: 'down' }) === ' Environment Canada’s server is not answering.' && D.geometWhy({ reason: 'error', status: 503 }) === ' Environment Canada’s server sent an error.' && D.geometWhy({ reason: 'wrong' }) === ' Environment Canada’s server sent an error.' && D.geometWhy({ reason: 'cancelled' }) === '' && D.geometWhy(new Error('x')) === '' && !/[;—]/.test(D.GEOMET_SLOW_LINE + D.GEOMET_RETRY_LINE), 'GeoMet requests: each try has 15 s, the status line says slow after 6 s, the wait is under 2 s, and the sentences added to a failure are plain')
     }
 
     // A 5 x 4 grid of cells 1 degree wide, 52 N to 48 N, 0 to 5 E, with a land column and the three ways land is marked.
