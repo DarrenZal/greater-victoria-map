@@ -169,6 +169,11 @@ body.night .maplibregl-ctrl-attrib:not(.maplibregl-compact) a { color: #b9d6e8; 
 .maplibregl-popup-content a { color: #1f5a43; }
 .maplibregl-popup-close-button { min-height: 0; padding: 0 6px; background: transparent; border: 0; color: #1d2a24; }
 
+/* On a phone a popup is never wider than the screen or taller than the room between the banner and the bottom controls, and scrolls inside.
+   app.js moves the map so that the whole popup is in view. A wide screen is unchanged. */
+@media (max-width: 640px), (max-height: 500px) {
+  .maplibregl-popup-content { max-width: min(290px, calc(100vw - 16px)); max-height: min(60vh, calc(100dvh - var(--banner-h) - 64px)); }
+}
 @media (max-width: 640px) {
   :root { --gutter: 16px; }
   #panel { width: auto; }

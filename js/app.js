@@ -3,6 +3,7 @@
 import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWorkerUrl, addProtocol } from '../vendor/maplibre-gl.mjs'
 import { createOverlays } from './overlays.js'
 import { createNight } from './night.js'
+import { flowRestMs } from './overlays-data.js'
 
 // MapLibre 6.x ships ES modules only, so its worker is pointed at explicitly.
 setWorkerUrl(new URL('../vendor/maplibre-gl-worker.mjs', import.meta.url).href)
@@ -63,6 +64,13 @@ const FLOW_SEQUENCE = Array.from({ length: (FLOW_DASH + FLOW_GAP) * 2 }, (_, i) 
 })
 const FLOW_STEP_MS = 70
 const FLOW_MIN_ZOOM = 9
+const FLOW_OPACITY = 0.85
+// Changing the dash array of a layer makes MapLibre rebuild that layer's tiles in its worker, every time (measured 2026-10-23: six tile
+// reloads for each step, and the same with a global-state expression). Changing a layer's opacity costs no rebuild. So each of the 14 steps
+// is a layer of its own with its own fixed dash array, and a step shows one layer and hides the one before. The first keeps the id
+// 'streams-flow' and the others are 'streams-flow-1' to 'streams-flow-13'.
+const flowLayerId = (i) => (i === 0 ? 'streams-flow' : `streams-flow-${i}`)
+const FLOW_LAYERS = FLOW_SEQUENCE.map((_, i) => flowLayerId(i))
 
 const PIN_KINDS = {
   'example-place': 'Example place, not an event',
@@ -177,14 +185,37 @@ function applyToggles() {
 // direction.
 const flowBox = $('flow'), waterBox = document.querySelector('input[data-group=water]')
 flowBox.checked = !motionQuery.matches
-let flowFrameId = 0, flowStep = -1
+let flowFrameId = 0, flowStep = 0 // the layer shown is the first until the loop moves it
+let flowLastTs = 0, flowRestUntil = 0 // the time of the last frame, and no step before this time (both in the time of requestAnimationFrame)
+let flowWatch = 0, flowEntry = null // after a step: 1 while the frame of the step passes, 2 while the frame that draws it passes (and flowEntry is its line in flowLog)
+// In test mode (?test) each step is written down with the duration of the frame that drew it, the rest that gives and the time the loop may step
+// again, for scripts/browser-check.mjs.
+const flowLog = new URLSearchParams(location.search).has('test') ? [] : null
 function flowFrame(ts) {
   flowFrameId = requestAnimationFrame(flowFrame)
+  const frameMs = ts - flowLastTs
+  flowLastTs = ts
+  // A step is drawn in the frame after it, and the browser starts the frame after that one only when the drawing is done, so the length of that
+  // frame is how long the redraw of the whole map took (the time map.on('render') sees is only the time the page spent, not the time the graphics
+  // chip did). Once it is known the loop rests twice as long, so it never uses more than a third of the page's time on a device that is slow
+  // to draw. A step is chosen from the clock, so the dashes keep their pace where the device can keep up and skip ahead where it cannot.
+  if (flowWatch === 2) {
+    const rest = flowRestMs(frameMs)
+    flowRestUntil = ts + rest
+    if (flowEntry) { Object.assign(flowEntry, { cost: frameMs, rest, until: flowRestUntil }); flowEntry = null }
+    flowWatch = 0
+  } else if (flowWatch === 1) flowWatch = 2
+  if (flowWatch || ts < flowRestUntil) return
   // In 3D terrain every step redraws the creeks draped over the relief, so the steps come at half the rate.
   const next = Math.floor(ts / (map.getTerrain() ? FLOW_STEP_MS * 2 : FLOW_STEP_MS)) % FLOW_SEQUENCE.length
   if (next === flowStep) return
-  flowStep = next
-  try { map.setPaintProperty('streams-flow', 'line-dasharray', FLOW_SEQUENCE[next]) } catch { /* style not ready this frame */ }
+  try {
+    map.setPaintProperty(FLOW_LAYERS[next], 'line-opacity', FLOW_OPACITY)
+    map.setPaintProperty(FLOW_LAYERS[flowStep], 'line-opacity', 0)
+    flowStep = next
+  } catch { return } // the style is not ready this frame
+  flowWatch = 1
+  if (flowLog) flowLog.push(flowEntry = { at: ts, cost: null, rest: null, until: null })
 }
 function syncFlow() {
   const reduced = motionQuery.matches
@@ -192,9 +223,9 @@ function syncFlow() {
   flowBox.disabled = reduced || !waterBox.checked
   $('flow-paused').hidden = !reduced
   const has = !!map.getLayer('streams-flow')
-  if (has) map.setLayoutProperty('streams-flow', 'visibility', on ? 'visible' : 'none')
+  if (has) for (const id of FLOW_LAYERS) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none')
   const run = has && on && !document.hidden && map.getZoom() >= FLOW_MIN_ZOOM
-  if (run && !flowFrameId) flowFrameId = requestAnimationFrame(flowFrame)
+  if (run && !flowFrameId) { flowLastTs = performance.now(); flowWatch = 0; flowEntry = null; flowFrameId = requestAnimationFrame(flowFrame) }
   if (!run && flowFrameId) { cancelAnimationFrame(flowFrameId); flowFrameId = 0 }
 }
 flowBox.addEventListener('change', syncFlow)
@@ -290,9 +321,9 @@ map.once('load', () => {
   map.addLayer({ id: 'lakes', type: 'fill', source: 'lakes', paint: { 'fill-color': '#9ccbe3', 'fill-opacity': 0.8 } }, under)
   const streamWidth = ['interpolate', ['linear'], ['zoom'], 9, ['*', 0.4, ['get', 'order']], 14, ['*', 1.2, ['get', 'order']]]
   map.addLayer({ id: 'streams', type: 'line', source: 'streams', paint: { 'line-color': '#2a79a8', 'line-width': streamWidth } }, under)
-  // Same width as the creek line, so the pale dashes sit on it. Butt caps, because round caps smear the dashes.
-  map.addLayer({ id: 'streams-flow', type: 'line', source: 'streams-flow', minzoom: FLOW_MIN_ZOOM, layout: { 'line-cap': 'butt', visibility: 'none' }, paint: {
-    'line-color': '#eaf6fd', 'line-opacity': 0.85, 'line-width': streamWidth, 'line-dasharray': FLOW_SEQUENCE[0] } }, under)
+  // Same width as the creek line, so the pale dashes sit on it. Butt caps, because round caps smear the dashes. One layer for each step, see FLOW_LAYERS.
+  FLOW_SEQUENCE.forEach((dash, i) => map.addLayer({ id: FLOW_LAYERS[i], type: 'line', source: 'streams-flow', minzoom: FLOW_MIN_ZOOM, layout: { 'line-cap': 'butt', visibility: 'none' }, paint: {
+    'line-color': '#eaf6fd', 'line-opacity': i === 0 ? FLOW_OPACITY : 0, 'line-width': streamWidth, 'line-dasharray': dash } }, under))
   // Invisible fill so a click inside a municipality can open its popup.
   map.addLayer({ id: 'muni-fill', type: 'fill', source: 'municipalities', paint: { 'fill-color': '#000000', 'fill-opacity': 0 } }, under)
   map.addLayer({ id: 'muni-line', type: 'line', source: 'municipalities', paint: { 'line-color': '#5b5f58', 'line-width': 1.1, 'line-dasharray': [4, 2] } }, under)
@@ -416,6 +447,9 @@ function popupFor(f, layer, group = [f], hits = []) {
 // else also gets the sea readout, above the area's own popup. Every other popup is shown alone.
 const AREA_LAYERS = ['bec-fill', 'ecoregions-fill', 'muni-fill', ...overlays.seaAreaLayers]
 
+// What MapLibre itself looks for when it moves focus into a popup.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 map.on('click', (e) => {
   const r = 8 // 16 px box around the click, not a single pixel
   const hitBox = [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]]
@@ -438,13 +472,19 @@ map.on('click', (e) => {
     content = reading
   }
   if (!content) return
-  const popup = new Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
-  // MapLibre moves focus to the first link in a popup, which scrolls a long popup to its end. Start it at the top.
-  const body = popup.getElement()?.querySelector('.maplibregl-popup-content')
-  if (body) body.scrollTop = 0
+  const popup = new Popup({ maxWidth: '300px', focusAfterOpen: false }).setLngLat(e.lngLat).setDOMContent(content).addTo(map)
+  // MapLibre moves focus to the first link in a popup, and the browser scrolls a long popup to show it: to its end, as the link is at the end.
+  // Chrome does it at once, so setting scrollTop to 0 afterwards worked there, and Safari does it later, so a popup opened scrolled to its
+  // end (found 2026-10-23 in WebKit). Focus is moved here instead, to the same element, without scrolling, so the popup opens at its top.
+  popup.getElement()?.querySelector(FOCUSABLE)?.focus({ preventScroll: true })
+  if (phoneQuery.matches) keepInView(popup)
   // A popup whose text arrives later (a tide prediction, a temperature) says so, and is placed again for its new size.
-  content.addEventListener('filled', () => { popup.setLngLat(e.lngLat); if (content.querySelector('.tide-body')) requestAnimationFrame(() => keepInView(popup)) })
+  content.addEventListener('filled', () => { popup.setLngLat(e.lngLat); if (phoneQuery.matches || content.querySelector('.tide-body')) requestAnimationFrame(() => keepInView(popup)) })
 })
+// On a phone a popup that opens near an edge would run past the screen, because MapLibre only picks which corner or side the popup hangs from
+// (a point 120 px from the left edge of a 390 px screen hangs a 290 px popup from its left edge, 20 px off the right), and a tall popup opened
+// low on the screen would run off the bottom. This is the same condition as the CSS media query that limits the popup's size there.
+const phoneQuery = matchMedia('(max-width: 640px), (max-height: 500px)')
 // The popup of a tide station grows when its levels arrive, and the gauge's carries a long licence notice, so it can reach past the edge of
 // the screen and then cannot be read to its end. Pan the map by the least that brings it back, clear of the banner at the top and the
 // attribution at the bottom. A popup taller than the room keeps its top in view.
@@ -470,7 +510,8 @@ for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'w
 if (new URLSearchParams(location.search).has('test')) {
   window.__map = map
   window.__overlays = overlays
-  window.__flow = { sequence: FLOW_SEQUENCE, minZoom: FLOW_MIN_ZOOM, running: () => flowFrameId !== 0 }
+  // `step` is the position of the layer that is shown, read from the map, `layers` are the 14 layers and `log` is what flowLog holds.
+  window.__flow = { sequence: FLOW_SEQUENCE, minZoom: FLOW_MIN_ZOOM, layers: FLOW_LAYERS, log: flowLog, running: () => flowFrameId !== 0, step: () => FLOW_LAYERS.findIndex((id) => map.getPaintProperty(id, 'line-opacity') > 0) }
   // map.loaded() and the 'idle' event never settle while the flow dashes animate,
   // so the checks wait for this flag (set after the layers are added) instead.
   map.once('load', () => { window.__ready = true })

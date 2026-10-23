@@ -22,7 +22,7 @@ import {
   depthExpression,
   NONNA_MAX_ZOOM, NONNA_CLOSE_ZOOM, NONNA_TICKS, nonnaTileUrl, nonnaGradient, NONNA_NOTICE, IWLS_NOTICE, NONNA_LICENCE_URL, IWLS_LICENCE_URL,
   MARINE_FILES, WHALE_RULES, WHALE_RULE_LINKS, OGL_CANADA_LINE, CETACEANS, cetaceanCells, densityBreaks, densityExpression, DENSITY_COLOURS, stepGradient, fmt2,
-  protectedInfo, srkwInfo, cetaceanInfo, kelpInfo, eelgrassInfo, herringInfo, seabirdInfo, marineMessage,
+  protectedInfo, srkwInfo, rkwInfo, cetaceanInfo, kelpInfo, eelgrassInfo, herringInfo, seabirdInfo, marineMessage,
   NIGHT_SEA,
 } from './overlays-data.js'
 import { createFlow, FLOW_PROFILES } from './flow.js'
@@ -41,6 +41,7 @@ const OGL_CANADA_LINK = '<a href="https://open.canada.ca/en/open-government-lice
 const OGL_BC_LINK = '<a href="https://www2.gov.bc.ca/gov/content?id=A519A56BC2BF44E4A008B33FCF527F61" target="_blank" rel="noopener">OGL &ndash; British Columbia</a>'
 const PROTECTED_ATTRIB = `Protected areas: <a href="https://open.canada.ca/data/en/dataset/6c343726-1e92-451a-876a-76e17d398a1c" target="_blank" rel="noopener">CPCAD</a> (${OGL_CANADA_LINK})`
 const SRKW_ATTRIB = `Killer whale critical habitat: <a href="https://open.canada.ca/data/en/dataset/db177a8c-5d7d-49eb-8290-31e6a45d786c" target="_blank" rel="noopener">Fisheries and Oceans Canada</a> (${OGL_CANADA_LINK})`
+const RKW_ATTRIB = `Killer whale important area: <a href="https://open.canada.ca/data/en/dataset/5db1e0ce-4515-49ac-891f-a0862c59bc01" target="_blank" rel="noopener">Fisheries and Oceans Canada</a> (${OGL_CANADA_LINK})`
 const CETACEANS_ATTRIB = `Whale and porpoise model: <a href="https://open.canada.ca/data/en/dataset/39546277-b33e-4f80-8a2d-3ca1ce5b1401" target="_blank" rel="noopener">Fisheries and Oceans Canada</a> (${OGL_CANADA_LINK})`
 const CRIMS_ATTRIB = `Coastal habitat: CRIMS, Province of British Columbia, a legacy survey from 1979 (${OGL_BC_LINK})`
 const INDUSTRY_ATTRIB = 'Industry and waste sites: Statistics Canada (OGL &ndash; Canada), HydroWASTE (CC BY 4.0), WRI (CC BY 4.0)'
@@ -105,6 +106,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     // Marine life and protection: a file of this site each, fetched when the box is first ticked.
     protected: { label: 'Protected marine areas', ids: ['protected-fill', 'protected-line'], ui: ['protected-note'], source: 'ov-protected', ttl: Infinity, load: (s) => loadMarine(s, 'protected') },
     srkw: { label: 'Killer whale critical habitat', ids: ['srkw-fill', 'srkw-line'], ui: ['srkw-note'], source: 'ov-srkw', ttl: Infinity, load: (s) => loadMarine(s, 'srkw') },
+    rkw: { label: 'Killer whale important area', ids: ['rkw-fill', 'rkw-line'], ui: ['rkw-note'], source: 'ov-rkw', ttl: Infinity, load: (s) => loadMarine(s, 'rkw') },
     cetaceans: { label: 'Whale and porpoise density', ids: ['cetaceans-fill', 'cetaceans-line'], ui: ['cetaceans-controls', 'cetaceans-key', 'cetaceans-note'], source: 'ov-cetaceans', ttl: Infinity, load: loadCetaceans },
     kelp: { label: 'Kelp beds', ids: ['kelp-fill', 'kelp-line'], source: 'ov-kelp', ttl: Infinity, load: (s) => loadMarine(s, 'kelp') },
     eelgrass: { label: 'Eelgrass', ids: ['eelgrass-fill', 'eelgrass-line'], source: 'ov-eelgrass', ttl: Infinity, load: (s) => loadMarine(s, 'eelgrass') },
@@ -258,6 +260,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   $('cetaceans-species').addEventListener('change', (e) => { if (CETACEANS[e.target.value]) { cet.key = e.target.value; showCetacean() } })
   $('protected-note').textContent = 'Only the marine parts of protected areas. The land of a park is in Parks and green spaces. Boundaries are approximate. Click an area for its owner, its year and whether it is a no-take area. Not for navigation.'
   $('srkw-note').textContent = `The area Canada has mapped as critical habitat for Southern Resident killer whales. It is a boundary, not a sighting, and is for general guidance only. ${WHALE_RULES}`
+  $('rkw-note').textContent = `The area experts drew by hand in 2009 as important to Southern Resident killer whales from June to October. It is a boundary, not a sighting, and carries no added management. ${WHALE_RULES}`
   $('cetaceans-note').textContent = `A model of summer 2018 ship surveys, not where animals are now. Each square is 5 km across (25 km²). Darker means more animals predicted per 100 km². Canadian waters only. ${WHALE_RULES}`
 
   // ---- weather alerts
@@ -937,6 +940,10 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     src('ov-srkw', SRKW_ATTRIB)
     map.addLayer({ id: 'srkw-fill', type: 'fill', source: 'ov-srkw', layout: hidden, paint: { 'fill-color': '#c0522c', 'fill-opacity': 0.12 } }, ecoBefore)
     map.addLayer({ id: 'srkw-line', type: 'line', source: 'ov-srkw', layout: hidden, paint: { 'line-color': '#8c2f0f', 'line-width': 2.2, 'line-dasharray': [3, 2] } }, ecoBefore)
+    src('ov-rkw', RKW_ATTRIB)
+    // A dotted outline, so it reads as a part of the critical habitat above and not a second copy of it.
+    map.addLayer({ id: 'rkw-fill', type: 'fill', source: 'ov-rkw', layout: hidden, paint: { 'fill-color': '#c0522c', 'fill-opacity': 0.12 } }, ecoBefore)
+    map.addLayer({ id: 'rkw-line', type: 'line', source: 'ov-rkw', layout: { ...hidden, 'line-cap': 'round' }, paint: { 'line-color': '#6b1d12', 'line-width': 2.6, 'line-dasharray': [0.1, 2] } }, ecoBefore)
     src('ov-cetaceans', CETACEANS_ATTRIB)
     map.addLayer({ id: 'cetaceans-fill', type: 'fill', source: 'ov-cetaceans', layout: hidden, paint: { 'fill-color': DENSITY_COLOURS[0], 'fill-opacity': 0.75 } }, ecoBefore)
     map.addLayer({ id: 'cetaceans-line', type: 'line', source: 'ov-cetaceans', layout: hidden, paint: { 'line-color': '#ffffff', 'line-opacity': 0.5, 'line-width': 0.6 } }, ecoBefore)
@@ -1095,13 +1102,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       addInfo(kelpInfo(p))
     } else if (layer === 'eelgrass-fill') {
       addInfo(eelgrassInfo(p))
-    } else if (layer === 'protected-fill' || layer === 'srkw-fill' || layer === 'cetaceans-fill') {
+    } else if (layer === 'protected-fill' || layer === 'srkw-fill' || layer === 'rkw-fill' || layer === 'cetaceans-fill') {
       // One popup for everything under the click that is a protected area, the critical habitat or the model, in that order. The
       // vessel distances are said once, at the end, when any whale is in it.
       const under = (id) => (hits.length ? hits.filter((h) => h.layer.id === id) : id === layer ? group : [])
       const seen = new Set(), areas = under('protected-fill').filter((h) => { const k = `${h.properties.name}|${h.properties.type}`; return !seen.has(k) && seen.add(k) })
       const sections = areas.slice(0, 3).map((h) => protectedInfo(h.properties))
       if (under('srkw-fill').length) sections.push(srkwInfo(under('srkw-fill')[0].properties))
+      if (under('rkw-fill').length) sections.push(rkwInfo(under('rkw-fill')[0].properties))
       if (under('cetaceans-fill').length) sections.push(cetaceanInfo(under('cetaceans-fill')[0].properties, cet.key))
       const whales = sections.some((i) => i.lines.includes(WHALE_RULES))
       sections.forEach((i, k) => { if (k) box.append(el('hr')); addInfo({ ...i, lines: i.lines.filter((l) => l !== WHALE_RULES), source: i.source.replace(` ${OGL_CANADA_LINE}`, '') }) })
@@ -1119,10 +1127,10 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   }
 
   // Points and lines first, then the small areas, then the big ones, so the most specific thing under a click is the popup.
-  const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot', 'tides-dot', 'seabirds-dot', 'herring-line', 'kelp-fill', 'eelgrass-fill', 'protected-fill', 'srkw-fill', 'cetaceans-fill']
+  const QUERY_LAYERS = ['quakes-dot', 'aqhi-dot', 'conditions-dot', 'water-dot', 'life-dot', 'industry-dot', 'tides-dot', 'seabirds-dot', 'herring-line', 'kelp-fill', 'eelgrass-fill', 'protected-fill', 'rkw-fill', 'srkw-fill', 'cetaceans-fill']
   const POPUP_LAYERS = [...QUERY_LAYERS, 'ecoregions-fill']
   // Areas of the sea. A click on the sea that reaches one of these also gets the sea readout, above the area's popup.
-  const SEA_AREA_LAYERS = ['kelp-fill', 'eelgrass-fill', 'protected-fill', 'srkw-fill', 'cetaceans-fill']
+  const SEA_AREA_LAYERS = ['kelp-fill', 'eelgrass-fill', 'protected-fill', 'rkw-fill', 'srkw-fill', 'cetaceans-fill']
 
   return { addLayers, addLabels, popupFor, seaReadout, setNight, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, seaAreaLayers: SEA_AREA_LAYERS, defs: DEFS, state, radar, sea, wind, scalar, tideCache, flow, enable, disable, showFrame }
 }

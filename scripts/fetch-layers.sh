@@ -47,7 +47,7 @@ wfs() { wfs_box "$BBOX" "$@"; }
 ms() { $MAPSHAPER "$@"; }
 
 # ---- Marine life and protection
-# Seven files from open government data. They are clipped to the area the map reaches
+# Eight files from open government data. They are clipped to the area the map reaches
 # (SEA_BBOX, the same area as the live layers), not to the demo box: a sea layer cut off at
 # the demo box would draw a straight edge through open water and read as a boundary. Run just
 # this part with ONLY=marine. Source, licence, filters and sizes: data/SOURCES.md.
@@ -73,6 +73,8 @@ marine() {
     # CPCAD splits each protected area into a marine zone and a terrestrial zone (BIOME M and T).
     arcgis "$CPCAD" cpcad_marine.json "BIOME='M'" "NAME_E,TYPE_E,OWNER_E,ESTYEAR,NO_TAKE"
     arcgis "$DFO_REST/dfo_sara_critical_habitat/MapServer/0" srkw.json "COMMON_E='Killer Whale' AND POP_E LIKE '%Southern Resident%'" "COMMON_E,POP_E,CH_STATUS_E,Area_Km2"
+    # Important Areas for the Strait of Georgia ecoregion, layer 3 (Resident killer whale): one polygon drawn by experts on paper maps in 2009.
+    arcgis "$DFO_REST/important_areas_for_strait_of_georgia_ecoregion/MapServer/3" rkw.json "1=1" "seasonal,score"
     # PRISMM density models, the Salish Sea grid of each species (layer 0 Dall's porpoise, 6 harbour porpoise, 9 humpback whale).
     arcgis "$DFO_REST/spatial_density_models_cetaceans_canadian_pacific_2018/MapServer/0" density_dalls.json "1=1" "OBJECTID,area_m2,Nhat,CV"
     arcgis "$DFO_REST/spatial_density_models_cetaceans_canadian_pacific_2018/MapServer/6" density_harbour.json "1=1" "OBJECTID,area_m2,Nhat,CV"
@@ -100,6 +102,12 @@ marine() {
     -filter-fields status,area_km2 \
     -clip bbox=$SEA_BBOX -simplify percentage=30% keep-shapes \
     -o data/srkw-habitat.geojson $SEA_OPTS
+
+  # The important area for Southern Resident killer whales, as experts drew it for June to October. One polygon, a mapped area and not a sighting.
+  ms "$RAW/rkw.json" \
+    -filter-fields seasonal,score \
+    -clip bbox=$SEA_BBOX -simplify percentage=8% keep-shapes \
+    -o data/rkw-important-area.geojson $SEA_OPTS
 
   # Modelled whale and porpoise numbers: the three species joined on one grid (see the script).
   node scripts/make-density.mjs "$RAW/density_dalls.json" "$RAW/density_harbour.json" "$RAW/density_humpback.json" "$RAW/density_merged.geojson"
@@ -132,7 +140,7 @@ marine() {
     -o data/seabird-colonies.geojson $SEA_OPTS
 
   # Rounding to 4 decimals can collapse a very small shape to nothing. Read each file back and drop those.
-  for f in marine-protected srkw-habitat whale-density kelp eelgrass herring-spawn seabird-colonies; do
+  for f in marine-protected srkw-habitat rkw-important-area whale-density kelp eelgrass herring-spawn seabird-colonies; do
     ms "data/$f.geojson" -filter '!this.isNull' -o "data/$f.geojson" force $SEA_OPTS
   done
 }

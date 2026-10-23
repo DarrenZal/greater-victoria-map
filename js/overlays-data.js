@@ -34,6 +34,10 @@ export function distanceKm([x1, y1], [x2, y2]) {
   return 6371 * Math.hypot(dx, dy)
 }
 
+// How long the creek Flow animation rests after a step whose redraw took `costMs`: twice as long, up to 5 s. So the animation takes at most a
+// third of the time a device spends drawing, however slow it is. A cost that is not a positive number gives no rest.
+export const flowRestMs = (costMs) => (Number.isFinite(costMs) && costMs > 0 ? Math.min(2 * costMs, 5000) : 0)
+
 // Pacific time, whatever the visitor's own zone is, e.g. "Oct 21, 5:10 p.m. PDT".
 export function pacificTime(isoText) {
   const t = Date.parse(isoText)
@@ -1114,12 +1118,13 @@ export const NONNA_LICENCE_URL = 'https://api-proxy.edh-cde.dfo-mpo.gc.ca/catalo
 export const IWLS_NOTICE = `This product is not to be used for navigation. This product was made by or for the User ${CHS_USER} and contains intellectual property (Data) of the Canadian Hydrographic Service of the Department of Fisheries and Oceans. The copyrights in the Data are and remain the property of His Majesty the King in Right of Canada and shall not be sold, licensed, leased, assigned or given to a third party. The incorporation of the Data in this product does not constitute an endorsement or an approval of this product by the Canadian Hydrographic Service, the Department of Fisheries and Oceans or His Majesty the King in Right of Canada`
 export const NONNA_NOTICE = `This product was made by ${CHS_USER} and contains intellectual property of the Canadian Hydrographic Service (CHS) of the Department of Fisheries and Oceans. This product does not meet the requirements of the Navigation Safety Regulations, 2020 under the Canada Shipping Act, 2001. Charts and publications issued by or on the authority of CHS must be used to meet the requirements of those regulations. The copyright in the data are and remain the property of His Majesty the King in Right of Canada and shall not be sold, licensed, leased, assigned or given to a third party. The incorporation of CHS data in this product does not constitute an endorsement or an approval of this product by the Canadian Hydrographic Service, the Department of Fisheries and Oceans or His Majesty the King in Right of Canada.`
 
-// ---- marine life and protection: seven files in data/, built by scripts/fetch-layers.sh from open government data
-// None shows where an animal is now. The protected areas, the critical habitat and the CRIMS survey are drawn from
+// ---- marine life and protection: eight files in data/, built by scripts/fetch-layers.sh from open government data
+// None shows where an animal is now. The protected areas, the critical habitat, the important area and the CRIMS survey are drawn from
 // fixed boundaries and old records, and the density layer is a model of summer 2018 ship surveys.
 export const MARINE_FILES = {
   protected: 'data/marine-protected.geojson', srkw: 'data/srkw-habitat.geojson', cetaceans: 'data/whale-density.geojson',
   kelp: 'data/kelp.geojson', eelgrass: 'data/eelgrass.geojson', herring: 'data/herring-spawn.geojson', seabirds: 'data/seabird-colonies.geojson',
+  rkw: 'data/rkw-important-area.geojson',
 }
 // The vessel distances, said wherever whales appear. The 1,000 m rule is Transport Canada Ship Safety Bulletin 08/2026 (the
 // Interim Order, in force from June 1, 2026 to May 31, 2027). The 200 m and 100 m rules are the Marine Mammal Regulations,
@@ -1146,8 +1151,12 @@ const lower = (s) => (typeof s === 'string' ? s.trim().toLowerCase() : '')
 const sentence = (s) => (/[.!?]$/.test(s) ? s : `${s}.`)
 const TYPE_TAGS = { 'A - Park': 'park (class A)', 'Other Effective Area-Based Conservation Measure': 'area-based conservation measure (OECM)' }
 export const typeTag = (type) => TYPE_TAGS[type] || lower(type) || 'protected area'
-// CPCAD's "Marine Resource Use" field: All, Part or None of the area is no-take. Anything else (not reported, not applicable) is not said.
-export const NO_TAKE_WORDS = { 1: 'all of it', 2: 'part of it', 3: 'none of it' }
+// CPCAD's "Marine Resource Use" field (NO_TAKE). Its user manual (2025) gives 1 All ("The entire marine protected area or OECM is no-take."), 2 Part
+// ("Only part of the marine protected area or OECM is no-take."), 3 None ("The marine protected area or OECM does not have any no-take area."),
+// 4 Not reported ("It is not known whether there is a no-take area.") and 0 Not applicable ("For terrestrial or freshwater protected areas and
+// OECMs."). Only All, Part and None are said. The meaning of no-take is the manual's, word for word as far as it goes.
+export const NO_TAKE_WORDS = { 1: 'all of the area', 2: 'part of the area', 3: 'none of the area' }
+export const NO_TAKE_MEANING = "CPCAD's meaning of no-take: the taking of living or dead natural resources, inclusive of all methods of fishing, extraction, dumping, dredging and construction, is strictly prohibited."
 
 // What each popup says, as plain data: { title, tag, lines, source }. js/overlays.js turns it into text nodes.
 export function protectedInfo(p) {
@@ -1158,7 +1167,8 @@ export function protectedInfo(p) {
     lines: [
       owner ? sentence(`Owner: ${owner}`) : null,
       year ? `Established ${year}.` : null,
-      NO_TAKE_WORDS[p.no_take] ? `No-take area, as reported to CPCAD: ${NO_TAKE_WORDS[p.no_take]}.` : null,
+      NO_TAKE_WORDS[p.no_take] ? `No-take, as reported to CPCAD: ${NO_TAKE_WORDS[p.no_take]}.` : null,
+      p.no_take === 1 || p.no_take === 2 ? NO_TAKE_MEANING : null,
       'This is the marine part of the protected area. Its land is not drawn here.',
     ].filter(Boolean),
     source: `Source: Canadian Protected and Conserved Areas Database (CPCAD). Boundaries are approximate and not for navigation. ${OGL_CANADA_LINE}`,
@@ -1174,6 +1184,26 @@ export function srkwInfo(p) {
       WHALE_RULES,
     ].filter(Boolean),
     source: `Source: Fisheries and Oceans Canada, Species at Risk critical habitat. For general guidance only. Not for navigation. ${OGL_CANADA_LINE}`,
+  }
+}
+
+// The important area for Southern Resident killer whales: one polygon that experts drew by hand on paper maps for one season (June to October),
+// from the Fisheries and Oceans Canada Important Areas for the Strait of Georgia ecoregion. A mapped area, not a sighting. Its record says
+// the areas "have no enhanced management in place" and that the data is "Not for navigational purposes".
+const IA_SCORES = { H: 'high', M: 'medium', L: 'low' }
+export function rkwInfo(p) {
+  const season = str(p.seasonal, 60), score = IA_SCORES[String(p.score).trim().toUpperCase()]
+  return {
+    title: 'Southern Resident killer whale important area',
+    tag: 'important area, drawn by experts',
+    lines: [
+      'A mapped boundary, not a sighting. It does not show where the whales are now.',
+      season ? `Experts drew it for ${season}.` : null,
+      score ? `They rated its importance to this population as ${score}.` : null,
+      'Drawn by hand on paper maps in 2009, so its edge is approximate. It carries no added management.',
+      WHALE_RULES,
+    ].filter(Boolean),
+    source: `Source: Fisheries and Oceans Canada, Important Areas for Cetaceans in the Strait of Georgia Ecoregion (resident killer whale). Not for navigation. ${OGL_CANADA_LINE}`,
   }
 }
 
@@ -1303,6 +1333,7 @@ export function marineMessage(id, features) {
   const years = (key) => features.map((f) => f.properties?.[key]).filter((y) => Number.isInteger(y) && y > 0)
   if (id === 'protected') return `${plural('marine zone', 'marine zones')} of protected areas in the area this map reaches.`
   if (id === 'srkw') return 'Shown for the area this map reaches.'
+  if (id === 'rkw') return 'Shown for the area this map reaches.'
   if (id === 'kelp') return `${plural('kelp bed', 'kelp beds')}.`
   if (id === 'eelgrass') {
     const y = years('year')
