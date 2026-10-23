@@ -324,6 +324,7 @@ map.once('load', () => {
   // The Night look is off when the page opens. Its box darkens the basemap and the labels, and tells the live layers and the sky.
   const night = createNight({ map, basemapSource: water?.source ?? null, overrides: NIGHT_PAINT })
   const setNight = () => {
+    document.body.classList.toggle('night', nightBox.checked) // the attribution and the scale are dark too
     night.set(nightBox.checked)
     overlays.setNight(nightBox.checked)
     if (map.getTerrain()) map.setSky(nightBox.checked ? NIGHT_SKY : TERRAIN_SKY)

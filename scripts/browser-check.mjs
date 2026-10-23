@@ -2192,6 +2192,10 @@ async function checkNight(page, requests, t, name, shot) {
   const lamps = labels.filter((l) => !l.text || contrastOf(l.text, dark.ground) < 4.5)
   report(labels.length >= 10 && lamps.length === 0, t(`night: every one of the ${labels.length} text layers, the basemap's and the page's, has a text colour that reads on the dark ground (4.5 to 1 or better)`), JSON.stringify(lamps))
   report(dark.layers === day.layers, t('night: no layer is added or taken away by the switch'))
+  // The attribution and the scale are dark too (the attribution of a phone is a round button, left as MapLibre draws it).
+  const bars = await page.evaluate(() => { const a = document.querySelector('.maplibregl-ctrl-attrib'), s = document.querySelector('.maplibregl-ctrl-scale'), ca = getComputedStyle(a), cs = getComputedStyle(s); return { compact: a.classList.contains('maplibregl-compact'), attrib: [ca.backgroundColor, ca.color], scale: [cs.backgroundColor, cs.color] } })
+  const barOk = ([bg, text]) => relLum(cssRgb(bg)) < 0.05 && contrastOf(text, bg) >= 7
+  report(barOk(bars.scale) && (bars.compact || barOk(bars.attrib)), t('night: the scale bar and the attribution are dark with light text (a contrast of 7 to 1 or better), so no pale bar cuts across the dark map'), JSON.stringify(bars))
   const asked = requests.slice(before).filter((u) => LIVE_HOSTS.includes(new URL(u).host) || /\/styles\//.test(u))
   report(asked.length === 0, t('night: switching it on asks no service for anything (the basemap is darkened where it is, and its style is not fetched again)'), asked.join(' '))
   if (shot) {
@@ -2284,7 +2288,8 @@ async function checkNight(page, requests, t, name, shot) {
   await waitDrawn(page)
   const back = await look(), stBack = await currentsStats(page), conBack = await canvasContrast(page, [194, 200, 202])
   // The list of layers is left out of the comparison: the sea picture and the radar are made the first time they are used, and "no layer is added or taken away" is checked at the switch.
-  const same = (({ scalar, flowNight, layers, ...rest }) => JSON.stringify(rest))(back) === (({ scalar, flowNight, layers, ...rest }) => JSON.stringify(rest))(day)
+  const bodyNight = await page.evaluate(() => document.body.classList.contains('night'))
+  const same = !bodyNight && (({ scalar, flowNight, layers, ...rest }) => JSON.stringify(rest))(back) === (({ scalar, flowNight, layers, ...rest }) => JSON.stringify(rest))(day)
   report(same && !back.flowNight && !stBack.night && !!conBack && conBack.median >= 3 && conBack.p10 >= 2.2, t('night: switched off again, every colour of the basemap and the page is exactly what it was, the currents are drawn dark again (contrast 3 to 1 or better on the pale sea) and nothing was added or lost'), JSON.stringify({ back, day, conBack }))
   await panel(true)
   await setBox(page, 'input[data-overlay=currents]', false)

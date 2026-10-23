@@ -150,6 +150,10 @@ button:focus-visible, summary:focus-visible, input:focus-visible, a:focus-visibl
 /* A long attribution (terrain on) wraps instead of running under the scale bar. */
 .maplibregl-ctrl-bottom-right { max-width: calc(100% - 130px); }
 
+/* In the Night look the attribution and the scale are dark too, so a pale bar does not cut across the dark map. */
+body.night .maplibregl-ctrl-attrib:not(.maplibregl-compact), body.night .maplibregl-ctrl-scale { background: rgba(20, 27, 35, .78); color: #d8dfe4; }
+body.night .maplibregl-ctrl-scale { border-color: #d8dfe4; }
+body.night .maplibregl-ctrl-attrib:not(.maplibregl-compact) a { color: #b9d6e8; }
 /* Popups stay light because the basemap stays light. */
 .maplibregl-popup { z-index: 4; }
 .maplibregl-popup-content { color: #1d2a24; font: 14px/1.4 system-ui, sans-serif; max-width: 290px; padding: 12px 14px; }
