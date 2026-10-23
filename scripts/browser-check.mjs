@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Browser checks for the Greater Victoria demo map, run in headless Chromium.
 //
-//   PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/browser-check.mjs [--shots dir]
+//   PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/browser-check.mjs [--shots dir] [--only regex]
+//
+// --only runs only the checks whose reported name matches the regex (case does not matter), for a rerun of a few checks that failed. A group of
+// checks that has no name the regex could match is skipped, so a rerun takes minutes. The default, with no --only, runs every check.
 //
 // Playwright is not a dependency of this folder. Point PLAYWRIGHT_MODULE at an
 // existing install, or leave it unset if `playwright` resolves from here.
@@ -68,11 +71,44 @@ function serve() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, base: `http://127.0.0.1:${server.address().port}` })))
 }
 
-let failures = 0
-const report = (pass, name, detail = '') => { if (!pass) failures++; console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${!pass && detail ? ': ' + detail : ''}`) }
+let failures = 0, reported = 0
+const onlyAt = process.argv.indexOf('--only')
+if (onlyAt > 0 && !process.argv[onlyAt + 1]) throw new Error('--only needs a regular expression')
+const ONLY = onlyAt > 0 ? new RegExp(process.argv[onlyAt + 1], 'i') : null
+// With --only, a check whose name does not match is run and left unreported. `force` is for a group that stopped early, which is always reported.
+const report = (pass, name, detail = '', force = false) => {
+  if (ONLY && !force && !ONLY.test(name)) return
+  reported++
+  if (!pass) failures++
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${!pass && detail ? ': ' + detail : ''}`)
+}
+
+// ---- --only: which groups could report a check that matches
+// The groups are the functions below. A group that calls others lists them, so it runs when any of them could match. What a group can report is
+// read from its own text: the sentences it passes to t() and report(), as written (a ${...} in one stands for anything), so the list cannot fall
+// behind the checks. A regex that matches none of them skips the group. If nothing matches at all, the run fails.
+const CHILDREN = {
+  checkViewport: ['checkLoadState', 'checkCurrents3d', 'checkToggles', 'checkFlowToggles', 'checkMarchDirection', 'checkTerrain', 'checkTerrain3d', 'checkOverlays', 'checkCurrents', 'checkWind', 'checkSea', 'checkTides', 'checkSeafloor', 'checkMarine', 'checkPopups'],
+}
+const SOURCE = ONLY ? await readFile(fileURLToPath(import.meta.url), 'utf8') : ''
+const PREFIXES = ['', 'desktop: ', 'phone: ', 'hosts blocked: ']
+const mayReport = (fn, prefixes = PREFIXES) => {
+  const at = SOURCE.search(new RegExp(`^(?:async )?function ${fn}\\(`, 'm'))
+  if (at < 0) return true // not found: run it rather than skip it by mistake
+  const end = SOURCE.indexOf('\n}\n', at), text = SOURCE.slice(at, end < 0 ? undefined : end)
+  const sentences = [...text.matchAll(/'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g)].map((m) => m[1] ?? m[2]).filter((x) => (x.match(/ /g) || []).length >= 3)
+  const seen = sentences.flatMap((x) => [x.replace(/\$\{[^}]*\}/g, 'x'), ...x.split(/\$\{[^}]*\}/)])
+  return seen.some((x) => prefixes.some((p) => ONLY.test(p + x))) || (CHILDREN[fn] || []).some((child) => mayReport(child, prefixes))
+}
+// `prefix` narrows it to one viewport: the checks of the desktop run all start with "desktop: ", and the phone's with "phone: ".
+const wants = (fn, prefix) => !ONLY || mayReport(fn.name, prefix === undefined ? PREFIXES : ['', prefix])
+// Run a group. If a page call throws or times out, that is recorded as a failure and the next group still runs.
+async function guarded(label, fn) {
+  try { await fn() } catch (e) { report(false, `${label} stopped before it finished`, String(e?.message || e).split('\n')[0].slice(0, 300), true) }
+}
 
 export async function runBrowserChecks() {
-  failures = 0
+  failures = 0; reported = 0
   const shotsIdx = process.argv.indexOf('--shots')
   const shots = shotsIdx > 0 ? process.argv[shotsIdx + 1] : null
   if (shots) await mkdir(shots, { recursive: true })
@@ -81,16 +117,18 @@ export async function runBrowserChecks() {
   const browser = await chromium.launch()
   try {
     for (const [name, vp] of [['desktop', { width: 1280, height: 800 }], ['phone', { width: 390, height: 780 }]]) {
-      await checkViewport(browser, base, name, vp, shots)
+      if (wants(checkViewport, `${name}: `)) await guarded(`${name}: ${checkViewport.name}`, () => checkViewport(browser, base, name, vp, shots))
     }
-    await checkReducedMotion(browser, base)
-    await checkBasemapDown(browser, base, shots)
-    await checkOverlaysBlocked(browser, base)
+    if (wants(checkReducedMotion)) await guarded(checkReducedMotion.name, () => checkReducedMotion(browser, base))
+    if (wants(checkBasemapDown)) await guarded(checkBasemapDown.name, () => checkBasemapDown(browser, base, shots))
+    if (wants(checkOverlaysBlocked)) await guarded(checkOverlaysBlocked.name, () => checkOverlaysBlocked(browser, base))
   } finally {
     await browser.close()
     server.close()
   }
-  console.log(`\n${failures === 0 ? 'All browser checks passed.' : failures + ' browser check(s) failed.'}`)
+  const matched = reported
+  if (ONLY && !matched) report(false, `--only ${ONLY}: no check matched`, 'check the spelling against the names of an earlier run', true)
+  console.log(`\n${failures === 0 ? 'All browser checks passed' : failures + ' browser check(s) failed'}${ONLY ? ` (${matched} reported for --only ${ONLY})` : ''}.`)
   return failures
 }
 
@@ -120,8 +158,49 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
 async function checkViewport(browser, base, name, vp, shots) {
   const { ctx, page, problems, warnings, requests } = await openPage(browser, base, vp)
   const t = (s) => `${name}: ${s}`
-  // 3D terrain is on by default: the map tilts to 60 degrees once it is ready.
-  await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1, null, { timeout: 90000 }).catch(() => {})
+  const shot = shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null
+  // Each group is run on its own: one that throws or times out is recorded as a failure and the next one still runs.
+  const run = (fn, ...args) => (wants(fn, `${name}: `) ? guarded(t(fn.name), () => fn(...args)) : null)
+  try {
+    // 3D terrain is on by default: the map tilts to 60 degrees once it is ready.
+    await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1, null, { timeout: 90000 }).catch(() => {})
+    await run(checkLoadState, page, requests, t, name, shots)
+    await run(checkCurrents3d, page, requests, t, shot)
+
+    // The checks below run on the flat map. checkTerrain3d switches 3D terrain on and off again.
+    const flat = [checkToggles, checkFlowToggles, checkMarchDirection, checkTerrain, checkTerrain3d, checkOverlays, checkCurrents, checkWind, checkSea, checkTides, checkSeafloor, checkMarine, checkPopups]
+    if (flat.some((fn) => wants(fn, `${name}: `))) {
+      await guarded(t('turning 3D terrain off'), async () => {
+        await setBox(page, '#terrain3d', false)
+        await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 90000 })
+        await page.waitForTimeout(1500)
+      })
+    }
+    await run(checkToggles, page, t)
+    await run(checkFlowToggles, page, t)
+    if (name === 'desktop') await run(checkMarchDirection, page, t)
+    await run(checkTerrain, page, requests, t, shot)
+    await run(checkTerrain3d, page, requests, t, shot)
+    if (name === 'desktop') await run(checkOverlays, page, requests, t, shot)
+    await run(checkCurrents, page, requests, t, name, shot)
+    await run(checkWind, page, requests, t, name, shot)
+    await run(checkSea, page, requests, t, name, shot)
+    await run(checkTides, page, requests, t, name, shot)
+    await run(checkSeafloor, page, requests, t, name, shot)
+    await run(checkMarine, page, requests, t, name, shot)
+    await run(checkPopups, page, t, name, vp, shots)
+
+    // A 429 from GBIF (it refuses bursts) is reported on the page as a partial result, so it is not a page problem.
+    const hardProblems = problems.filter((p) => (!/openfreemap/i.test(p) || /HTTP|page error/.test(p)) && !/status of 429/.test(p))
+    report(hardProblems.length === 0, t('no page errors, console errors or failed requests'), hardProblems.slice(0, 3).join(' | '))
+    if (warnings.length) console.log(`      (${warnings.length} console warnings, listed once: ${[...new Set(warnings)].slice(0, 5).join(' || ')})`)
+  } finally {
+    await ctx.close()
+  }
+}
+
+// What the page looks like as it opens: the layers, their defaults, the boxes, the credit, the hosts it contacts and the 3D start.
+async function checkLoadState(page, requests, t, name, shots) {
   const info = await page.evaluate((OVERLAY_LAYERS) => {
     const m = window.__map
     const vis = (id) => m.getLayer(id) ? (m.getLayoutProperty(id, 'visibility') ?? 'visible') : 'absent'
@@ -174,13 +253,10 @@ async function checkViewport(browser, base, name, vp, shots) {
   }
 
   if (shots) await page.screenshot({ timeout: 120000, path: join(shots, `${name}-1-default.png`) })
-  await checkCurrents3d(page, requests, t, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
+}
 
-  // The checks below run on the flat map. checkTerrain3d switches 3D terrain on and off again.
-  await setBox(page, '#terrain3d', false)
-  await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 90000 })
-  await page.waitForTimeout(1500)
-
+// The water, ecosystem zone and watershed boxes.
+async function checkToggles(page, t) {
   // toggles
   const toggled = await page.evaluate(async () => {
     const m = window.__map
@@ -194,17 +270,10 @@ async function checkViewport(browser, base, name, vp, shots) {
   })
   report(toggled.hidden && toggled.shown, t('water toggle hides and restores creeks, lakes and wetlands'))
   report(toggled.bec && toggled.ws, t('BEC (with sea mask) and watershed toggles work'))
-  await checkFlowToggles(page, t)
-  if (name === 'desktop') await checkMarchDirection(page, t)
-  await checkTerrain(page, requests, t, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkTerrain3d(page, requests, t, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  if (name === 'desktop') await checkOverlays(page, requests, t, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkCurrents(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkWind(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkSea(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkTides(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkSeafloor(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
-  await checkMarine(page, requests, t, name, shots ? (label) => page.screenshot({ timeout: 120000, path: join(shots, `${name}-${label}.png`) }) : null)
+}
+
+// Popups of the example pin, a creek or watershed and a municipality, the credits panel and the Fit button, on the flat map.
+async function checkPopups(page, t, name, vp, shots) {
   await page.waitForTimeout(1200)
   if (shots) await page.screenshot({ timeout: 120000, path: join(shots, `${name}-2-bec-watersheds.png`) })
 
@@ -268,12 +337,6 @@ async function checkViewport(browser, base, name, vp, shots) {
   await page.waitForTimeout(1500)
   const center = await page.evaluate(() => window.__map.getCenter())
   report(Math.abs(center.lng - -123.43) < 0.1 && Math.abs(center.lat - 48.48) < 0.1, t('Fit to Greater Victoria returns to the home view'), JSON.stringify(center))
-
-  // A 429 from GBIF (it refuses bursts) is reported on the page as a partial result, so it is not a page problem.
-  const hardProblems = problems.filter((p) => (!/openfreemap/i.test(p) || /HTTP|page error/.test(p)) && !/status of 429/.test(p))
-  report(hardProblems.length === 0, t('no page errors, console errors or failed requests'), hardProblems.slice(0, 3).join(' | '))
-  if (warnings.length) console.log(`      (${warnings.length} console warnings, listed once: ${[...new Set(warnings)].slice(0, 5).join(' || ')})`)
-  await ctx.close()
 }
 
 // Set a checkbox and tell the page, the way a tap would.
@@ -508,7 +571,7 @@ async function checkCurrents3d(page, requests, t, shot) {
   await page.waitForTimeout(2500)
   await waitDrawn(page)
   const st = await currentsStats(page), view = await page.evaluate(() => ({ pitch: window.__map.getPitch(), terrain: !!window.__map.getTerrain() }))
-  report(st.running && view.terrain && Math.abs(view.pitch - 60) < 1 && drawnOverSea(st), t(`currents: with 3D terrain on (pitch 60${relief ? ', relief loaded' : ', relief not loaded in time'}) particles are drawn over the sea and not over land`), JSON.stringify({ ...st, view }))
+  report(st.running && view.terrain && Math.abs(view.pitch - 60) < 1 && drawnOverSea(st), t(`currents: with 3D terrain on (pitch 60${relief ? ', relief loaded' : ', relief not loaded in time'}) particles are drawn over the sea and not over land`), JSON.stringify({ ...st, view, status: await statusOf(page, 'currents') }))
   if (shot) await shot('currents-3d')
   // At the steepest tilt the top of the screen is sky. Above the horizon unproject answers with places behind the
   // camera, so nothing may be drawn there. The horizon is found from unproject itself: going up the middle of the
@@ -524,7 +587,7 @@ async function checkCurrents3d(page, requests, t, shot) {
     return { flip, formula: window.__overlays.flow.horizon() }
   })
   // The answers turn wild a little below the horizon row (the ground there is thousands of kilometres away), never above it.
-  report(edge.flip >= edge.formula - 2 && edge.flip - edge.formula <= 15 && steep.top >= edge.formula && drawnOverSea(steep), t('currents: at pitch 75 the horizon row used by the layer is where unproject starts answering with places behind the camera, and nothing is drawn above it'), JSON.stringify({ edge, top: steep.top, drawn: steep.drawn, land: steep.land }))
+  report(edge.flip >= edge.formula - 2 && edge.flip - edge.formula <= 15 && steep.top >= edge.formula && drawnOverSea(steep), t('currents: at pitch 75 the horizon row used by the layer is where unproject starts answering with places behind the camera, and nothing is drawn above it'), JSON.stringify({ edge, top: steep.top, drawn: steep.drawn, land: steep.land, on: steep.on, status: await statusOf(page, 'currents') }))
   if (shot) await shot('currents-3d-steep')
 
   // Wind in 3D: ticking it switches the currents off, the particles are drawn over the relief, and nothing is drawn above the horizon.
