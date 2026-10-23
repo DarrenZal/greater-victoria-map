@@ -38,12 +38,23 @@ export function distanceKm([x1, y1], [x2, y2]) {
 // third of the time a device spends drawing, however slow it is. A cost that is not a positive number gives no rest.
 export const flowRestMs = (costMs) => (Number.isFinite(costMs) && costMs > 0 ? Math.min(2 * costMs, 5000) : 0)
 
+// A time in Pacific time, whatever the visitor's own zone is, in the one style of this page: "Oct 21, 5:10 p.m. PDT". The browsers write the same
+// time differently for en-CA (Safari: "Oct 21 at 5:10 PM PDT"), so the text is put together here from the parts they give. `date`, `minutes` and
+// `zone` say which pieces are wanted.
+function pacificText(ms, { date = true, minutes = true, zone = true } = {}) {
+  const p = {}
+  for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', hour: 'numeric', ...(minutes ? { minute: '2-digit' } : {}), hour12: true, timeZoneName: 'short' }).formatToParts(ms)) p[x.type] = x.value
+  const period = { am: 'a.m.', pm: 'p.m.' }[String(p.dayPeriod).replace(/\./g, '').toLowerCase()] || p.dayPeriod
+  return `${date ? `${p.month} ${p.day}, ` : ''}${p.hour}${minutes ? `:${p.minute}` : ''} ${period}${zone ? ` ${p.timeZoneName}` : ''}`
+}
 // Pacific time, whatever the visitor's own zone is, e.g. "Oct 21, 5:10 p.m. PDT".
 export function pacificTime(isoText) {
   const t = Date.parse(isoText)
   if (!Number.isFinite(t)) return null
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(t)
+  return pacificText(t)
 }
+// The hour on a tide curve's axis, e.g. "6 a.m.".
+export const pacificHourLabel = (ms) => pacificText(ms, { date: false, minutes: false, zone: false })
 
 // ---- precipitation radar (ECCC GeoMet WMS)
 const mercator = (lng, lat) => [lng * 20037508.34 / 180, Math.log(Math.tan((90 + lat) * Math.PI / 360)) * 20037508.34 / Math.PI]
@@ -362,7 +373,7 @@ export function windUrl(part, time) {
 export function pacificHour(isoText) {
   const t = Date.parse(isoText)
   if (!Number.isFinite(t)) return null
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', hour: 'numeric', timeZoneName: 'short' }).format(t)
+  return pacificText(t, { minutes: false })
 }
 
 // A reader for the one kind of GeoTIFF the service sends: one band of 32-bit floats, not
@@ -913,9 +924,7 @@ export function curveGeometry(points, kind, { from, to, now, width = 260, height
 export function tideClock(ms, now = Date.now()) {
   const zone = { timeZone: 'America/Vancouver' }
   const day = (t) => new Intl.DateTimeFormat('en-CA', { ...zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(t)
-  const clock = new Intl.DateTimeFormat('en-CA', { ...zone, hour: 'numeric', minute: '2-digit' }).format(ms)
-  if (day(ms) === day(now)) return clock
-  return `${new Intl.DateTimeFormat('en-CA', { ...zone, month: 'short', day: 'numeric' }).format(ms)}, ${clock}`
+  return pacificText(ms, { date: day(ms) !== day(now), zone: false })
 }
 // Pacific clock hours that fall on a multiple of six (midnight, 6, noon, 18) between two times, for the axis.
 export function curveTicks(from, to) {

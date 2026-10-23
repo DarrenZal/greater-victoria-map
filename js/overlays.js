@@ -15,7 +15,7 @@ import {
   lifeUrls, normaliseLife,
   PLAY_HOURS, hourWindow, currentsCapabilitiesUrl, currentsTimes, currentsUrl, currentsGrid, windCapabilitiesUrl, windTimes, windUrl, windGrid,
   GEOMET_SLOW_LINE, GEOMET_RETRY_LINE, geometGet, geometWhy,
-  readGeoTiff, pacificHour, seaVelocity, currentReadout, compassWord,
+  readGeoTiff, pacificHour, pacificHourLabel, seaVelocity, currentReadout, compassWord,
   SCALARS, SCALE_TICKS, scalarCapabilitiesUrl, scalarTimes, scalarHour, nearestHour, scalarUrl, scalarGrid, scalarAt, scalarPicture, scalarText, rampGradient,
   tideStation, tideFeatures, tideUrls, normaliseTide, tideNext, tideCurve, curveGeometry, curvePath, curveTicks, tideClock, TIDE_STATIONS,
   IWLS_SPACING_MS, iwlsUrls, normaliseIwls,
@@ -777,7 +777,6 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   }
   const SVG = 'http://www.w3.org/2000/svg'
   const svgEl = (name, attrs = {}, text) => { const n = document.createElementNS(SVG, name); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v)); if (text != null) n.textContent = text; return n }
-  const clock = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', hour: 'numeric' })
   // The 24 hours of a curve from three hours ago, with "now" marked. For the gauge the observed levels are drawn over the predicted
   // ones up to now, and a small key below says which line is which.
   function tideSvg(station, tide, now) {
@@ -792,7 +791,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     for (const t of curveTicks(from, to)) {
       const x = g.x(t.ms)
       svg.append(svgEl('line', { x1: x, x2: x, y1: g.top, y2: g.bottom + 3, stroke: '#c9d0cb', 'stroke-width': 1 }))
-      svg.append(svgEl('text', { x, y: g.bottom + 13, 'text-anchor': 'middle', 'font-size': 10, fill: '#4a554f' }, clock.format(t.ms)))
+      svg.append(svgEl('text', { x, y: g.bottom + 13, 'text-anchor': 'middle', 'font-size': 10, fill: '#4a554f' }, pacificHourLabel(t.ms)))
     }
     svg.append(svgEl('path', { d: g.d, fill: 'none', stroke: '#1d5f86', 'stroke-width': 2, 'stroke-linejoin': 'round', class: 'predicted' }))
     if (gauge) svg.append(svgEl('path', { d: curvePath(seen, g), fill: 'none', stroke: '#1b1b1b', 'stroke-width': 2, 'stroke-linejoin': 'round', class: 'observed' }))

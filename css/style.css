@@ -87,7 +87,12 @@ body {
 /* The species picker of the whale and porpoise density layer. */
 #cetaceans-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px 30px; font-size: 13px; }
 #cetaceans-controls[hidden] { display: none; }
-#panel select { min-height: 44px; max-width: 100%; padding: 4px 8px; font: inherit; color: var(--ink); background: var(--ground); border: 1px solid var(--line); border-radius: 6px; }
+/* Safari draws a plain select 21 px tall whatever min-height says (found 2026-10-23 in WebKit), so it is drawn by the page, with a caret of two gradients. */
+#panel select {
+  min-height: 44px; max-width: 100%; padding: 4px 30px 4px 8px; font: inherit; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+  appearance: none; -webkit-appearance: none; background-color: var(--ground); background-repeat: no-repeat; background-size: 5px 5px, 5px 5px; background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+}
 #radar-legend { flex-basis: 100%; }
 #radar-legend summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; }
 #radar-legend img { display: block; max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); }

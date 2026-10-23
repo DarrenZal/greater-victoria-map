@@ -491,15 +491,28 @@ const phoneQuery = matchMedia('(max-width: 640px), (max-height: 500px)')
 function keepInView(popup) {
   const box = popup.getElement()?.querySelector('.maplibregl-popup-content')
   if (!box) return
-  const m = map.getContainer().getBoundingClientRect(), r = box.getBoundingClientRect()
-  const attrib = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect()
-  const top = banner.getBoundingClientRect().bottom + 8, bottom = Math.min(m.bottom - 8, attrib && attrib.height > 0 ? attrib.top - 8 : Infinity)
-  const left = m.left + 8, right = m.right - 8
+  box.style.maxHeight = '' // its own size, in case an earlier call made it shorter
+  const space = () => {
+    const m = map.getContainer().getBoundingClientRect(), attrib = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect()
+    return { top: banner.getBoundingClientRect().bottom + 8, bottom: Math.min(m.bottom - 8, attrib && attrib.height > 0 ? attrib.top - 8 : Infinity), left: m.left + 8, right: m.right - 8 }
+  }
+  const { top, bottom, left, right } = space(), r = box.getBoundingClientRect()
   let dy = 0, dx = 0
   if (r.top < top) dy = r.top - top // negative: the map moves down
   else if (r.bottom > bottom) dy = Math.min(r.bottom - bottom, r.top - top)
   if (r.left < left) dx = r.left - left; else if (r.right > right) dx = r.right - right
   if (dx || dy) map.panBy([Math.round(dx), Math.round(dy)], { duration: motionQuery.matches ? 0 : 250 })
+  // The map's bounds can stop the pan short (a place near the north edge of the area the map reaches, on a screen not much taller than the popup), and
+  // then the popup would still reach under the banner or past the bottom. It is made shorter, to the room it has, and scrolls inside.
+  let done = false
+  const fit = () => {
+    if (done) return
+    done = true
+    map.off('moveend', fit)
+    const room = space(), now = box.getBoundingClientRect(), over = Math.max(room.top - now.top, now.bottom - room.bottom, 0)
+    if (over > 1) box.style.maxHeight = `${Math.max(120, Math.floor(box.clientHeight - over))}px`
+  }
+  if (dx || dy) { map.once('moveend', fit); setTimeout(fit, 2000) } else fit()
 }
 for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })

@@ -846,16 +846,20 @@ const READOUT_SEA = [-123.20, 48.35] // open water east of Discovery Island
 const READOUT_MUNI = [-123.30, 48.39] // water inside the Oak Bay boundary and the Coastal Douglas-fir zone
 const READOUT_LAND = [-123.40, 48.45] // land
 async function readoutAt(page, [lng, lat]) {
-  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
-  const p = await page.evaluate(([x, y]) => { const q = window.__map.project([x, y]); return { x: Math.round(q.x), y: Math.round(q.y) } }, [lng, lat])
-  await page.mouse.click(p.x, p.y)
+  // A popup on a phone moves the map to bring itself into view, so each readout starts from the view of these checks, and what the grid says is read
+  // for the place that is clicked, before the map moves.
+  await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z }) }, [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
   await page.waitForTimeout(500)
-  const text = await page.evaluate(() => document.querySelector('.maplibregl-popup-content')?.innerText.replace(/\n+/g, ' ').replace(/×$/, '').trim() || null)
+  const p = await page.evaluate(([x, y]) => { const q = window.__map.project([x, y]); return { x: Math.round(q.x), y: Math.round(q.y) } }, [lng, lat])
   const want = await page.evaluate(async ([x, y]) => {
     const D = await import('/js/overlays-data.js'), g = window.__overlays.sea.shown?.grid
     const ll = window.__map.unproject([x, y]), uv = g && D.seaVelocity(g, ll.lng, ll.lat)
     return uv ? D.currentReadout(uv) : null
   }, [p.x, p.y])
+  await page.mouse.click(p.x, p.y)
+  await page.waitForTimeout(500)
+  const text = await page.evaluate(() => document.querySelector('.maplibregl-popup-content')?.innerText.replace(/\n+/g, ' ').replace(/×$/, '').trim() || null)
   return { text, want }
 }
 
@@ -1496,7 +1500,9 @@ async function checkSeafloor(page, requests, t, name, shot) {
   report(allNonna.length > 0 && allNonna.every((u) => NONNA_URL.test(u)), t('seafloor: nothing but tiles is asked of the Canadian Hydrographic Service (no capabilities, legend, feature info or depth requests from the page)'), String(allNonna.filter((u) => !NONNA_URL.test(u)).slice(0, 2)))
   const zs = tileZooms(startReq)
   report(zs.length > 0 && zs.every((z) => z <= 8), t('seafloor: with the elevation layers off, the only elevation tiles asked for are at zoom 8 or less, wherever the map is zoomed to'), JSON.stringify([...new Set(zs)].sort()))
-  report(requests.slice(startReq).filter((u) => !['s3.amazonaws.com', NONNA_HOST].includes(new URL(u).host) && !/openfreemap|127\.0\.0\.1/.test(new URL(u).host)).length === 0, t('seafloor: it contacts no outside host but the elevation tiles and the Canadian Hydrographic Service tile server'))
+  // Safari's engine lists the blob: addresses the page makes for tiles it has painted again. They stay in the browser, so they are not a host.
+  const stray = requests.slice(startReq).filter((u) => !/^(blob|data):/.test(u) && !['s3.amazonaws.com', NONNA_HOST].includes(new URL(u).host) && !/openfreemap|127\.0\.0\.1/.test(new URL(u).host))
+  report(stray.length === 0, t('seafloor: it contacts no outside host but the elevation tiles and the Canadian Hydrographic Service tile server'), [...new Set(stray.map((u) => u.slice(0, 90)))].slice(0, 4).join(' | '))
 
   // The key, the notice and the credits
   await page.evaluate(() => window.__map.jumpTo({ center: [-123.40, 48.40], zoom: 9.6 }))
@@ -1917,6 +1923,11 @@ async function checkPhonePopups(page, t, name, shot) {
     await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 30000 })
     await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {})
     await page.waitForTimeout(700)
+    // A click finds only what the map has drawn, and the first click after the boxes are ticked can come before Firefox has drawn the three layers.
+    await page.waitForFunction((spot) => {
+      const p = window.__map.project(spot), box = [[p.x - 8, p.y - 8], [p.x + 8, p.y + 8]]
+      return ['srkw-fill', 'rkw-fill', 'cetaceans-fill'].every((l) => window.__map.queryRenderedFeatures(box, { layers: [l] }).length > 0)
+    }, spot, { timeout: 30000 }).catch(() => {})
     return page.evaluate((spot) => { const p = window.__map.project(spot); return { x: p.x, y: p.y, centre: window.__map.getCenter().toArray() } }, spot)
   }
   const measure = () => page.evaluate((spot) => {
@@ -2161,6 +2172,8 @@ async function checkOverlaysBlocked(browser, base) {
   await setBox(page, 'input[data-overlay=alerts]', true)
   await waitStatus(page, 'alerts', 30000).catch(() => {})
   await page.evaluate(() => document.querySelector('#alerts-list details')?.setAttribute('open', ''))
+  // The area is drawn once the map has made its tile from the new data, which Safari's engine takes longer over than the status line does.
+  await page.waitForFunction(() => window.__map.getSource('ov-alerts') && window.__map.querySourceFeatures('ov-alerts').length > 0, null, { timeout: 30000 }).catch(() => {})
   const shown = await page.evaluate(() => ({ state: document.getElementById('status-alerts').dataset.state, text: document.querySelector('#alerts-list .alert-text')?.textContent, title: document.querySelector('#alerts-list summary')?.textContent, count: window.__map.getSource('ov-alerts') ? window.__map.querySourceFeatures('ov-alerts').length : 0 }))
   report(shown.state === 'ok' && shown.text === text && shown.title.includes('orange warning') && shown.count > 0, t('an alert is shown word for word as issued, with its area drawn on the map'), JSON.stringify(shown))
   // the static layers need no outside service
