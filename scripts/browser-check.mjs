@@ -1816,6 +1816,8 @@ async function checkOverlaysBlocked(browser, base) {
   for (const h of LIVE_HOSTS) await page.route(`https://${h}/**`, (r) => r.abort())
   await page.goto(base + '/index.html?test', { waitUntil: 'load' })
   await page.waitForFunction(() => window.__ready, null, { timeout: 90000 })
+  // 3D terrain is on at load, so the map tilts to 60 degrees at once. A busy machine draws a frame in a second or more, so wait for it to end.
+  await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1 && !window.__map.isMoving(), null, { timeout: 150000 }).catch(() => {})
   await page.waitForTimeout(1500)
   await page.evaluate(() => { document.getElementById('panel-details').open = true })
   const t = (s) => `hosts blocked: ${s}`
@@ -1851,7 +1853,7 @@ async function checkOverlaysBlocked(browser, base) {
   const iwlsBefore = hostCount(requests, IWLS_HOST)
   const notices = await page.evaluate(async () => { const m = await import('/js/overlays-data.js'); return { iwls: m.IWLS_NOTICE, nonna: m.NONNA_NOTICE } })
   await page.evaluate(() => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: [-123.370828, 48.424363], zoom: 11 }) })
-  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 90000 }) // 3D terrain is on here, and one frame can take seconds on a busy machine
   await page.waitForTimeout(2500)
   const gaugeAt = await page.evaluate(() => { const q = window.__map.project([-123.370828, 48.424363]); return { x: Math.round(q.x), y: Math.round(q.y) } })
   await page.waitForFunction(([x, y]) => window.__map.queryRenderedFeatures([[x - 8, y - 8], [x + 8, y + 8]], { layers: ['tides-dot'] }).length > 0, [gaugeAt.x, gaugeAt.y], { timeout: 20000 }).catch(() => {})
@@ -1889,9 +1891,11 @@ async function checkOverlaysBlocked(browser, base) {
   const fn = floorSamples.land.length, fStable = floorPts.map((_, i) => colourDiff(floorOff1[i], floorOff2[i]) <= 3)
   const fSea = floorSamples.sea.map((_, i) => fn + i).filter((i) => fStable[i]), fLand = floorSamples.land.map((_, i) => i).filter((i) => fStable[i])
   const fChanged = fSea.filter((i) => colourDiff(floorOn[i], floorOff1[i]) > 12 && lum(floorOn[i]) < lum(floorOff1[i]) && floorOn[i][2] >= floorOn[i][0]).length
+  // Between runs on 2026-10-22, 0 to 6 of about 1,090 inland places came out different (0 in some runs), so this allows the 1% that the
+  // marine layers' check allows. A tint on the land would move far more of them.
   const fLandBad = fLand.filter((i) => colourDiff(floorOn[i], floorOff1[i]) > 8 && colourDiff(floorOn2[i], floorOff1[i]) > 8), fLandChanged = fLandBad.length
   console.log(`      (${t(`seafloor: ${fChanged} of ${fSea.length} water places coloured by ETOPO1 alone, ${fLandChanged} of ${fLand.length} inland places changed, ${hostCount(requests, NONNA_HOST) - nonnaBefore} tile requests refused`)})`)
-  report(floorStatus.state === 'fail' && !floorStatus.hidden && floorStatus.text === 'The Canadian Hydrographic Service’s depths could not be loaded just now, so the coarser ETOPO1 depths from NOAA are shown. Try again later.' && hostCount(requests, NONNA_HOST) > nonnaBefore && floorVis.every((v) => v === 'visible') && fSea.length > 40 && fChanged > 0.4 * fSea.length && fLand.length > 40 && fLandChanged === 0, t('seafloor: with the Canadian Hydrographic Service blocked, its tiles are asked for, the status line says plainly that its depths could not be loaded and that the coarser ETOPO1 depths are shown, and the sea is still coloured by ETOPO1 (darker and bluer) with the land left alone'), JSON.stringify({ floorStatus, fChanged, sea: fSea.length, fLandChanged, land: fLand.length, places: fLandBad.slice(0, 6).map((i) => [floorPts[i], floorOff1[i], floorOn[i]]) }))
+  report(floorStatus.state === 'fail' && !floorStatus.hidden && floorStatus.text === 'The Canadian Hydrographic Service’s depths could not be loaded just now, so the coarser ETOPO1 depths from NOAA are shown. Try again later.' && hostCount(requests, NONNA_HOST) > nonnaBefore && floorVis.every((v) => v === 'visible') && fSea.length > 40 && fChanged > 0.4 * fSea.length && fLand.length > 40 && fLandChanged <= 0.01 * fLand.length, t('seafloor: with the Canadian Hydrographic Service blocked, its tiles are asked for, the status line says plainly that its depths could not be loaded and that the coarser ETOPO1 depths are shown, and the sea is still coloured by ETOPO1 (darker and bluer) with the land left alone (no more than 1% of the inland places change)'), JSON.stringify({ floorStatus, fChanged, sea: fSea.length, fLandChanged, land: fLand.length, places: fLandBad.slice(0, 6).map((i) => [floorPts[i], floorOff1[i], floorOn[i]]) }))
   report(errors.length === 0, t('no page errors from the failed requests'), errors.join(' | '))
   // an alert is passed on exactly as the service issued it
   const text = 'WIND WARNING IN EFFECT\n\nSouthwest winds 70 km/h gusting to 90.\n\nThis is a test text. It must not be reworded.'
