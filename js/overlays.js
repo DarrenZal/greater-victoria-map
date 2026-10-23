@@ -511,9 +511,12 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   // While Play runs, the flow is blended from the hour shown to the one after it over the time until the next step, so it changes smoothly
   // and does not jump each hour. The hour after is fetched at the start of the step, no earlier, and the blend starts when it is in.
   async function blendToNext(id) {
-    const { run } = HOURLY[id], at = run.at, stepAt = (run.stepAt = performance.now())
+    const { run } = HOURLY[id], at = run.at, stepAt = (run.stepAt = performance.now()), next = run.hours[(at + 1) % run.hours.length]
+    // A sea temperature or saltiness picture follows the currents, so its grid for the next hour is asked for now too, and is in when the step comes.
+    const kind = id === 'currents' ? activeScalar() : null
+    if (kind && scalar.times.length) scalarGridFor(kind, nearestHour(scalar.times, next), state[kind].abort?.signal).catch(() => {})
     try {
-      const grid = await hourlyGrid(id, run.hours[(at + 1) % run.hours.length], state[id].abort?.signal)
+      const grid = await hourlyGrid(id, next, state[id].abort?.signal)
       if (!run.playing || !state[id].on || run.at !== at || run.stepAt !== stepAt) return // paused, unticked or stepped on while it was coming
       flow.blend(grid, HOUR_STEP_MS - (performance.now() - stepAt))
     } catch { /* the step that wants this hour says so if it cannot be had */ }

@@ -254,10 +254,11 @@ export const GEOMET_SLOW_LINE = 'Environment Canada’s server is slow to answer
 export const GEOMET_RETRY_LINE = 'Environment Canada’s server did not answer. Trying once more.'
 const RETRY_STATUS = [408, 425, 429, 500, 502, 503, 504]
 const geometError = (message, reason, status) => Object.assign(new Error(message), { reason, status })
-// What the status line adds to a failure: nothing for a failure that is not the server's, or a plain sentence.
+// What the status line adds to a failure: nothing for a failure that is not the server's, or a plain sentence. A reply of the wrong kind
+// is the server's own error too: out of range, or while a new model run is being put in place, it answers HTTP 200 with a description of the error.
 export function geometWhy(e) {
   if (e?.reason === 'down') return ' Environment Canada’s server is not answering.'
-  if (e?.reason === 'error') return ' Environment Canada’s server sent an error.'
+  if (e?.reason === 'error' || e?.reason === 'wrong') return ' Environment Canada’s server sent an error.'
   return ''
 }
 // The reply to `url` as `as` ('text', 'arrayBuffer' or 'blob'). `say('slow')` is called once if the first try is slow, and `say('retry')`

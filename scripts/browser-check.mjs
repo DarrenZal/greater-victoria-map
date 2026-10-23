@@ -2038,12 +2038,13 @@ async function checkGeomet(browser, base) {
   const CORS = { 'access-control-allow-origin': '*' }
   const counts = { caps: 0, grid: 0 }
   const played = new Map() // url -> the real reply, kept the first time it is asked for
-  let plan = () => 'real' // what to do with a request: 'real', '503', 'abort' or 'hold'
+  let plan = () => 'real' // what to do with a request: 'real', '503', 'abort', 'hold' or 'xml'
   await page.route('https://geo.weather.gc.ca/**', async (route) => {
     const u = route.request().url(), caps = u.includes('GetCapabilities') && u.includes('SeaWaterVelocity'), grid = u.includes('service=WCS') && u.includes('SeaWaterVelocity')
     if (!caps && !grid) { await route.continue(); return }
     const n = ++counts[caps ? 'caps' : 'grid'], what = plan(caps ? 'caps' : 'grid', n)
     if (what === '503') await route.fulfill({ status: 503, headers: CORS, body: 'busy' })
+    else if (what === 'xml') await route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/xml' }, body: '<ServiceExceptionReport><ServiceException code="NoMatch" locator="time">Unable to access file.</ServiceException></ServiceExceptionReport>' })
     else if (what === 'abort') await route.abort()
     else {
       if (what === 'hold') await sleep(7000)
@@ -2091,6 +2092,11 @@ async function checkGeomet(browser, base) {
   report(d.st.state === 'fail' && d.caps === 2 && d.st.text === 'Sea currents could not be loaded just now. Environment Canada’s server is not answering. Try again later.', t('currents: a server that never answers is asked twice, then the failure line says it is not answering'), JSON.stringify({ st: d.st, caps: d.caps }))
   const none = await page.evaluate(() => ({ canvas: !!document.getElementById('flow-canvas'), play: document.getElementById('currents-play').disabled, on: window.__overlays.flow.stats().on }))
   report(!none.canvas && none.play && !none.on, t('currents: after the failure no canvas is on the map and Play is disabled'), JSON.stringify(none))
+  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // The server's own description of an error, as it sends one for a missing file or an hour out of range (HTTP 200 with XML): not tried twice, and said to be the server's error.
+  const f = await run((kind) => (kind === 'grid' ? 'xml' : 'real'))
+  report(f.st.state === 'fail' && f.grid === 2 && f.st.text === 'Sea currents could not be loaded just now. Environment Canada’s server sent an error. Try again later.', t('currents: an answer of the wrong kind (the server\'s own description of an error, sent with HTTP 200) is not tried twice, and the failure line says the server sent an error'), JSON.stringify({ st: f.st, grid: f.grid }))
   await setBox(page, 'input[data-overlay=currents]', false)
 
   // Unticked between the two tries: the second try is never made, and the status line goes away.
