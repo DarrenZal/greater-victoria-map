@@ -88,11 +88,13 @@ const report = (pass, name, detail = '', force = false) => {
 // read from its own text: the sentences it passes to t() and report(), as written (a ${...} in one stands for anything), so the list cannot fall
 // behind the checks. A regex that matches none of them skips the group. If nothing matches at all, the run fails.
 const CHILDREN = {
-  checkViewport: ['checkLoadState', 'checkCurrents3d', 'checkToggles', 'checkFlowToggles', 'checkMarchDirection', 'checkTerrain', 'checkTerrain3d', 'checkOverlays', 'checkCurrents', 'checkWind', 'checkSea', 'checkTides', 'checkSeafloor', 'checkMarine', 'checkPopups'],
+  checkViewport: ['checkLoadState', 'checkCurrents3d', 'checkToggles', 'checkFlowToggles', 'checkMarchDirection', 'checkTerrain', 'checkTerrain3d', 'checkOverlays', 'checkCurrents', 'checkWind', 'checkBlend', 'checkSea', 'checkTides', 'checkSeafloor', 'checkMarine', 'checkNight', 'checkPopups'],
 }
 const SOURCE = ONLY ? await readFile(fileURLToPath(import.meta.url), 'utf8') : ''
-const PREFIXES = ['', 'desktop: ', 'phone: ', 'hosts blocked: ']
-const mayReport = (fn, prefixes = PREFIXES) => {
+// What the name of a check starts with, for each group that is not run on both screen sizes. The others start with "desktop: " or "phone: ".
+const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
+const VIEWPORTS = ['desktop: ', 'phone: ']
+const mayReport = (fn, prefixes = PREFIXES[fn] || VIEWPORTS) => {
   const at = SOURCE.search(new RegExp(`^(?:async )?function ${fn}\\(`, 'm'))
   if (at < 0) return true // not found: run it rather than skip it by mistake
   const end = SOURCE.indexOf('\n}\n', at), text = SOURCE.slice(at, end < 0 ? undefined : end)
@@ -101,10 +103,11 @@ const mayReport = (fn, prefixes = PREFIXES) => {
   return seen.some((x) => prefixes.some((p) => ONLY.test(p + x))) || (CHILDREN[fn] || []).some((child) => mayReport(child, prefixes))
 }
 // `prefix` narrows it to one viewport: the checks of the desktop run all start with "desktop: ", and the phone's with "phone: ".
-const wants = (fn, prefix) => !ONLY || mayReport(fn.name, prefix === undefined ? PREFIXES : ['', prefix])
+const wants = (fn, prefix) => !ONLY || mayReport(fn.name, prefix === undefined ? undefined : [prefix])
 // Run a group. If a page call throws or times out, that is recorded as a failure and the next group still runs.
 async function guarded(label, fn) {
-  try { await fn() } catch (e) { report(false, `${label} stopped before it finished`, String(e?.message || e).split('\n')[0].slice(0, 300), true) }
+  // Playwright's own message carries a log of what it was waiting for (for example the element that covered a button), so more than its first line is kept.
+  try { await fn() } catch (e) { report(false, `${label} stopped before it finished`, String(e?.message || e).split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 8).join(' | ').slice(0, 900), true) }
 }
 
 export async function runBrowserChecks() {
@@ -122,6 +125,7 @@ export async function runBrowserChecks() {
     if (wants(checkReducedMotion)) await guarded(checkReducedMotion.name, () => checkReducedMotion(browser, base))
     if (wants(checkBasemapDown)) await guarded(checkBasemapDown.name, () => checkBasemapDown(browser, base, shots))
     if (wants(checkOverlaysBlocked)) await guarded(checkOverlaysBlocked.name, () => checkOverlaysBlocked(browser, base))
+    if (wants(checkGeomet)) await guarded(checkGeomet.name, () => checkGeomet(browser, base))
   } finally {
     await browser.close()
     server.close()
@@ -150,7 +154,8 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
   page.on('response', (r) => { if (r.url().startsWith(base) && r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url().slice(0, 120)}`) })
   if (blockTiles) await page.route('https://tiles.openfreemap.org/**', (r) => r.abort())
   await page.goto(base + '/index.html?test', { waitUntil: 'load' })
-  await page.waitForFunction(() => window.__ready && window.__map.areTilesLoaded(), null, { timeout: 45000 })
+  // The page is slow to come up when the machine is busy (load 100 to 200 on 22 October), so this waits long enough for it.
+  await page.waitForFunction(() => window.__ready && window.__map.areTilesLoaded(), null, { timeout: 180000 })
   await page.waitForTimeout(2000)
   return { ctx, page, problems, warnings, requests }
 }
@@ -168,7 +173,7 @@ async function checkViewport(browser, base, name, vp, shots) {
     await run(checkCurrents3d, page, requests, t, shot)
 
     // The checks below run on the flat map. checkTerrain3d switches 3D terrain on and off again.
-    const flat = [checkToggles, checkFlowToggles, checkMarchDirection, checkTerrain, checkTerrain3d, checkOverlays, checkCurrents, checkWind, checkSea, checkTides, checkSeafloor, checkMarine, checkPopups]
+    const flat = [checkToggles, checkFlowToggles, checkMarchDirection, checkTerrain, checkTerrain3d, checkOverlays, checkCurrents, checkWind, checkBlend, checkSea, checkTides, checkSeafloor, checkMarine, checkNight, checkPopups]
     if (flat.some((fn) => wants(fn, `${name}: `))) {
       await guarded(t('turning 3D terrain off'), async () => {
         await setBox(page, '#terrain3d', false)
@@ -184,10 +189,12 @@ async function checkViewport(browser, base, name, vp, shots) {
     if (name === 'desktop') await run(checkOverlays, page, requests, t, shot)
     await run(checkCurrents, page, requests, t, name, shot)
     await run(checkWind, page, requests, t, name, shot)
+    if (name === 'desktop') await run(checkBlend, page, requests, t, name, shot)
     await run(checkSea, page, requests, t, name, shot)
     await run(checkTides, page, requests, t, name, shot)
     await run(checkSeafloor, page, requests, t, name, shot)
     await run(checkMarine, page, requests, t, name, shot)
+    await run(checkNight, page, requests, t, name, shot)
     await run(checkPopups, page, t, name, vp, shots)
 
     // A 429 from GBIF (it refuses bursts) is reported on the page as a partial result, so it is not a page problem.
@@ -526,7 +533,7 @@ function watchWcs(page) {
 }
 // How readable the particles are: the contrast, against the sea colour, of each pixel drawn with at least half
 // opacity (a pale drawing on the pale sea scores 1.2 to 1.9, a dark one 3 or more).
-const canvasContrast = (page) => page.evaluate((SEA) => {
+const canvasContrast = (page, sea = SEA_COLOUR) => page.evaluate((SEA) => {
   const c = document.getElementById('flow-canvas')
   if (!c) return null
   const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
@@ -540,7 +547,7 @@ const canvasContrast = (page) => page.evaluate((SEA) => {
   }
   ratios.sort((x, y) => x - y)
   return { n: ratios.length, median: ratios[Math.floor(ratios.length / 2)] ?? 0, p10: ratios[Math.floor(ratios.length * 0.1)] ?? 0 }
-}, SEA_COLOUR)
+}, sea)
 // Drawn pixels over the basemap's water and over land, told apart by asking the map what it shows in each 24 px square.
 const drawnOverWaterAndLand = (page) => page.evaluate(() => {
   const m = window.__map, c = document.getElementById('flow-canvas')
@@ -927,12 +934,21 @@ async function checkWind(page, requests, t, name, shot) {
   await panel(panelWas)
 }
 
-// ---- sea temperature and saltiness (one picture for each hour, from the same model as the currents)
+// ---- sea temperature and saltiness (the model's numbers for each hour, coloured by the page, from the same model as the currents)
 const SCALAR_LAYER = { temperature: 'SeaWaterPotentialTemp', salinity: 'SeaWaterSalinity' }
 const SCALAR_WORD = { temperature: 'sea temperature', salinity: 'sea saltiness' }
+const SCALARS_UNIT = { temperature: '°C', salinity: 'psu' }
 const scalarStatus = (kind) => new RegExp(`^Modelled ${SCALAR_WORD[kind]} for [A-Z][a-z]{2} \\d{1,2}, \\d{1,2}\\s[ap]\\.m\\. P[SD]T, Environment Canada’s CIOPS Salish Sea model \\(experimental, not for navigation\\)\\.$`)
-// The size of the picture of the hour shown, in bytes. Asked for again here, because the browser tool reads a picture reply as empty.
-const pictureBytes = (page, kind) => page.evaluate(async (kind) => { const D = await import('/js/overlays-data.js'), time = window.__overlays.scalar.shown.time; return (await (await fetch(D.scalarImageUrl(kind, time))).blob()).size }, kind)
+// The number the service itself gives for a place and an hour (a GetFeatureInfo request of the check's own, which the page does not make), in
+// degrees Celsius or psu, or null where it has none.
+const serviceSays = (page, kind, [lng, lat], time) => page.evaluate(async ([kind, lng, lat, time]) => {
+  const layer = { temperature: 'CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m', salinity: 'CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m' }[kind], d = 0.01
+  const p = new URLSearchParams({ service: 'WMS', version: '1.3.0', request: 'GetFeatureInfo', layers: layer, query_layers: layer, crs: 'EPSG:4326', bbox: [lat - d, lng - d, lat + d, lng + d].map((x) => x.toFixed(5)).join(','), width: '3', height: '3', i: '1', j: '1', info_format: 'application/json', feature_count: '1', time })
+  const raw = (await (await fetch(`https://geo.weather.gc.ca/geomet?${p}`)).json())?.features?.[0]?.properties?.value
+  return typeof raw === 'number' && raw > 0 ? (kind === 'temperature' ? raw - 273.15 : raw) : null
+}, [kind, lng, lat, time])
+// Places across the sea, for comparing the picture and the readout with the service.
+const SEA_PLACES = [[-123.2, 48.35], [-123.5, 48.25], [-123.1, 48.6], [-123.3, 48.5], [-122.95, 48.4], [-123.6, 48.3], [-123.35, 48.15], [-123.0, 48.7]]
 // How much of the sea picture lies over the basemap's water and over its land, asked of the map in a grid of squares.
 const pictureOverLand = (page) => page.evaluate(() => {
   const m = window.__map, c = window.__overlays.scalar.canvas, img = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
@@ -961,12 +977,6 @@ async function seaClick(page, [lng, lat]) {
   const at = await page.evaluate(([x, y]) => { const q = window.__map.unproject([x, y]); return [q.lng, q.lat] }, [p.x, p.y])
   return { text, at }
 }
-// What the service itself says at a place, asked for the way the page asks, as the page would write it.
-const serviceSays = (page, kind, [lng, lat], time) => page.evaluate(async ([kind, lng, lat, time]) => {
-  const D = await import('/js/overlays-data.js'), v = D.scalarReading(kind, await (await fetch(D.scalarInfoUrl(kind, lng, lat, time))).json())
-  return v == null ? null : D.scalarText(kind, v)
-}, [kind, lng, lat, time])
-
 async function checkSea(page, requests, t, name, shot) {
   const panelWas = await page.evaluate(() => document.getElementById('panel-details').open)
   const panel = (open) => page.evaluate((o) => { document.getElementById('panel-details').open = o }, open)
@@ -976,63 +986,75 @@ async function checkSea(page, requests, t, name, shot) {
   await setBox(page, '#flow', false)
   const wide = page.viewportSize().width >= 700
   const start = requests.length
-  let from = start // requests are counted from here: moved on after the key check, which asks the service for pictures of its own
+  let from = start // requests are counted from here: moved on after the key check, which asks the service for numbers of its own
   const mine = (kind) => requests.slice(from).filter((u) => u.includes(SCALAR_LAYER[kind]))
-  const maps = (kind) => mine(kind).filter((u) => u.includes('request=GetMap'))
+  const grids = (kind) => mine(kind).filter((u) => u.includes('request=GetCoverage'))
+  const images = watchWcs(page) // the grids as they arrive, with their sizes
   const timesOf = (list) => [...new Set(list.map((u) => new URL(u).searchParams.get('time')))].sort()
   const st = (kind) => statusOf(page, kind)
   const ui = (kind) => page.evaluate((kind) => ({ box: document.querySelector(`input[data-overlay=${kind}]`).checked, status: !document.getElementById('status-' + kind).hidden, key: !document.getElementById(kind + '-key').hidden, note: !document.getElementById(kind + '-note').hidden, credit: window.__map.getLayoutProperty(kind + '-credit', 'visibility'), picture: window.__map.getLayer('sea-scalar') ? window.__map.getLayoutProperty('sea-scalar', 'visibility') : 'absent', layers: window.__map.getStyle().layers.filter((l) => l.id === 'sea-scalar').length }), kind)
   report(mine('temperature').length === 0 && mine('salinity').length === 0, t('sea temperature and saltiness: nothing is requested for either before its box is ticked'))
 
-  // Sea temperature on: one description of the hours and one picture, drawn under the creeks and parks and over the basemap's sea
+  // Sea temperature on: one description of the hours and one grid of numbers, drawn as a picture under the creeks and parks and over the basemap's sea
   await setBox(page, 'input[data-overlay=temperature]', true)
   await waitStatus(page, 'temperature').catch(() => {})
   await page.waitForFunction(() => !!window.__overlays.scalar.shown, null, { timeout: 30000 }).catch(() => {})
   await page.waitForTimeout(1500)
   const st0 = await st('temperature'), caps = mine('temperature').filter((u) => u.includes('GetCapabilities'))
   report(st0.state === 'ok' && scalarStatus('temperature').test(st0.text), t('sea temperature: the status line names the model hour in Pacific time and the model, and says experimental and not for navigation'), st0.text)
-  report(caps.length === 1 && caps[0].includes('LAYER=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && maps('temperature').length === 1 && maps('temperature')[0].includes('styles=SEA_TEMPSURF-DEFAULT') && maps('temperature')[0].includes('layers=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && mine('salinity').length === 0 && requests.slice(start).filter((u) => /CIOPS|HRDPS/.test(u) && !u.includes(SCALAR_LAYER.temperature)).length === 0, t('sea temperature: ticking requests the hours on offer once and one picture of one hour, and nothing else'), JSON.stringify({ caps: caps.length, maps: maps('temperature').map((u) => u.slice(60, 140)) }))
-  const bytesT = await pictureBytes(page, 'temperature')
-  console.log(`      (${t(`sea temperature: one hour is one picture of ${bytesT.toLocaleString('en-CA')} bytes`)})`)
-  report(bytesT > 5e3 && bytesT < 80e3, t('sea temperature: one hour is one picture of under 80 KB'), String(bytesT))
+  report(caps.length === 1 && caps[0].includes('LAYER=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && grids('temperature').length === 1 && grids('temperature')[0].includes('coverageid=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && grids('temperature')[0].includes('scalefactor=0.5') && !mine('temperature').some((u) => /GetMap|GetFeatureInfo/.test(u)) && mine('salinity').length === 0 && requests.slice(start).filter((u) => /CIOPS|HRDPS/.test(u) && !u.includes(SCALAR_LAYER.temperature)).length === 0, t('sea temperature: ticking requests the hours on offer once and one grid of one hour (a coverage, not a picture), and nothing else'), JSON.stringify({ caps: caps.length, grids: grids('temperature').map((u) => u.slice(60, 160)) }))
+  const gotT = (await images.settled()).filter((x) => x.url.includes(SCALAR_LAYER.temperature))
+  console.log(`      (${t(`sea temperature: one hour is one grid of ${gotT.map((x) => x.bytes.toLocaleString('en-CA')).join(' + ')} bytes`)})`)
+  report(gotT.length === 1 && gotT[0].bytes > 50e3 && gotT[0].bytes < 100e3, t('sea temperature: one hour is one grid of about 73 KB, the size of one component of the sea currents'), JSON.stringify(gotT.map((x) => x.bytes)))
   const a = await page.evaluate(() => {
     const m = window.__map, ids = m.getStyle().layers.map((l) => l.id), i = ids.indexOf('sea-scalar'), sc = window.__overlays.scalar
     const wl = m.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))
     const d = sc.canvas.getContext('2d').getImageData(0, 0, sc.canvas.width, sc.canvas.height).data
     let drawn = 0
     for (let k = 3; k < d.length; k += 4) if (d[k] > 0) drawn++
-    return { i, order: { water: ids.indexOf(wl.id), becMask: ids.indexOf('bec-sea-mask'), ecoLine: ids.indexOf('ecoregions-line'), watersheds: ids.indexOf('watersheds-fill'), streams: ids.indexOf('streams'), parks: ids.indexOf('parks-local'), pins: ids.indexOf('pins'), label: ids.indexOf('muni-label') }, opacity: m.getPaintProperty('sea-scalar', 'raster-opacity'), type: m.getLayer('sea-scalar')?.type, source: m.getSource('sea-scalar')?.type, share: drawn / (sc.canvas.width * sc.canvas.height), size: [sc.canvas.width, sc.canvas.height], shown: sc.shown, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent,
+    return { i, order: { water: ids.indexOf(wl.id), becMask: ids.indexOf('bec-sea-mask'), ecoLine: ids.indexOf('ecoregions-line'), watersheds: ids.indexOf('watersheds-fill'), streams: ids.indexOf('streams'), parks: ids.indexOf('parks-local'), pins: ids.indexOf('pins'), label: ids.indexOf('muni-label') }, opacity: m.getPaintProperty('sea-scalar', 'raster-opacity'), type: m.getLayer('sea-scalar')?.type, source: m.getSource('sea-scalar')?.type, share: drawn / (sc.canvas.width * sc.canvas.height), size: [sc.canvas.width, sc.canvas.height], shown: sc.shown && { kind: sc.shown.kind, time: sc.shown.time }, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent,
       key: { gradient: getComputedStyle(document.getElementById('temperature-bar')).backgroundImage.startsWith('linear-gradient'), ticks: [...document.querySelectorAll('#temperature-ticks span')].map((x) => x.textContent).join(' '), title: document.querySelector('#temperature-key .scale-title').textContent }, note: document.getElementById('temperature-note').textContent }
   })
   const o = a.order
   report(a.type === 'raster' && a.source === 'image' && a.opacity <= 0.7 && a.i > o.water && a.i > o.becMask && a.i > o.ecoLine && a.i < o.watersheds && a.i < o.streams && a.i < o.parks && a.i < o.pins && a.i < o.label && a.attrib.includes(ECCC_STATEMENT), t('sea temperature: the picture is a raster at 0.7 opacity or less, above the basemap\'s sea and the sea masks and under the creeks, parks, boundaries and labels, with the Environment Canada credit on the map'), JSON.stringify({ ...a, attrib: undefined, key: undefined, note: undefined }))
-  report(a.shown?.kind === 'temperature' && a.size[0] === 720 && a.size[1] === 767 && a.share > 0.35 && a.share < 0.55, t('sea temperature: the picture is drawn at 720 x 767 and about 46% of it is model sea (the rest is land and open ocean the model leaves out)'), JSON.stringify({ share: a.share, size: a.size }))
-  report(a.key.gradient && a.key.ticks === '6 8 10 12 14 16 18' && a.key.title === 'Surface water, °C' && /^Water 0\.5 m down\./.test(a.note), t('sea temperature: the key is a gradient in degrees Celsius (not kelvin) with ticks from 6 to 18, and the note is shown'), JSON.stringify(a.key))
+  report(a.shown?.kind === 'temperature' && a.size[0] === 480 && a.size[1] === 511 && a.share > 0.35 && a.share < 0.55, t('sea temperature: the picture is drawn at 480 x 511 and about 47% of it is model sea (the rest is land and open ocean the model leaves out)'), JSON.stringify({ share: a.share, size: a.size }))
+  report(a.key.gradient && a.key.ticks === '6 8 10 12 14 16 18 20' && a.key.title === 'Surface water, °C' && /^Water 0\.5 m down, coloured here from the model’s numbers on one scale from 6 to 20 °C/.test(a.note), t('sea temperature: the key is a gradient in degrees Celsius (not kelvin) with ticks from 6 to 20, and the note is shown'), JSON.stringify(a.key))
   const over = await pictureOverLand(page)
   console.log(`      (${t(`sea temperature: in this view ${over.sea} sampled places are sea under the picture, ${over.land} are land under it and ${over.bare} are sea with none`)})`)
   report(over.sea > 200 && over.land / (over.sea + over.land) < 0.1 && over.bare / (over.sea + over.bare) < 0.1, t('sea temperature: under one place in ten of the picture lies land, and nearly all the sea in view is covered (the model\'s 500 m cells run a little over the coast)'), JSON.stringify(over))
   if (shot) { await page.evaluate(() => document.getElementById('temperature-key').scrollIntoView({ block: 'center' })); await shot('sea-temperature-panel'); if (!wide) await panel(false); await shot('sea-temperature'); await panel(true) }
 
-  // The key is true: at places across the sea, the colour the service draws is the colour the key gives for the value the service reports there
+  // The key is true. The page colours the picture from its own grid, so at places across the sea each pixel is the ramp's colour for the number the
+  // page reads there, and that number is the one the service itself gives for the place. Two comparisons: the picture with the page's numbers, and the page's numbers with the service's.
   if (wide) {
     for (const kind of ['temperature', 'salinity']) {
       if (kind === 'salinity') { await setBox(page, 'input[data-overlay=salinity]', true); await waitStatus(page, 'salinity').catch(() => {}); await page.waitForFunction(() => window.__overlays.scalar.shown?.kind === 'salinity', null, { timeout: 30000 }).catch(() => {}) }
-      const rows = await page.evaluate(async (kind) => {
-        const D = await import('/js/overlays-data.js'), geo = D.radarGeometry(), time = window.__overlays.scalar.shown.time
-        const img = await createImageBitmap(await (await fetch(D.scalarImageUrl(kind, time, geo))).blob())
-        const c = new OffscreenCanvas(img.width, img.height), g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0)
+      const rows = await page.evaluate(async ([kind, places]) => {
+        const D = await import('/js/overlays-data.js'), geo = D.radarGeometry(), sc = window.__overlays.scalar, g = sc.shown.grid, c = sc.canvas
+        const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data
         const mx = (lng) => lng * 20037508.34 / 180, my = (lat) => Math.log(Math.tan((90 + lat) * Math.PI / 360)) * 20037508.34 / Math.PI
-        const lo = D.SCALE_TICKS[kind][0], hi = D.SCALE_TICKS[kind].at(-1), out = []
-        for (const [lng, lat] of [[-123.2, 48.35], [-123.5, 48.25], [-123.1, 48.6], [-123.3, 48.5], [-122.95, 48.4], [-123.6, 48.3], [-123.35, 48.15], [-123.0, 48.7]]) {
-          const v = D.scalarReading(kind, await (await fetch(D.scalarInfoUrl(kind, lng, lat, time))).json())
-          if (v == null || v < lo || v > hi) continue
-          const d = g.getImageData(Math.floor((mx(lng) - geo.bbox[0]) / (geo.bbox[2] - geo.bbox[0]) * geo.width), Math.floor((geo.bbox[3] - my(lat)) / (geo.bbox[3] - geo.bbox[1]) * geo.height), 1, 1).data
-          const key = D.scaleColour(D.SCALES[kind], v)
-          out.push({ v: +v.toFixed(2), pixel: [d[0], d[1], d[2]], key, diff: Math.max(...key.map((x, i) => Math.abs(x - d[i]))), opaque: d[3] === 255 })
+        const [lo, hi] = D.SCALE_RANGE[kind], out = []
+        for (const [lng, lat] of places) {
+          const px = Math.floor((mx(lng) - geo.bbox[0]) / (geo.bbox[2] - geo.bbox[0]) * c.width), py = Math.floor((geo.bbox[3] - my(lat)) / (geo.bbox[3] - geo.bbox[1]) * c.height)
+          // The place at the middle of that pixel: the place its colour was made for.
+          const cx = ((px + 0.5) / c.width * (geo.bbox[2] - geo.bbox[0]) + geo.bbox[0]) / 20037508.34 * 180
+          const cy = (2 * Math.atan(Math.exp((geo.bbox[3] - (py + 0.5) / c.height * (geo.bbox[3] - geo.bbox[1])) / 20037508.34 * Math.PI)) - Math.PI / 2) * 180 / Math.PI
+          const v = D.scalarAt(g, cx, cy), pixel = [...d.slice((py * c.width + px) * 4, (py * c.width + px) * 4 + 4)]
+          if (v == null) continue
+          const key = D.rampColour(kind, Math.min(Math.max(v, lo), hi))
+          out.push({ lng, lat, v: +v.toFixed(2), here: D.scalarAt(g, lng, lat), pixel, key, diff: Math.max(...key.map((x, i) => Math.abs(x - pixel[i]))), opaque: pixel[3] === 255 })
         }
         return out
-      }, kind)
-      report(rows.length >= 5 && rows.every((r) => r.opaque && r.diff <= 25), t(`${SCALAR_WORD[kind]}: the colour of the picture at ${rows.length} places across the sea is the colour of the key for the value the service reports there (largest difference ${Math.max(...rows.map((r) => r.diff))} of 255)`), JSON.stringify(rows))
+      }, [kind, SEA_PLACES])
+      report(rows.length >= 5 && rows.every((r) => r.opaque && r.diff <= 2), t(`${SCALAR_WORD[kind]}: the colour of the picture at ${rows.length} places across the sea is the ramp's colour for the number the page reads there, within 2 of 255 (largest difference ${Math.max(...rows.map((r) => r.diff))})`), JSON.stringify(rows.map((r) => ({ v: r.v, pixel: r.pixel, key: r.key }))))
+      const time = await page.evaluate(() => window.__overlays.scalar.shown.time), says = []
+      for (const r of rows) {
+        const v = await serviceSays(page, kind, [r.lng, r.lat], time).catch(() => null)
+        if (v != null && r.here != null) says.push({ place: [r.lng, r.lat], page: +r.here.toFixed(2), service: +v.toFixed(2), diff: Math.abs(r.here - v) })
+      }
+      // The page reads a 1 km grid (every second cell of the model's 500 m grid) and the service the 500 m cell at the place, so they differ a little where the water changes fast.
+      const tol = kind === 'temperature' ? 0.6 : 1.5
+      report(says.length >= 5 && says.every((x) => x.diff <= tol), t(`${SCALAR_WORD[kind]}: at ${says.length} places across the sea the page's number is the service's own, within ${tol} ${SCALARS_UNIT[kind]} (largest difference ${Math.max(...says.map((x) => x.diff)).toFixed(2)}), which checks ${kind === 'temperature' ? 'the kelvin to Celsius step and ' : ''}where the grid is placed`), JSON.stringify(says))
     }
     await setBox(page, 'input[data-overlay=temperature]', true) // back to temperature, the other one goes off
     await waitStatus(page, 'temperature').catch(() => {})
@@ -1041,19 +1063,20 @@ async function checkSea(page, requests, t, name, shot) {
   }
   from = requests.length
 
-  // The readout: a click on the sea asks the service for the value at that one place
+  // The readout: a click on the sea gives the number the picture was made from, read from the grid already loaded, and asks the service for nothing
   await panel(false)
   const hour0 = seaHour((await st('temperature')).text)
   const before = requests.length
   const c1 = await seaClick(page, READOUT_SEA)
-  const infos = requests.slice(before).filter((u) => u.includes('GetFeatureInfo'))
   const time0 = await page.evaluate(() => window.__overlays.scalar.shown.time)
   const says = await serviceSays(page, 'temperature', c1.at, time0)
-  report(!!c1.text && c1.text.startsWith('Modelled sea temperature model estimate Surface sea temperature: ') && /Surface sea temperature: -?\d+\.\d °C \(for [A-Z][a-z]{2} \d{1,2}, \d{1,2}\s[ap]\.m\. P[SD]T\)\./.test(c1.text) && c1.text.includes('Model estimate, not for navigation.') && !!says && c1.text.includes(`Surface sea temperature: ${says} (for ${hour0}).`), t('sea temperature: a click on the sea opens a popup with the temperature, the hour and the not-for-navigation line, the same number the service gives for that place'), JSON.stringify({ text: c1.text, says, hour0 }))
-  report(infos.length === 1 && infos[0].includes('request=GetFeatureInfo') && infos[0].includes('info_format=application%2Fjson') && infos[0].includes('query_layers=CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m') && infos[0].includes(`time=${encodeURIComponent(time0)}`), t('sea temperature: the readout is one small request to the service, for that place and the hour shown'), JSON.stringify(infos.map((u) => u.slice(60, 200))))
+  const shownT = Number(c1.text?.match(/Surface sea temperature: (-?\d+\.\d) °C/)?.[1])
+  const asked = requests.slice(before).filter((u) => new URL(u).host === 'geo.weather.gc.ca' && !u.includes('GetFeatureInfo')).length // the check's own GetFeatureInfo is not the page's
+  report(!!c1.text && c1.text.startsWith('Modelled sea temperature model estimate Surface sea temperature: ') && /Surface sea temperature: -?\d+\.\d °C \(for [A-Z][a-z]{2} \d{1,2}, \d{1,2}\s[ap]\.m\. P[SD]T\)\./.test(c1.text) && c1.text.includes('Model estimate, not for navigation.') && c1.text.includes(`(for ${hour0}).`) && says != null && Math.abs(shownT - says) <= 0.7, t('sea temperature: a click on the sea opens a popup with the temperature, the hour and the not-for-navigation line, and the number is the one the service gives for that place'), JSON.stringify({ text: c1.text, says, hour0 }))
+  report(asked === 0, t('sea temperature: the readout makes no request (it reads the grid already loaded)'), String(asked))
   const beforeLand = requests.length
   const cLand = await seaClick(page, READOUT_LAND)
-  report(requests.slice(beforeLand).filter((u) => u.includes('GetFeatureInfo')).length === 0 && !(cLand.text || '').includes('Modelled sea'), t('sea temperature: a click on land asks the service nothing and shows no temperature'), JSON.stringify(cLand.text))
+  report(requests.slice(beforeLand).filter((u) => new URL(u).host === 'geo.weather.gc.ca').length === 0 && !(cLand.text || '').includes('Modelled sea'), t('sea temperature: a click on land asks the service nothing and shows no temperature'), JSON.stringify(cLand.text))
   await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
 
   // With the sea currents on, the picture shows their hour and follows their Play
@@ -1062,7 +1085,7 @@ async function checkSea(page, requests, t, name, shot) {
   await waitStatus(page, 'currents').catch(() => {})
   await page.waitForTimeout(1500)
   const curHour0 = seaHour((await statusOf(page, 'currents')).text), tmpHour0 = seaHour((await st('temperature')).text)
-  report(!!curHour0 && curHour0 === tmpHour0 && maps('temperature').length <= 2, t('sea temperature: with the sea currents on, the picture shows the hour of the currents'), JSON.stringify({ curHour0, tmpHour0, maps: maps('temperature').length }))
+  report(!!curHour0 && curHour0 === tmpHour0 && grids('temperature').length <= 2, t('sea temperature: with the sea currents on, the picture shows the hour of the currents'), JSON.stringify({ curHour0, tmpHour0, grids: grids('temperature').length }))
   await panel(false)
   const both = await seaClick(page, READOUT_SEA)
   report(!!both.text && both.text.startsWith('Modelled sea current') && /\d\.\d knots \(\d\.\d\d m\/s\), flowing toward the [a-z-]+\./.test(both.text) && /Surface sea temperature: -?\d+\.\d °C/.test(both.text) && both.text.indexOf('Surface current for') < both.text.indexOf('Surface sea temperature:'), t('sea temperature: with the currents on, one click shows the modelled current and, under it, the temperature'), JSON.stringify(both.text))
@@ -1072,15 +1095,17 @@ async function checkSea(page, requests, t, name, shot) {
   await page.waitForFunction((h0) => { const p = document.getElementById('status-currents'); return p.dataset.state === 'ok' && !p.textContent.includes(h0) }, curHour0, { timeout: 90000 }).catch(() => {})
   await page.waitForFunction(() => { const h = (id) => document.getElementById('status-' + id).textContent.match(/for (.+?), Environment Canada/)?.[1]; return !!h('currents') && h('currents') === h('temperature') && document.getElementById('status-temperature').dataset.state === 'ok' }, null, { timeout: 60000 }).catch(() => {})
   const curHour1 = seaHour((await statusOf(page, 'currents')).text), tmpHour1 = seaHour((await st('temperature')).text)
-  await page.click('#currents-play') // pause
+  // While Play steps the picture the map is drawn again at every step, and a busy machine takes one to three seconds to draw it, so the draws come
+  // back to back. Playwright's click waits for a free moment that may not come, so Pause is pressed from inside the page, which is the same press.
+  await page.evaluate(() => document.getElementById('currents-play').click()) // pause
   await page.waitForTimeout(2500)
   const shownNow = await page.evaluate(() => ({ cur: window.__overlays.sea.hours[window.__overlays.sea.at], tmp: window.__overlays.scalar.shown?.time }))
-  const askedMaps = timesOf(maps('temperature'))
+  const askedGrids = timesOf(grids('temperature'))
   report(curHour1 !== curHour0 && curHour1 === tmpHour1 && shownNow.cur === shownNow.tmp, t('sea temperature: while the currents play the picture steps with them, one hour at a time, and the status lines name the same hour'), JSON.stringify({ curHour0, curHour1, tmpHour1, shownNow }))
-  report(askedMaps.length >= 2 && Math.max(...askedMaps.map(Date.parse)) <= Date.parse(shownNow.cur) + 3600000 && maps('temperature').length === askedMaps.length, t('sea temperature: each hour is one picture, and no hour beyond the one shown and the next was asked for'), JSON.stringify({ askedMaps, shown: shownNow.cur, n: maps('temperature').length }))
-  const hold = maps('temperature').length
+  report(askedGrids.length >= 2 && Math.max(...askedGrids.map(Date.parse)) <= Date.parse(shownNow.cur) + 3600000 && grids('temperature').length === askedGrids.length, t('sea temperature: each hour is one grid, and no hour beyond the one shown and the next was asked for'), JSON.stringify({ askedGrids, shown: shownNow.cur, n: grids('temperature').length }))
+  const hold = grids('temperature').length
   await page.waitForTimeout(3000)
-  report(maps('temperature').length === hold, t('sea temperature: with Play paused no further picture is requested'))
+  report(grids('temperature').length === hold, t('sea temperature: with Play paused no further grid is requested'))
   await setBox(page, 'input[data-overlay=currents]', false)
   await page.waitForFunction((h) => document.getElementById('status-temperature').textContent.includes(h), tmpHour0, { timeout: 60000 }).catch(() => {})
   report(seaHour((await st('temperature')).text) === tmpHour0, t('sea temperature: when the currents go off the picture goes back to the latest hour not after now'), (await st('temperature')).text)
@@ -1092,15 +1117,16 @@ async function checkSea(page, requests, t, name, shot) {
   await page.waitForFunction(() => window.__overlays.scalar.shown?.kind === 'salinity', null, { timeout: 30000 }).catch(() => {})
   await page.waitForTimeout(1500)
   const tu = await ui('temperature'), su = await ui('salinity'), sst = await st('salinity')
-  const kept = await page.evaluate(() => ({ keys: [...window.__overlays.scalar.blobs.keys()], shown: window.__overlays.scalar.shown?.kind, times: window.__overlays.scalar.times.length, key: [...document.querySelectorAll('#salinity-ticks span')].map((x) => x.textContent).join(' '), gradient: getComputedStyle(document.getElementById('salinity-bar')).backgroundImage.startsWith('linear-gradient') }))
-  report(!tu.box && !tu.status && !tu.key && !tu.note && tu.credit === 'none' && su.box && su.status && su.key && su.note && su.credit === 'visible' && su.picture === 'visible' && su.layers === 1 && kept.shown === 'salinity' && kept.keys.length > 0 && kept.keys.every((k) => k.startsWith('salinity|')), t('sea saltiness: ticking it unticks Sea temperature (box, status line, key, note, credit and the pictures kept all go) and leaves one picture layer, now the saltiness'), JSON.stringify({ tu, su, kept }))
-  const mapsS = maps('salinity')
-  const bytesS = await pictureBytes(page, 'salinity')
-  console.log(`      (${t(`sea saltiness: one hour is one picture of ${bytesS.toLocaleString('en-CA')} bytes`)})`)
-  report(sst.state === 'ok' && scalarStatus('salinity').test(sst.text) && mapsS.length === 1 && mapsS[0].includes('styles=SEA_SALT-COASTAL') && kept.key === '20 22 24 26 28 30 32' && kept.gradient && bytesS > 5e3 && bytesS < 80e3, t('sea saltiness: one picture of under 80 KB in its own colour style, a status line that names the hour and the model, and a key in psu from 20 to 32'), JSON.stringify({ sst, mapsS: mapsS.length, key: kept.key, bytesS }))
+  const kept = await page.evaluate(() => ({ keys: [...window.__overlays.scalar.grids.keys()], shown: window.__overlays.scalar.shown?.kind, times: window.__overlays.scalar.times.length, key: [...document.querySelectorAll('#salinity-ticks span')].map((x) => x.textContent).join(' '), gradient: getComputedStyle(document.getElementById('salinity-bar')).backgroundImage.startsWith('linear-gradient') }))
+  report(!tu.box && !tu.status && !tu.key && !tu.note && tu.credit === 'none' && su.box && su.status && su.key && su.note && su.credit === 'visible' && su.picture === 'visible' && su.layers === 1 && kept.shown === 'salinity' && kept.keys.length > 0 && kept.keys.every((k) => k.startsWith('salinity|')), t('sea saltiness: ticking it unticks Sea temperature (box, status line, key, note, credit and the grids kept all go) and leaves one picture layer, now the saltiness'), JSON.stringify({ tu, su, kept }))
+  const gridsS = grids('salinity')
+  const gotS = (await images.settled()).filter((x) => x.url.includes(SCALAR_LAYER.salinity))
+  console.log(`      (${t(`sea saltiness: one hour is one grid of ${gotS.at(-1).bytes.toLocaleString('en-CA')} bytes`)})`)
+  report(sst.state === 'ok' && scalarStatus('salinity').test(sst.text) && gridsS.length === 1 && gridsS[0].includes('coverageid=CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m') && kept.key === '20 22 24 26 28 30 32 34' && kept.gradient && gotS.length >= 1 && gotS.at(-1).bytes > 50e3 && gotS.at(-1).bytes < 100e3, t('sea saltiness: one grid of about 73 KB, a status line that names the hour and the model, and a key in psu from 20 to 34'), JSON.stringify({ sst, grids: gridsS.length, key: kept.key, bytes: gotS.map((x) => x.bytes) }))
   await panel(false)
   const cs = await seaClick(page, READOUT_SEA), timeS = await page.evaluate(() => window.__overlays.scalar.shown.time), saysS = await serviceSays(page, 'salinity', cs.at, timeS)
-  report(!!cs.text && cs.text.startsWith('Modelled sea saltiness') && !!saysS && cs.text.includes(`Surface sea saltiness: ${saysS} (for `) && /\d+\.\d psu/.test(cs.text) && cs.text.includes('Model estimate, not for navigation.'), t('sea saltiness: a click on the sea gives the saltiness in psu, the same number the service gives for that place'), JSON.stringify({ text: cs.text, saysS }))
+  const shownS = Number(cs.text?.match(/Surface sea saltiness: (\d+\.\d) psu/)?.[1])
+  report(!!cs.text && cs.text.startsWith('Modelled sea saltiness') && saysS != null && Math.abs(shownS - saysS) <= 1.6 && cs.text.includes('Model estimate, not for navigation.'), t('sea saltiness: a click on the sea gives the saltiness in psu, and the number is the one the service gives for that place (within 1.6 psu, the 1 km grid against the 500 m cell)'), JSON.stringify({ text: cs.text, saysS }))
   await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
   await panel(true)
   if (shot) { await page.evaluate(() => document.getElementById('salinity-key').scrollIntoView({ block: 'center' })); await shot('sea-saltiness-panel'); if (!wide) await panel(false); await shot('sea-saltiness'); await panel(true) }
@@ -1110,8 +1136,8 @@ async function checkSea(page, requests, t, name, shot) {
   // Unticking: the picture, the key, the status line, the credit and the pictures kept all go, and a click on the sea shows nothing of the sea
   await setBox(page, 'input[data-overlay=salinity]', false)
   await page.waitForTimeout(800)
-  const off = await page.evaluate(() => ({ picture: window.__map.getLayoutProperty('sea-scalar', 'visibility'), credit: window.__map.getLayoutProperty('salinity-credit', 'visibility'), status: !document.getElementById('status-salinity').hidden, key: !document.getElementById('salinity-key').hidden, note: !document.getElementById('salinity-note').hidden, kept: window.__overlays.scalar.blobs.size, shown: window.__overlays.scalar.shown, times: window.__overlays.scalar.times.length, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
-  report(off.picture === 'none' && off.credit === 'none' && !off.status && !off.key && !off.note && off.kept === 0 && off.shown === null && off.times === 0 && !off.attrib.includes('Data Server End-use Licence'), t('sea temperature and saltiness: unticking hides the picture, key, note, status line and credit and lets go of the pictures kept'), JSON.stringify({ ...off, attrib: undefined }))
+  const off = await page.evaluate(() => ({ picture: window.__map.getLayoutProperty('sea-scalar', 'visibility'), credit: window.__map.getLayoutProperty('salinity-credit', 'visibility'), status: !document.getElementById('status-salinity').hidden, key: !document.getElementById('salinity-key').hidden, note: !document.getElementById('salinity-note').hidden, kept: window.__overlays.scalar.grids.size, shown: window.__overlays.scalar.shown, times: window.__overlays.scalar.times.length, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
+  report(off.picture === 'none' && off.credit === 'none' && !off.status && !off.key && !off.note && off.kept === 0 && off.shown === null && off.times === 0 && !off.attrib.includes('Data Server End-use Licence'), t('sea temperature and saltiness: unticking hides the picture, key, note, status line and credit and lets go of the grids kept'), JSON.stringify({ ...off, attrib: undefined }))
   await panel(false)
   const beforeOff = requests.length
   const clicked = await seaClick(page, READOUT_SEA)
@@ -1609,6 +1635,20 @@ async function checkMarine(page, requests, t, name, shot) {
   const count = (text, s) => text.split(s).length - 1
   report(!!p && p.titles.length >= 3 && p.titles.includes('Southern Resident killer whale critical habitat') && p.titles.includes('Humpback whale: modelled summer numbers') && p.titles.some((x) => /Oak Bay Islands|Victoria Harbour/.test(x)) && count(p.text, WHALE_RULES_TEXT) === 1 && count(p.text, OGL_CANADA_STATEMENT) === 1 && p.hr >= 3 && p.links.length === 2 && p.scrollTop === 0 && p.within, t('marine areas together: a click where a protected area, the critical habitat and a density cell overlap gives one popup with all three, the vessel distances once and the licence statement once'), JSON.stringify({ ...p, text: p.text.slice(0, 200) }))
   if (shot) await shot('marine-together-popup')
+  // A blank block beside a tall popup, the size of the popup and the colour of the page, was seen in screenshots from Chromium's old headless mode (22 October). It is not in the page:
+  // the DOM holds nothing there, and Firefox, WebKit and Chromium's new headless mode draw the map there (see the README). So this checks that the page is as it should be: the popup box is
+  // no higher than 60% of the window and scrolls inside, and on the far side of its tip, where the block shows, the topmost thing is the map's own canvas.
+  const box = await page.evaluate(() => {
+    const pop = document.querySelector('.maplibregl-popup'), c = document.querySelector('.maplibregl-popup-content'), tip = document.querySelector('.maplibregl-popup-tip')
+    if (!pop || !c) return null
+    const r = pop.getBoundingClientRect(), cr = c.getBoundingClientRect(), tr = tip.getBoundingClientRect(), x = Math.round(r.left + r.width / 2)
+    const anchorTop = /maplibregl-popup-anchor-top/.test(pop.className) // content below the tip
+    // The places beside the tip, on the side away from the content, in the map and clear of the banner and the attribution.
+    const probes = [100, 200, 300].map((d) => [x, Math.round(anchorTop ? r.top - d : r.bottom + d)]).filter(([px, py]) => py > 90 && py < innerHeight - 90)
+    const tops = probes.map(([px, py]) => { const e = document.elementsFromPoint(px, py)[0]; return e ? e.tagName.toLowerCase() + (typeof e.className === 'string' && e.className ? '.' + e.className.split(' ')[0] : '') : null })
+    return { contentH: Math.round(cr.height), limit: Math.round(innerHeight * 0.6), scroll: c.scrollHeight > c.clientHeight, overflow: getComputedStyle(c).overflowY, tipOutside: tr.top >= cr.bottom - 1 || tr.bottom <= cr.top + 1, probes: probes.length, tops }
+  })
+  report(!!box && box.contentH <= box.limit + 1 && box.scroll && box.overflow === 'auto' && box.tipOutside && box.probes >= 1 && box.tops.every((x) => x === 'canvas.maplibregl-canvas'), t('marine: a tall popup is at most 60% of the window high and scrolls inside, and on the far side of its tip the topmost thing is the map canvas (no blank block in the page)'), JSON.stringify(box))
   await untickAll()
 
   // CRIMS layers: a click on each
@@ -1878,7 +1918,7 @@ async function checkOverlaysBlocked(browser, base) {
   page.on('pageerror', (e) => errors.push(e.message.slice(0, 160)))
   for (const h of LIVE_HOSTS) await page.route(`https://${h}/**`, (r) => r.abort())
   await page.goto(base + '/index.html?test', { waitUntil: 'load' })
-  await page.waitForFunction(() => window.__ready, null, { timeout: 90000 })
+  await page.waitForFunction(() => window.__ready, null, { timeout: 180000 })
   // 3D terrain is on at load, so the map tilts to 60 degrees at once. A busy machine draws a frame in a second or more, so wait for it to end.
   await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1 && !window.__map.isMoving(), null, { timeout: 150000 }).catch(() => {})
   await page.waitForTimeout(1500)
@@ -1892,8 +1932,12 @@ async function checkOverlaysBlocked(browser, base) {
     const own = OVERLAY_NET[id].hosts.every((h) => hostCount(requests, h) > before[h])
     const others = LIVE_HOSTS.filter((h) => !OVERLAY_NET[id].hosts.includes(h)).every((h) => hostCount(requests, h) === before[h])
     const empty = await page.evaluate((id) => { const src = window.__overlays.defs[id].source; return src ? window.__map.querySourceFeatures(src).length === 0 : true }, id)
-    const wording = id === 'alerts' ? st.text.includes('not showing whether any are in effect') : st.text.includes('could not be loaded')
-    report(st.state === 'fail' && !st.hidden && wording && own && others && empty, t(`${id}: its own request is made, then a plain failure line shows and the layer stays empty`), JSON.stringify({ st, own, others, empty }))
+    // The layers from Environment Canada's GeoMet server (every one here but the alerts, the air quality, the conditions, the gauges, the quakes and the life observations) are asked for twice
+    // and say the server is not answering.
+    const geomet = ['radar', 'currents', 'wind', 'temperature', 'salinity'].includes(id)
+    const wording = id === 'alerts' ? st.text.includes('not showing whether any are in effect') : st.text.includes('could not be loaded') && (!geomet || st.text.includes('Environment Canada’s server is not answering.'))
+    const tries = hostCount(requests, 'geo.weather.gc.ca') - before['geo.weather.gc.ca']
+    report(st.state === 'fail' && !st.hidden && wording && own && others && empty && (!geomet || tries >= 2), t(`${id}: its own request is made${geomet ? ' (and made once more)' : ''}, then a plain failure line shows${geomet ? ' that says the server is not answering' : ''} and the layer stays empty`), JSON.stringify({ st, own, others, empty, tries }))
     if (id === 'currents' || id === 'wind') {
       const sea = await page.evaluate((id) => ({ canvas: !!document.getElementById('flow-canvas'), play: document.getElementById(id + '-play').disabled, stats: window.__overlays.flow.stats() }), id)
       report(!sea.canvas && sea.play && !sea.stats.on && !sea.stats.running && sea.stats.particles === 0, t(`${id}: after the failure no canvas is on the map, Play is disabled and nothing runs`), JSON.stringify(sea))
@@ -1980,6 +2024,267 @@ async function checkOverlaysBlocked(browser, base) {
   await ctx.close()
 }
 
+// The GeoMet server is slow or fails now and then. A stand-in answers some requests for Sea currents: one 503 and then a reply, a reply held for 7 s,
+// a server that always sends 503 or never answers, and a box unticked between the two tries. The replies are the real service's, read once at the start
+// and played back at once, so the checks do not depend on how slow the real server is on the day (it took 8 s to describe its hours on a busy afternoon).
+async function checkGeomet(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, userAgent: userAgent(browser) })
+  const page = await ctx.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message.slice(0, 160)))
+  const t = (s) => `geomet: ${s}`
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const CORS = { 'access-control-allow-origin': '*' }
+  const counts = { caps: 0, grid: 0 }
+  const played = new Map() // url -> the real reply, kept the first time it is asked for
+  let plan = () => 'real' // what to do with a request: 'real', '503', 'abort' or 'hold'
+  await page.route('https://geo.weather.gc.ca/**', async (route) => {
+    const u = route.request().url(), caps = u.includes('GetCapabilities') && u.includes('SeaWaterVelocity'), grid = u.includes('service=WCS') && u.includes('SeaWaterVelocity')
+    if (!caps && !grid) { await route.continue(); return }
+    const n = ++counts[caps ? 'caps' : 'grid'], what = plan(caps ? 'caps' : 'grid', n)
+    if (what === '503') await route.fulfill({ status: 503, headers: CORS, body: 'busy' })
+    else if (what === 'abort') await route.abort()
+    else {
+      if (what === 'hold') await sleep(7000)
+      if (!played.has(u)) { const real = await route.fetch(); played.set(u, { status: real.status(), headers: real.headers(), body: await real.body() }) }
+      await route.fulfill(played.get(u))
+    }
+  })
+  await page.goto(base + '/index.html?test', { waitUntil: 'load' })
+  await page.waitForFunction(() => window.__ready, null, { timeout: 180000 })
+  await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1 && !window.__map.isMoving(), null, { timeout: 150000 }).catch(() => {})
+  await page.evaluate(() => {
+    document.getElementById('panel-details').open = true
+    const b = document.getElementById('flow'); b.checked = false; b.dispatchEvent(new Event('change'))
+    window.__lines = []
+    new MutationObserver(() => { const p = document.getElementById('status-currents'); window.__lines.push(`${p.dataset.state}|${p.textContent}`) }).observe(document.getElementById('status-currents'), { childList: true, subtree: true, characterData: true, attributes: true })
+  })
+  const run = async (how, until = 'done') => {
+    counts.caps = 0; counts.grid = 0; plan = how
+    await page.evaluate(() => { window.__lines.length = 0 })
+    await setBox(page, 'input[data-overlay=currents]', true)
+    if (until === 'done') await waitStatus(page, 'currents', 120000).catch(() => {})
+    return { st: await statusOf(page, 'currents'), lines: await page.evaluate(() => [...window.__lines]), caps: counts.caps, grid: counts.grid }
+  }
+  const SLOW = 'Environment Canada’s server is slow to answer. Loading sea currents…', RETRY = 'Environment Canada’s server did not answer. Trying once more. Loading sea currents…'
+  // Read the real replies once: the description of the hours and the two components of the first hour.
+  const primed = await run(() => 'real')
+  report(primed.st.state === 'ok' && played.size >= 3, t('currents: the real service describes its hours and gives the first hour, to be played back for the checks below'), JSON.stringify({ st: primed.st, kept: played.size }))
+  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // One 503 on the description of the hours, then the real reply: the line says it is trying once more, and the layer loads.
+  const a = await run((kind, n) => (kind === 'caps' && n === 1 ? '503' : 'real'))
+  report(a.st.state === 'ok' && a.caps === 2 && a.grid === 2 && a.lines.some((l) => l === `loading|${RETRY}`), t('currents: a first try answered with HTTP 503 is tried once more after a short wait, the status line says so while it waits, and the layer then loads with its usual line'), JSON.stringify({ st: a.st, caps: a.caps, grid: a.grid, lines: a.lines.slice(0, 6) }))
+  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // A reply held for 7 s: after 6 s the line says the server is slow, the request is not asked again, and the layer loads.
+  const b = await run((kind, n) => (kind === 'grid' && n === 1 ? 'hold' : 'real'))
+  report(b.st.state === 'ok' && b.grid === 2 && b.caps === 1 && b.lines.some((l) => l === `loading|${SLOW}`) && !b.lines.some((l) => l.includes('Trying once more')), t('currents: a reply held for 7 s makes the status line say the server is slow, is not asked for twice, and the layer loads'), JSON.stringify({ st: b.st, caps: b.caps, grid: b.grid, lines: b.lines.slice(0, 6) }))
+  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // Always 503: two tries and a plain failure line that says the server sent an error. Never answering: two tries and the line says it is not answering.
+  const c = await run(() => '503')
+  report(c.st.state === 'fail' && c.caps === 2 && c.st.text === 'Sea currents could not be loaded just now. Environment Canada’s server sent an error. Try again later.', t('currents: a server that always answers 503 is asked twice, then the failure line says the server sent an error'), JSON.stringify({ st: c.st, caps: c.caps }))
+  await setBox(page, 'input[data-overlay=currents]', false)
+  const d = await run(() => 'abort')
+  report(d.st.state === 'fail' && d.caps === 2 && d.st.text === 'Sea currents could not be loaded just now. Environment Canada’s server is not answering. Try again later.', t('currents: a server that never answers is asked twice, then the failure line says it is not answering'), JSON.stringify({ st: d.st, caps: d.caps }))
+  const none = await page.evaluate(() => ({ canvas: !!document.getElementById('flow-canvas'), play: document.getElementById('currents-play').disabled, on: window.__overlays.flow.stats().on }))
+  report(!none.canvas && none.play && !none.on, t('currents: after the failure no canvas is on the map and Play is disabled'), JSON.stringify(none))
+  await setBox(page, 'input[data-overlay=currents]', false)
+
+  // Unticked between the two tries: the second try is never made, and the status line goes away.
+  // The page unticks the box in the same instant the line says "Trying once more", which is at the start of the wait, long before the second try.
+  await page.evaluate(() => {
+    new MutationObserver(() => {
+      const p = document.getElementById('status-currents'), b = document.querySelector('input[data-overlay=currents]')
+      if (window.__untickOnRetry && p.textContent.includes('Trying once more') && b.checked) { b.checked = false; b.dispatchEvent(new Event('change')) }
+    }).observe(document.getElementById('status-currents'), { childList: true, subtree: true, characterData: true })
+    window.__untickOnRetry = true
+  })
+  const e = await run((kind, n) => (n === 1 ? '503' : 'real'), 'tick')
+  await sleep(5000)
+  const shown = await page.evaluate(() => !document.getElementById('status-currents').hidden)
+  report(counts.caps === 1 && counts.grid === 0 && !shown, t('currents: a box unticked while the second try waits makes no second request and leaves no status line'), JSON.stringify({ caps: counts.caps, grid: counts.grid, shown, lines: e.lines.slice(0, 3) }))
+  report(errors.length === 0, t('no page errors from the failed and slow requests'), errors.join(' | '))
+  await ctx.close()
+}
+
+// Play blends the flow from one hour to the next, so it changes smoothly. Sea currents on the flat map with Play running: the blend factor is sampled
+// every moment, together with the flow the particles feel at a lattice of places, and the flow at a place has to move in a straight line with the factor.
+async function checkBlend(page, requests, t, name, shot) {
+  const panelWas = await page.evaluate(() => document.getElementById('panel-details').open)
+  await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z }); document.getElementById('panel-details').open = false }, [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await setBox(page, '#flow', false)
+  await setBox(page, 'input[data-overlay=currents]', true)
+  await waitStatus(page, 'currents').catch(() => {})
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 60000 })
+  await page.waitForTimeout(1500)
+  await waitDrawn(page)
+  // The places: a lattice over the screen where the flow is, found while the hour stands still.
+  const points = await page.evaluate(() => {
+    const f = window.__overlays.flow, out = []
+    for (let y = 120; y < innerHeight - 80; y += 40) for (let x = 40; x < innerWidth - 80; x += 40) { const v = f.probe(x, y); if (v && v[2] > 0.05) out.push([x, y]) }
+    return out
+  })
+  const still = await page.evaluate(() => window.__overlays.flow.stats())
+  report(points.length >= 20 && !still.blending && still.blend === 0, t(`currents: before Play the hour stands still (no blend) and the lattice finds ${points.length} places with flow`), JSON.stringify({ points: points.length, still: [still.blending, still.blend] }))
+  await page.evaluate(() => document.getElementById('currents-play').click())
+  // Sampled until four hours have gone by (the first one is cut short), or half a minute: a busy machine takes a while to step.
+  const samples = [], t0 = Date.now()
+  while (Date.now() - t0 < 30000 && new Set(samples.map((x) => x.at)).size < 5) {
+    samples.push(await page.evaluate((pts) => { const f = window.__overlays.flow, st = f.stats(); return { at: window.__overlays.sea.at, f: st.blend, blending: st.blending, v: pts.map(([x, y]) => f.probe(x, y)) } }, points))
+    await page.waitForTimeout(60)
+  }
+  await page.evaluate(() => document.getElementById('currents-play').click()) // pause
+  await page.waitForTimeout(500)
+  const paused = await page.evaluate(() => ({ stats: window.__overlays.flow.stats(), hour: window.__overlays.sea.at }))
+  // Cycles: the samples of one hour shown, in order. A cycle counts when it has samples across most of the way.
+  const cycles = []
+  for (const sm of samples) { const last = cycles.at(-1); if (last && last[0].at === sm.at) last.push(sm); else cycles.push([sm]) }
+  const blended = cycles.map((c) => c.filter((x) => x.blending)) // the samples taken while a blend was running
+  const usable = blended.filter((c) => c.length >= 3 && c.at(-1).f - c[0].f > 0.3)
+  const rises = usable.every((c) => c.every((x, i) => i === 0 || x.f >= c[i - 1].f - 1e-9))
+  console.log(`      (${t(`currents: ${samples.length} samples over ${cycles.length} hours, ${usable.length} of them sampled across the blend; the factor ran ${usable.map((c) => `${c[0].f.toFixed(2)} to ${c.at(-1).f.toFixed(2)}`).join(', ')}`)})`)
+  report(usable.length >= 2 && rises && usable.every((c) => c[0].f < 0.45 && c.at(-1).f > 0.55), t('currents: while Play runs the blend factor rises from the start of each hour toward the next, hour after hour'), JSON.stringify(cycles.map((c) => [c[0].at, c.length, +c[0].f.toFixed(2), +c.at(-1).f.toFixed(2)])))
+  // The flow at a place against the factor. Along a cycle, the flow at a place is (1 - f) of one hour plus f of the next, so for a place whose flow differs between the hours it is a
+  // straight line in f. The places that differ most are tested: each sample must lie on the line through the first and last of its cycle, within a tenth of the way along it.
+  const delta = (c, k) => { const a = c[0].v[k], b = c.at(-1).v[k]; return a && b ? Math.hypot(b[0] - a[0], b[1] - a[1]) / Math.max(1e-9, c.at(-1).f - c[0].f) : 0 }
+  const best = points.map((_, k) => ({ k, d: Math.max(0, ...usable.map((c) => delta(c, k))) })).sort((a, b) => b.d - a.d).slice(0, 6)
+  const off = best.map(({ k }) => Math.max(0, ...usable.flatMap((c) => { const a = c[0], b = c.at(-1), full = Math.max(1e-9, delta(c, k)); return c.slice(1, -1).map((x) => { const w = (x.f - a.f) / (b.f - a.f), want = [a.v[k][0] + w * (b.v[k][0] - a.v[k][0]), a.v[k][1] + w * (b.v[k][1] - a.v[k][1])]; return Math.hypot(x.v[k][0] - want[0], x.v[k][1] - want[1]) / (full * (b.f - a.f)) }) })))
+  console.log(`      (${t(`currents: the six places where the flow changes most change by ${best.map((b) => b.d.toFixed(1)).join(', ')} px a second between two hours, and lie off the straight line by at most ${(Math.max(...off) * 100).toFixed(1)}% of that`)})`)
+  report(best.length === 6 && best[0].d > 3 && best[5].d > 0.5 && off.every((o) => o < 0.1), t('currents: the flow at the places that change most between two hours moves in a straight line with the blend factor, a little at a time and not in one jump (and it does change, by several pixels a second)'), JSON.stringify({ best, off }))
+  report(!paused.stats.blending && paused.stats.blend === 0, t('currents: Pause goes back to the hour named in the status line, with no blend left'), JSON.stringify([paused.stats.blending, paused.stats.blend, paused.hour]))
+  if (shot) await shot('currents-blend')
+  await setBox(page, 'input[data-overlay=currents]', false)
+  await setBox(page, '#flow', true)
+  await page.evaluate((o) => { document.getElementById('panel-details').open = o }, panelWas)
+}
+
+// The Night look: a dark basemap and light labels by darkening the colours of the style that is loaded, light trails for the currents and the wind,
+// and everything put back when it is switched off.
+const cssRgb = (c) => { const m = String(c).match(/[\d.]+/g); if (String(c).startsWith('#')) { const h = c.slice(1), f = h.length === 3 ? h.split('').map((x) => x + x) : h.match(/../g); return f.map((x) => parseInt(x, 16)) } return m.slice(0, 3).map(Number) }
+const relLum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]) }
+const contrastOf = (a, b) => { const [hi, lo] = [relLum(cssRgb(a)), relLum(cssRgb(b))].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05) }
+async function checkNight(page, requests, t, name, shot) {
+  const panelWas = await page.evaluate(() => document.getElementById('panel-details').open)
+  const panel = (open) => page.evaluate((o) => { document.getElementById('panel-details').open = o }, open)
+  await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z }) }, [READOUT_VIEW.center, READOUT_VIEW.zoom])
+  await panel(true)
+  await setBox(page, '#flow', false)
+  const look = () => page.evaluate(() => {
+    const m = window.__map, get = (id, p) => (m.getLayer(id) ? m.getPaintProperty(id, p) : null)
+    return { ground: get('background', 'background-color'), water: get('water', 'fill-color'), becMask: get('bec-sea-mask', 'fill-color'), ecoMask: get('ecoregions-sea-mask', 'fill-color'), road: get('highway_minor', 'line-color'),
+      text: get('label_city', 'text-color'), halo: get('label_city', 'text-halo-color'), pageText: get('muni-label', 'text-color'), pageHalo: get('muni-label', 'text-halo-color'), lakes: get('lakes', 'fill-color'), shade: get('hillshade', 'hillshade-highlight-color'),
+      scalar: m.getLayer('sea-scalar') ? m.getPaintProperty('sea-scalar', 'raster-opacity') : null, layers: m.getStyle().layers.map((l) => l.id).join(), box: document.getElementById('night').checked, flowNight: window.__overlays.flow.stats().night }
+  })
+  const day = await look()
+  report(!day.box && !day.flowNight && cssRgb(day.water).join() === '194,200,202' && cssRgb(day.ground).join() === '242,243,240', t('night: the Night look is off when the page opens (the box is unticked and the basemap is the pale one)'), JSON.stringify(day))
+  const before = requests.length
+  await setBox(page, '#night', true)
+  await page.waitForTimeout(1500)
+  const dark = await look()
+  const ground = cssRgb(dark.ground), seaRgb = cssRgb(dark.water)
+  report(relLum(ground) < 0.03 && relLum(seaRgb) < 0.03 && relLum(seaRgb) < relLum(ground) && dark.becMask === dark.water && dark.ecoMask === dark.water, t('night: the ground and the sea of the basemap are dark (the sea darker), and the masks that redraw the sea over the ecosystem zones and ecoregions are the same dark sea'), JSON.stringify(dark))
+  report(contrastOf(dark.text, dark.ground) >= 7 && contrastOf(dark.pageText, dark.ground) >= 4.5 && relLum(cssRgb(dark.halo)) < relLum(ground) * 1.5 && relLum(cssRgb(dark.pageHalo)) < relLum(ground) * 1.5 && relLum(cssRgb(dark.lakes)) < 0.15 && relLum(cssRgb(dark.shade)) < 0.2, t('night: the labels are light on dark halos (the basemap\'s place names 7 to 1 or better against the ground, the page\'s own names 4.5 to 1), and the lakes and the hillshade are not bright patches'), JSON.stringify({ text: contrastOf(dark.text, dark.ground), page: contrastOf(dark.pageText, dark.ground) }))
+  // The road shields are left as they are (their text is black on a white picture), so a text layer with a picture and no text colour is not counted.
+  const labels = await page.evaluate(() => { const m = window.__map; return m.getStyle().layers.filter((l) => l.type === 'symbol' && l.layout?.['text-field'] && !(l.layout['icon-image'] && !(l.paint && 'text-color' in l.paint))).map((l) => ({ id: l.id, text: m.getPaintProperty(l.id, 'text-color'), halo: m.getPaintProperty(l.id, 'text-halo-color') })) })
+  const lamps = labels.filter((l) => !l.text || contrastOf(l.text, dark.ground) < 4.5)
+  report(labels.length >= 10 && lamps.length === 0, t(`night: every one of the ${labels.length} text layers, the basemap's and the page's, has a text colour that reads on the dark ground (4.5 to 1 or better)`), JSON.stringify(lamps))
+  report(dark.layers === day.layers, t('night: no layer is added or taken away by the switch'))
+  const asked = requests.slice(before).filter((u) => LIVE_HOSTS.includes(new URL(u).host) || /\/styles\//.test(u))
+  report(asked.length === 0, t('night: switching it on asks no service for anything (the basemap is darkened where it is, and its style is not fetched again)'), asked.join(' '))
+  if (shot) await shot('night-flat')
+
+  // The trails of the currents and the wind are pale, and readable on the dark sea.
+  for (const id of ['currents', 'wind']) {
+    await setBox(page, `input[data-overlay=${id}]`, true)
+    await waitStatus(page, id).catch(() => {})
+    await panel(false)
+    await page.waitForTimeout(2000)
+    await waitDrawn(page)
+    const st = await currentsStats(page), con = await canvasContrast(page, seaRgb)
+    report(st.running && st.night && st.drawn > 300 && !!con && con.n > 100 && con.median >= 5 && con.p10 >= 3.5, t(`night: the ${id} ${id === 'currents' ? 'are' : 'is'} drawn as pale trails on the dark sea (the pixels drawn at half opacity or more have a median contrast of 5 to 1 or better against the sea, and nearly all 3.5 or better, the trails being faded and thin)`), JSON.stringify({ st: { running: st.running, night: st.night, drawn: st.drawn }, con }))
+    if (shot) await shot(`night-${id}`)
+    await panel(true)
+    await setBox(page, `input[data-overlay=${id}]`, false)
+  }
+
+  // The temperature picture takes more paint on the dark sea, with the currents' trails over it.
+  await setBox(page, 'input[data-overlay=temperature]', true)
+  await waitStatus(page, 'temperature').catch(() => {})
+  await page.waitForFunction(() => !!window.__overlays.scalar.shown, null, { timeout: 30000 }).catch(() => {})
+  const withScalar = await look()
+  report(withScalar.scalar > 0.7 && withScalar.scalar <= 0.9, t('night: the sea temperature picture is drawn with more opacity over the dark sea (0.8) than over the pale one (0.65)'), String(withScalar.scalar))
+  await setBox(page, 'input[data-overlay=currents]', true)
+  await waitStatus(page, 'currents').catch(() => {})
+  await panel(false)
+  await page.waitForTimeout(2000)
+  await waitDrawn(page)
+  if (shot) await shot('night-temperature')
+  await panel(true)
+  await setBox(page, 'input[data-overlay=currents]', false)
+  await setBox(page, 'input[data-overlay=temperature]', false)
+
+  // Seafloor depth: the CHS tiles carry the colour of the water, so they are asked for again and painted on the dark water, in the same place in the stack.
+  await page.evaluate(() => { window.__map.jumpTo({ center: [-123.40, 48.40], zoom: 10.2 }) })
+  await page.waitForTimeout(1500)
+  await setBox(page, 'input[data-overlay=seafloor]', true)
+  await page.waitForTimeout(3500)
+  await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 90000 }).catch(() => {})
+  const orderOf = () => page.evaluate(() => { const ids = window.__map.getStyle().layers.map((l) => l.id); return { nonna: ids.indexOf('seafloor-nonna'), nonna10: ids.indexOf('seafloor-nonna-10'), etopo: ids.indexOf('seafloor'), eco: ids.indexOf('ecoregions-fill'), watersheds: ids.indexOf('watersheds-fill'), vis: window.__map.getLayoutProperty('seafloor-nonna', 'visibility') } })
+  const o1 = await orderOf(), tilesBefore = hostCount(requests, NONNA_HOST)
+  await setBox(page, '#night', false)
+  await setBox(page, '#night', true)
+  await page.waitForTimeout(3500)
+  await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 90000 }).catch(() => {})
+  const o2 = await orderOf()
+  report(JSON.stringify(o1) === JSON.stringify(o2) && o2.vis === 'visible' && o2.etopo < o2.nonna && o2.nonna < o2.nonna10 && o2.nonna10 < o2.eco && o2.nonna10 < o2.watersheds && hostCount(requests, NONNA_HOST) > tilesBefore, t('night: with Seafloor depth on, switching the look asks the Canadian Hydrographic Service for its tiles again and keeps them in their place in the stack, under the ecoregions and above the ETOPO1 colours'), JSON.stringify({ o1, o2, again: hostCount(requests, NONNA_HOST) - tilesBefore }))
+  const samples = await seaSamples(page), sea = samples.sea.slice(0, 600)
+  await panel(false)
+  await page.waitForTimeout(500)
+  const nightPix = await pagePixels(page, sea)
+  await setBox(page, '#night', false)
+  await page.waitForTimeout(3500)
+  await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 90000 }).catch(() => {})
+  const dayPix = await pagePixels(page, sea)
+  const darker = sea.filter((_, i) => lum(nightPix[i]) < lum(dayPix[i]) - 30).length
+  console.log(`      (${t(`night: ${darker} of ${sea.length} water places are darker at night with Seafloor depth on`)})`)
+  report(sea.length > 80 && darker > 0.8 * sea.length, t('night: with Seafloor depth on, the sea is darker in the Night look than in the day look at nearly every water place (the tiles were painted again on the dark water, not left pale)'), `${darker} of ${sea.length}`)
+  await panel(true)
+  await setBox(page, 'input[data-overlay=seafloor]', false)
+  await page.waitForTimeout(800)
+
+  // 3D terrain gets a dark sky at night, and the pale one by day.
+  if (name === 'desktop') {
+    await setBox(page, '#night', true)
+    await setBox(page, '#terrain3d', true)
+    await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1 && !window.__map.isMoving(), null, { timeout: 150000 })
+    const skyNight = await page.evaluate(() => window.__map.getSky()['sky-color'])
+    await setBox(page, '#night', false)
+    const skyDay = await page.evaluate(() => window.__map.getSky()['sky-color'])
+    report(relLum(cssRgb(skyNight)) < 0.03 && relLum(cssRgb(skyDay)) > 0.2, t('night: the sky of the 3D view is dark in the Night look and pale by day, and follows the box while 3D terrain is on'), JSON.stringify([skyNight, skyDay]))
+    await setBox(page, '#terrain3d', false)
+    await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 120000 })
+    await setBox(page, '#night', true)
+  }
+
+  // Back to day: everything is put back exactly, the particles are dark again, and the box and the flow agree.
+  await setBox(page, 'input[data-overlay=currents]', true)
+  await waitStatus(page, 'currents').catch(() => {})
+  await setBox(page, '#night', false)
+  await panel(false)
+  await page.waitForTimeout(2000)
+  await waitDrawn(page)
+  const back = await look(), stBack = await currentsStats(page), conBack = await canvasContrast(page, [194, 200, 202])
+  // The list of layers is left out of the comparison: the sea picture and the radar are made the first time they are used, and "no layer is added or taken away" is checked at the switch.
+  const same = (({ scalar, flowNight, layers, ...rest }) => JSON.stringify(rest))(back) === (({ scalar, flowNight, layers, ...rest }) => JSON.stringify(rest))(day)
+  report(same && !back.flowNight && !stBack.night && !!conBack && conBack.median >= 3 && conBack.p10 >= 2.2, t('night: switched off again, every colour of the basemap and the page is exactly what it was, the currents are drawn dark again (contrast 3 to 1 or better on the pale sea) and nothing was added or lost'), JSON.stringify({ back, day, conBack }))
+  await panel(true)
+  await setBox(page, 'input[data-overlay=currents]', false)
+  await setBox(page, '#flow', true)
+  await panel(panelWas)
+}
+
 // Reduced motion: Flow is off and disabled, nothing animates, and the page follows the setting live.
 async function checkReducedMotion(browser, base) {
   const { ctx, page, problems } = await openPage(browser, base, { width: 1280, height: 800 }, { reducedMotion: 'reduce' })
@@ -2025,6 +2330,7 @@ async function checkReducedMotion(browser, base) {
     await page.waitForTimeout(1500)
     const r2 = await sea(), sigR2 = await canvasSignature(page)
     report(r1.stats.on && !r1.stats.running && r1.stats.frames === 0 && r2.stats.frames === 0 && sigR1 !== null && sigR1 === sigR2 && drawnOk(r1.stats) && r1.play && r1.why && !r1.playing, `reduced motion: ${what} ${id === 'currents' ? 'are' : 'is'} drawn as still streaks${id === 'currents' ? ' over the sea' : ''}, the loop never runs, the picture never changes, and Play is disabled with the reason shown`, JSON.stringify({ r1, sigR1, sigR2 }))
+    report(!r1.stats.blending && r1.stats.blend === 0, `reduced motion: ${what} stay one hour, with no blend (Play is disabled, so nothing steps)`, JSON.stringify(r1.stats))
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     // The browser reports a media setting change on its next rendered frame, and waitForFunction asks for frames while it waits.
     const live = await page.waitForFunction(() => window.__overlays.flow.stats().running, null, { timeout: 15000 }).then(() => sea(), () => sea())

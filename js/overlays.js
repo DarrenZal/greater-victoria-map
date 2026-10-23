@@ -14,14 +14,16 @@ import {
   conditionsUrl, normaliseConditions, waterStationsUrl, waterReadingUrl, nearestGauges, gaugeFeature,
   lifeUrls, normaliseLife,
   PLAY_HOURS, hourWindow, currentsCapabilitiesUrl, currentsTimes, currentsUrl, currentsGrid, windCapabilitiesUrl, windTimes, windUrl, windGrid,
+  GEOMET_SLOW_LINE, GEOMET_RETRY_LINE, geometGet, geometWhy,
   readGeoTiff, pacificHour, seaVelocity, currentReadout, compassWord,
-  SCALARS, SCALES, SCALE_TICKS, scalarCapabilitiesUrl, scalarTimes, scalarHour, nearestHour, scalarImageUrl, scalarInfoUrl, scalarReading, scalarText, scaleGradient,
+  SCALARS, SCALE_TICKS, scalarCapabilitiesUrl, scalarTimes, scalarHour, nearestHour, scalarUrl, scalarGrid, scalarAt, scalarPicture, scalarText, rampGradient,
   tideStation, tideFeatures, tideUrls, normaliseTide, tideNext, tideCurve, curveGeometry, curvePath, curveTicks, tideClock, TIDE_STATIONS,
   IWLS_SPACING_MS, iwlsUrls, normaliseIwls,
   depthExpression,
   NONNA_MAX_ZOOM, NONNA_CLOSE_ZOOM, NONNA_TICKS, nonnaTileUrl, nonnaGradient, NONNA_NOTICE, IWLS_NOTICE, NONNA_LICENCE_URL, IWLS_LICENCE_URL,
   MARINE_FILES, WHALE_RULES, WHALE_RULE_LINKS, OGL_CANADA_LINE, CETACEANS, cetaceanCells, densityBreaks, densityExpression, DENSITY_COLOURS, stepGradient, fmt2,
   protectedInfo, srkwInfo, cetaceanInfo, kelpInfo, eelgrassInfo, herringInfo, seabirdInfo, marineMessage,
+  NIGHT_SEA,
 } from './overlays-data.js'
 import { createFlow, FLOW_PROFILES } from './flow.js'
 
@@ -52,10 +54,14 @@ const INDUSTRY_SOURCES = {
 const KIND_LABEL = { landfill: 'landfill or waste site', power: 'power plant', wastewater: 'wastewater plant or pump station' }
 
 const EMPTY = collection([])
+// The longest a layer from the GeoMet server may take to load, all its requests together: each has its own limit and a second try
+// (see geometGet in js/overlays-data.js), and the description of the hours comes before the hours themselves.
+const GEOMET_LOAD_MS = 60000
 const SEAFLOOR_MAX_ZOOM = 8 // the last tile zoom with sea floor depth all the way to the coast
 const SEAFLOOR_OPACITY = 0.75
-const SCALAR_OPACITY = 0.6 // the sea temperature and saltiness picture, over the pale sea of the basemap
-const text = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text() }
+const SCALAR_OPACITY = 0.65 // the sea temperature and saltiness picture, over the pale sea of the basemap
+const NIGHT_SCALAR_OPACITY = 0.8 // over the dark sea of the Night look, where a colour needs more of the paint to stand out
+const SCALAR_WIDTH = 480 // pixels across the picture: about 4 for each 1 km cell of the grid. The map stretches it smoothly
 const json = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
 const km = (n) => `${Math.round(n)} km`
@@ -88,12 +94,12 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
 
   // ---- layer definitions. 'ids' are the map layers each box shows and hides.
   const DEFS = {
-    radar: { label: 'Precipitation radar', ids: ['radar', 'radar-credit'], ttl: 5 * 60e3, load: loadRadar },
-    currents: { label: 'Sea currents', ids: ['currents-credit'], ttl: 30 * 60e3, load: (s) => loadHourly('currents', s) },
-    wind: { label: 'Wind', ids: ['wind-credit'], ttl: 30 * 60e3, load: (s) => loadHourly('wind', s) },
+    radar: { label: 'Precipitation radar', ids: ['radar', 'radar-credit'], ttl: 5 * 60e3, timeout: GEOMET_LOAD_MS, load: loadRadar },
+    currents: { label: 'Sea currents', ids: ['currents-credit'], ttl: 30 * 60e3, timeout: GEOMET_LOAD_MS, load: (s) => loadHourly('currents', s) },
+    wind: { label: 'Wind', ids: ['wind-credit'], ttl: 30 * 60e3, timeout: GEOMET_LOAD_MS, load: (s) => loadHourly('wind', s) },
     // Sea temperature and saltiness share one picture (one layer, drawn from one canvas), so only one can be on.
-    temperature: { label: 'Sea temperature', ids: ['sea-scalar', 'temperature-credit'], ui: ['temperature-key', 'temperature-note'], ttl: 30 * 60e3, load: (s) => loadScalar('temperature', s) },
-    salinity: { label: 'Sea saltiness', ids: ['sea-scalar', 'salinity-credit'], ui: ['salinity-key', 'salinity-note'], ttl: 30 * 60e3, load: (s) => loadScalar('salinity', s) },
+    temperature: { label: 'Sea temperature', ids: ['sea-scalar', 'temperature-credit'], ui: ['temperature-key', 'temperature-note'], ttl: 30 * 60e3, timeout: GEOMET_LOAD_MS, load: (s) => loadScalar('temperature', s) },
+    salinity: { label: 'Sea saltiness', ids: ['sea-scalar', 'salinity-credit'], ui: ['salinity-key', 'salinity-note'], ttl: 30 * 60e3, timeout: GEOMET_LOAD_MS, load: (s) => loadScalar('salinity', s) },
     tides: { label: 'Tides and tidal currents', ids: ['tides-dot', 'tides-label'], ui: ['tides-note', 'tides-chs-notice'], source: 'ov-tides', ttl: Infinity, load: loadTides },
     seafloor: { label: 'Seafloor depth', ids: ['seafloor', 'seafloor-nonna', 'seafloor-nonna-10'], ui: ['seafloor-key', 'seafloor-note', 'seafloor-chs-notice'], ttl: Infinity, load: loadSeafloor },
     // Marine life and protection: a file of this site each, fetched when the box is first ticked.
@@ -129,7 +135,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     if (st.loadedAt && Date.now() - st.loadedAt < def.ttl) { showStatus(id); return }
     st.loading = true
     const ac = st.abort = new AbortController()
-    const timer = setTimeout(() => ac.abort(), 25000)
+    const timer = setTimeout(() => ac.abort(), def.timeout || 25000)
     setStatus(id, 'loading', `Loading ${def.label.toLowerCase()}…`)
     try {
       const result = await def.load(ac.signal)
@@ -142,18 +148,21 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     } catch (e) {
       if (ac.signal.aborted && !st.on) return
       st.loadedAt = 0
-      setStatus(id, 'fail', failureLine(id, def))
+      setStatus(id, 'fail', failureLine(id, def, e))
       if (def.source) map.getSource(def.source)?.setData(EMPTY)
     } finally {
       clearTimeout(timer)
       st.loading = false
     }
   }
-  function failureLine(id, def) {
+  // `e` is what went wrong. A request to the GeoMet server says whether it was the server that did not answer or sent an error.
+  function failureLine(id, def, e) {
     if (id === 'alerts') return 'Weather alerts could not be loaded, so this map is not showing whether any are in effect. Check Environment Canada’s own alerts.'
-    if (id === 'radar') return 'Precipitation radar could not be loaded just now. Try again later.'
-    return `${def.label} could not be loaded just now. Try again later.`
+    return `${def.label} could not be loaded just now.${geometWhy(e)} Try again later.`
   }
+  // What the status line of `id` says while a GeoMet request is slow or is being asked a second time, with the line it had before after it.
+  const sayFor = (id, base) => (kind) => { if (state[id].on) setStatus(id, 'loading', `${kind === 'slow' ? GEOMET_SLOW_LINE : GEOMET_RETRY_LINE} ${base}`) }
+  const geomet = (url, as, signal, say, type) => geometGet(url, as, { signal, say, type })
   function disable(id) {
     const def = DEFS[id], st = state[id]
     st.on = false
@@ -166,7 +175,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       // Let go of the hours kept and start fresh next time. The picture stays on the map only while one of the two is on.
       st.loadedAt = 0
       if (scalar.shown?.kind === id) { scalar.shown = null; scalar.times = [] }
-      if (!activeScalar()) scalar.blobs.clear()
+      if (!activeScalar()) { scalar.grids.clear(); scalar.pending.clear() }
     }
     if (id === 'tides') { tideCache.clear(); st.loadedAt = 0 }
     if (id === 'seafloor') { nonna.ok = 0; nonna.failed = 0 }
@@ -181,7 +190,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       // Free the canvas and the hours kept in memory, and start fresh next time.
       const run = HOURLY[id].run
       stopHourly(run)
-      run.playing = false; run.hours = []; run.at = -1; run.cache.clear(); run.shown = null; st.loadedAt = 0
+      run.playing = false; run.hours = []; run.at = -1; run.cache.clear(); run.pending.clear(); run.shown = null; st.loadedAt = 0
       flow.hide()
       showHourlyControls(id, false)
       syncHourlyPlay(id)
@@ -348,11 +357,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       map.addLayer({ id: 'radar', type: 'raster', source: 'radar', paint: { 'raster-opacity': 0.72, 'raster-fade-duration': 0 } }, 'alerts-fill')
     }
   }
-  async function frameImage(time, signal) {
-    const r = await fetch(radarFrameUrl(time, geo), { signal })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    if (!/image\/png/i.test(r.headers.get('content-type') || '')) throw new Error('the service sent no image')
-    const bitmap = await createImageBitmap(await r.blob())
+  async function frameImage(time, signal, say) {
+    const bitmap = await createImageBitmap(await geomet(radarFrameUrl(time, geo), 'blob', signal, say, /image\/png/i))
     if (!bitmap.width || bitmap.width > 4096 || bitmap.height > 4096) { bitmap.close(); throw new Error('unexpected image size') }
     const canvas = document.createElement('canvas')
     canvas.width = bitmap.width; canvas.height = bitmap.height
@@ -388,13 +394,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   document.addEventListener('visibilitychange', () => { if (radar.playing) tick() })
 
   async function loadRadar(signal) {
-    const times = radarTimes(await text(radarCapabilitiesUrl(), signal))
+    const say = sayFor('radar', 'Loading precipitation radar…')
+    const times = radarTimes(await geomet(radarCapabilitiesUrl(), 'text', signal, say))
     const got = new Map()
     let failed = 0
     const queue = [...times].reverse() // newest first, so a picture appears as soon as one frame is in
     const worker = async () => {
       for (let t; (t = queue.shift());) {
-        try { got.set(t, await frameImage(t, signal)) } catch { if (signal.aborted) return; failed++; continue }
+        try { got.set(t, await frameImage(t, signal, say)) } catch { if (signal.aborted) return; failed++; continue }
         const shownTime = radar.frames[radar.shown]?.time
         radar.frames = times.filter((x) => got.has(x)).map((x) => ({ time: x, canvas: got.get(x) }))
         if (got.size === 1) showFrame(radar.frames.length - 1) // the first to arrive is the newest
@@ -430,26 +437,22 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   // it. The last few hours are kept for the next loop. Currents and wind share one canvas and one engine.
   const flow = createFlow({ map, motionQuery })
   const HOURS_KEPT = 14, HOUR_STEP_MS = 1500
-  const newRun = () => ({ hours: [], at: -1, cache: new Map(), playing: false, timer: 0, shown: null })
+  const newRun = () => ({ hours: [], at: -1, cache: new Map(), pending: new Map(), playing: false, timer: 0, stepAt: 0, shown: null })
   const sea = newRun(), wind = newRun()
-  async function tiff(url, signal) {
-    const r = await fetch(url, { signal })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    // Out of range, the service answers HTTP 200 with a description of the error.
-    if (!/image\/tiff/i.test(r.headers.get('content-type') || '')) throw new Error('the service sent no image')
-    return readGeoTiff(await r.arrayBuffer())
+  async function tiff(url, signal, say) {
+    return readGeoTiff(await geomet(url, 'arrayBuffer', signal, say, /image\/tiff/i))
   }
   const HOURLY = {
     currents: {
       run: sea, capabilities: currentsCapabilitiesUrl, times: currentsTimes, example: 0.5, medium: 'water',
-      grid: async (time, signal) => currentsGrid(...(await Promise.all([tiff(currentsUrl('X', time), signal), tiff(currentsUrl('Y', time), signal)]))),
+      grid: async (time, signal, say) => currentsGrid(...(await Promise.all([tiff(currentsUrl('X', time), signal, say), tiff(currentsUrl('Y', time), signal, say)]))),
       message: (time) => `Modelled surface currents for ${pacificHour(time)}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`,
       loading: (time) => `Loading sea currents for ${pacificHour(time)}…`,
       nextFailed: (time) => `The next hour of sea currents could not be loaded just now. The map still shows ${pacificHour(time)}.`,
     },
     wind: {
       run: wind, capabilities: windCapabilitiesUrl, times: windTimes, example: 5, medium: 'air',
-      grid: async (time, signal) => windGrid(...(await Promise.all([tiff(windUrl('speed', time), signal), tiff(windUrl('direction', time), signal)]))),
+      grid: async (time, signal, say) => windGrid(...(await Promise.all([tiff(windUrl('speed', time), signal, say), tiff(windUrl('direction', time), signal, say)]))),
       message: (time) => `Modelled wind for ${pacificHour(time)}, Environment Canada’s HRDPS model (forecast, not for navigation).`,
       loading: (time) => `Loading wind for ${pacificHour(time)}…`,
       nextFailed: (time) => `The next hour of wind could not be loaded just now. The map still shows ${pacificHour(time)}.`,
@@ -457,13 +460,21 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   }
   const stopHourly = (run) => { clearTimeout(run.timer); run.timer = 0 }
   const showHourlyControls = (id, on) => { $(`${id}-controls`).hidden = !on; $(`${id}-note`).hidden = !on }
-  async function hourlyGrid(id, time, signal) {
+  // One request for an hour at a time: a second call for an hour already on its way waits for that request.
+  async function hourlyGrid(id, time, signal, say) {
     const { run } = HOURLY[id], kept = run.cache.get(time)
     if (kept) { run.cache.delete(time); run.cache.set(time, kept); return kept } // most recently used last
-    const grid = await HOURLY[id].grid(time, signal)
-    run.cache.set(time, grid)
-    while (run.cache.size > HOURS_KEPT) run.cache.delete(run.cache.keys().next().value)
-    return grid
+    let ask = run.pending.get(time)
+    if (!ask) {
+      ask = HOURLY[id].grid(time, signal, say).then((grid) => {
+        if (signal?.aborted) throw new Error('cancelled')
+        run.cache.set(time, grid)
+        while (run.cache.size > HOURS_KEPT) run.cache.delete(run.cache.keys().next().value)
+        return grid
+      }).finally(() => run.pending.delete(time))
+      run.pending.set(time, ask)
+    }
+    return ask
   }
   // Put one hour on the map and remember it, for the click readout.
   function showHour(id, time, grid) { HOURLY[id].run.shown = { time, grid }; flow.show(grid, id); if (id === 'currents') syncScalar() } // a sea temperature or saltiness picture follows the hour
@@ -483,25 +494,38 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     const next = (run.at + 1) % run.hours.length, signal = state[id].abort?.signal
     if (!run.cache.has(run.hours[next])) setStatus(id, 'loading', h.loading(run.hours[next]))
     try {
-      const grid = await hourlyGrid(id, run.hours[next], signal)
+      const grid = await hourlyGrid(id, run.hours[next], signal, sayFor(id, h.loading(run.hours[next])))
       if (!run.playing || !state[id].on) return
       run.at = next
       showHour(id, run.hours[next], grid)
       setStatus(id, 'ok', h.message(run.hours[next]))
-      hourlyGrid(id, run.hours[(next + 1) % run.hours.length], signal).catch(() => {}) // the next hour, ready before it is wanted
+      blendToNext(id) // fetches the hour after this one, and blends toward it
     } catch (e) {
       if (signal?.aborted || !state[id].on) return
       setHourlyPlaying(id, false)
-      setStatus(id, 'fail', h.nextFailed(run.hours[run.at]))
+      setStatus(id, 'fail', h.nextFailed(run.hours[run.at]) + geometWhy(e))
       return
     }
     run.timer = setTimeout(() => hourlyStep(id), HOUR_STEP_MS)
+  }
+  // While Play runs, the flow is blended from the hour shown to the one after it over the time until the next step, so it changes smoothly
+  // and does not jump each hour. The hour after is fetched at the start of the step, no earlier, and the blend starts when it is in.
+  async function blendToNext(id) {
+    const { run } = HOURLY[id], at = run.at, stepAt = (run.stepAt = performance.now())
+    try {
+      const grid = await hourlyGrid(id, run.hours[(at + 1) % run.hours.length], state[id].abort?.signal)
+      if (!run.playing || !state[id].on || run.at !== at || run.stepAt !== stepAt) return // paused, unticked or stepped on while it was coming
+      flow.blend(grid, HOUR_STEP_MS - (performance.now() - stepAt))
+    } catch { /* the step that wants this hour says so if it cannot be had */ }
   }
   function setHourlyPlaying(id, on) {
     const { run } = HOURLY[id]
     run.playing = on
     syncHourlyPlay(id)
-    if (on) hourlyStep(id); else stopHourly(run)
+    if (on) {
+      blendToNext(id) // the first step comes a step from now: the flow starts to change at once, and smoothly
+      run.timer = setTimeout(() => hourlyStep(id), HOUR_STEP_MS)
+    } else { stopHourly(run); flow.unblend() } // back to the hour the status line names
   }
   for (const id of Object.keys(HOURLY)) {
     const { run } = HOURLY[id]
@@ -515,8 +539,9 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
 
   async function loadHourly(id, signal) {
     const h = HOURLY[id]
-    const { times, at } = hourWindow(h.times(await text(h.capabilities(), signal)))
-    const grid = await hourlyGrid(id, times[at], signal)
+    const say = sayFor(id, `Loading ${DEFS[id].label.toLowerCase()}…`)
+    const { times, at } = hourWindow(h.times(await geomet(h.capabilities(), 'text', signal, say)))
+    const grid = await hourlyGrid(id, times[at], signal, say)
     return {
       data: null,
       message: h.message(times[at]),
@@ -529,45 +554,46 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     }
   }
 
-  // ---- sea temperature and saltiness: one picture of the map area for each hour, from the same CIOPS model
-  // The hour shown is the one of the sea currents while that layer is on (and it follows its Play), and the latest
-  // hour not after now otherwise. Only the hour shown is fetched, and while the currents play the one after it.
-  // The pictures kept are the small PNG replies, not the decoded images, so a loop of Play costs no second request.
-  const scalar = { kind: null, times: [], shown: null, blobs: new Map(), canvas: null, busy: false, dirty: false, before: null }
+  // ---- sea temperature and saltiness: the model's numbers for each hour, coloured here and drawn as one picture of the map area
+  // The hour shown is the one of the sea currents while that layer is on (and it follows its Play), and the latest hour not after now
+  // otherwise. Only the hour shown is fetched, and while the currents play the one after it. Each hour is one grid of 73 KB (the same size as a
+  // component of the currents), kept for the next loop of Play, and the picture is made from it in the browser (scalarPicture, in js/overlays-data.js).
+  const scalar = { kind: null, times: [], shown: null, grids: new Map(), pending: new Map(), canvas: null, busy: false, dirty: false, before: null }
   const activeScalar = () => (state.temperature.on ? 'temperature' : state.salinity.on ? 'salinity' : null)
   const seaFollow = () => (state.currents.on && sea.shown ? sea.shown.time : null)
   const scalarMessage = (kind, time) => `Modelled ${SCALARS[kind].what} for ${pacificHour(time)}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`
-  async function scalarBlob(kind, time, signal) {
-    const key = `${kind}|${time}`, kept = scalar.blobs.get(key)
-    if (kept) { scalar.blobs.delete(key); scalar.blobs.set(key, kept); return kept } // most recently used last
-    const r = await fetch(scalarImageUrl(kind, time, geo), { signal })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    // Out of range, the service answers HTTP 200 with a description of the error.
-    if (!/image\/png/i.test(r.headers.get('content-type') || '')) throw new Error('the service sent no image')
-    const blob = await r.blob()
-    if (blob.size > 1e6) throw new Error('unexpected image size')
-    scalar.blobs.set(key, blob)
-    while (scalar.blobs.size > HOURS_KEPT) scalar.blobs.delete(scalar.blobs.keys().next().value)
-    return blob
+  async function scalarGridFor(kind, time, signal, say) {
+    const key = `${kind}|${time}`, kept = scalar.grids.get(key)
+    if (kept) { scalar.grids.delete(key); scalar.grids.set(key, kept); return kept } // most recently used last
+    let ask = scalar.pending.get(key)
+    if (!ask) {
+      ask = tiff(scalarUrl(kind, time), signal, say).then((raw) => {
+        if (signal?.aborted) throw new Error('cancelled')
+        const grid = scalarGrid(kind, raw)
+        scalar.grids.set(key, grid)
+        while (scalar.grids.size > HOURS_KEPT) scalar.grids.delete(scalar.grids.keys().next().value)
+        return grid
+      }).finally(() => scalar.pending.delete(key))
+      scalar.pending.set(key, ask)
+    }
+    return ask
   }
   function scalarSourceReady() {
     if (map.getSource('sea-scalar')) return
     // No url: each picture is handed over with updateImage(), as for the radar. It sits above the sea of the basemap and
     // the ecosystem and ecoregion sea masks, and under the creeks, parks and boundaries.
     map.addSource('sea-scalar', { type: 'image', coordinates: geo.coordinates })
-    map.addLayer({ id: 'sea-scalar', type: 'raster', source: 'sea-scalar', paint: { 'raster-opacity': SCALAR_OPACITY, 'raster-fade-duration': 0 } }, scalar.before)
+    map.addLayer({ id: 'sea-scalar', type: 'raster', source: 'sea-scalar', paint: { 'raster-opacity': nonna.night ? NIGHT_SCALAR_OPACITY : SCALAR_OPACITY, 'raster-fade-duration': 0 } }, scalar.before)
   }
-  async function drawScalar(kind, time, blob) {
-    const bitmap = await createImageBitmap(blob)
-    if (bitmap.width !== geo.width || bitmap.height !== geo.height) { bitmap.close(); throw new Error('unexpected image size') }
-    if (!scalar.canvas) { scalar.canvas = document.createElement('canvas'); scalar.canvas.width = geo.width; scalar.canvas.height = geo.height }
-    const g = scalar.canvas.getContext('2d')
-    g.clearRect(0, 0, geo.width, geo.height); g.drawImage(bitmap, 0, 0); bitmap.close()
-    if (activeScalar() !== kind) return // unticked while the picture was being made
+  function drawScalar(kind, time, grid) {
+    if (activeScalar() !== kind) return // unticked while the grid was on its way
+    const height = Math.round(SCALAR_WIDTH * geo.height / geo.width)
+    if (!scalar.canvas) { scalar.canvas = document.createElement('canvas'); scalar.canvas.width = SCALAR_WIDTH; scalar.canvas.height = height }
+    scalar.canvas.getContext('2d').putImageData(new ImageData(scalarPicture(grid, geo, SCALAR_WIDTH, height), SCALAR_WIDTH, height), 0, 0)
     scalarSourceReady()
     map.getSource('sea-scalar').updateImage({ image: scalar.canvas, coordinates: geo.coordinates })
     map.triggerRepaint()
-    scalar.shown = { kind, time }
+    scalar.shown = { kind, time, grid }
   }
   // Bring the picture to the hour it should show now: after the sea currents step, or when they are switched on or off.
   async function syncScalar() {
@@ -582,36 +608,38 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
         const time = scalarHour(scalar.times, seaFollow())
         if (scalar.shown?.kind === kind && scalar.shown.time === time) continue
         const signal = state[kind].abort?.signal, had = scalar.shown?.kind === kind ? scalar.shown.time : null
-        if (!scalar.blobs.has(`${kind}|${time}`)) setStatus(kind, 'loading', `Loading ${SCALARS[kind].what} for ${pacificHour(time)}…`)
+        const loading = `Loading ${SCALARS[kind].what} for ${pacificHour(time)}…`
+        if (!scalar.grids.has(`${kind}|${time}`)) setStatus(kind, 'loading', loading)
         try {
-          await drawScalar(kind, time, await scalarBlob(kind, time, signal))
+          drawScalar(kind, time, await scalarGridFor(kind, time, signal, sayFor(kind, loading)))
           if (activeScalar() !== kind) break
           setStatus(kind, 'ok', scalarMessage(kind, time))
           // While the currents play, the next hour is ready before it is wanted. It is the hour after the one shown, and no more.
-          if (sea.playing) scalarBlob(kind, nearestHour(scalar.times, sea.hours[(sea.at + 1) % sea.hours.length]), signal).catch(() => {})
+          if (sea.playing) scalarGridFor(kind, nearestHour(scalar.times, sea.hours[(sea.at + 1) % sea.hours.length]), signal).catch(() => {})
         } catch (e) {
           if (signal?.aborted || activeScalar() !== kind) break
-          setStatus(kind, 'fail', had ? `The next hour of ${SCALARS[kind].what} could not be loaded just now. The map still shows ${pacificHour(had)}.` : failureLine(kind, DEFS[kind]))
+          setStatus(kind, 'fail', had ? `The next hour of ${SCALARS[kind].what} could not be loaded just now. The map still shows ${pacificHour(had)}.${geometWhy(e)}` : failureLine(kind, DEFS[kind], e))
         }
       } while (scalar.dirty)
     } finally { scalar.busy = false }
   }
   async function loadScalar(kind, signal) {
-    const times = scalarTimes(kind, await text(scalarCapabilitiesUrl(kind), signal))
+    const say = sayFor(kind, `Loading ${DEFS[kind].label.toLowerCase()}…`)
+    const times = scalarTimes(kind, await geomet(scalarCapabilitiesUrl(kind), 'text', signal, say))
     const time = scalarHour(times, seaFollow())
-    const blob = await scalarBlob(kind, time, signal)
+    const grid = await scalarGridFor(kind, time, signal, say)
     return {
       data: null,
       message: scalarMessage(kind, time),
       after() {
         if (state[kind].on) {
           scalar.times = times
-          drawScalar(kind, time, blob).catch(() => setStatus(kind, 'fail', failureLine(kind, DEFS[kind])))
+          try { drawScalar(kind, time, grid) } catch { setStatus(kind, 'fail', failureLine(kind, DEFS[kind])) }
         }
       },
     }
   }
-  // The keys under the boxes: a gradient of the colours the service draws, and the values at its ticks.
+  // The keys under the boxes: the colour ramp itself, and the values at its ticks.
   function buildKey(id, gradient, ticks, from, to) {
     $(`${id}-bar`).style.backgroundImage = gradient
     const row = $(`${id}-ticks`)
@@ -619,7 +647,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   }
   for (const kind of Object.keys(SCALARS)) {
     const t = SCALE_TICKS[kind], from = t[0], to = t.at(-1)
-    buildKey(kind, scaleGradient(SCALES[kind], from, to), t, from, to)
+    buildKey(kind, rampGradient(kind), t, from, to)
   }
   buildKey('seafloor', nonnaGradient(0, NONNA_TICKS.at(-1)), NONNA_TICKS, 0, NONNA_TICKS.at(-1))
   $('seafloor-chs-notice').textContent = NONNA_NOTICE
@@ -631,7 +659,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   // The tiles are opaque where they have depths, so the coarser colours below do not show through them.
   const SEAFLOOR_MESSAGE = 'Depth in metres, from the Canadian Hydrographic Service in Canadian waters (cells of 100 m, and 10 m close up) and from NOAA’s ETOPO1 grid elsewhere. Not for navigation.'
   const SEAFLOOR_FAILURE = 'The Canadian Hydrographic Service’s depths could not be loaded just now, so the coarser ETOPO1 depths from NOAA are shown. Try again later.'
-  const nonna = { worker: null, jobs: new Map(), id: 0, ok: 0, failed: 0, sea: [194, 200, 202] } // sea: the colour of the basemap's water, mixed into the tiles
+  const nonna = { worker: null, jobs: new Map(), id: 0, ok: 0, failed: 0, sea: [194, 200, 202], daySea: [194, 200, 202] } // sea: the colour of the basemap's water, mixed into the tiles
   function nonnaWorker() {
     if (nonna.worker) return nonna.worker
     const w = new Worker(new URL('./seafloor-worker.js', import.meta.url), { type: 'module' })
@@ -660,6 +688,34 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     }
   }
   addProtocol?.('nonna', loadNonnaTile)
+  // The two sources and layers of the CHS tiles, just under `before`. The tile already carries the layer's opacity, mixed with the colour of the
+  // water under it, so the layer itself is opaque.
+  function addNonna(before, visible) {
+    for (const res of [100, 10]) map.addSource(`nonna-${res}`, { type: 'raster', tiles: [`nonna://${res}/{z}/{x}/{y}`], tileSize: 256, maxzoom: NONNA_MAX_ZOOM[res], attribution: NONNA_ATTRIB })
+    const style = { 'raster-opacity': 1, 'raster-fade-duration': 0 }, layout = { visibility: visible ? 'visible' : 'none' }
+    map.addLayer({ id: 'seafloor-nonna', type: 'raster', source: 'nonna-100', maxzoom: NONNA_CLOSE_ZOOM, layout, paint: style }, before)
+    map.addLayer({ id: 'seafloor-nonna-10', type: 'raster', source: 'nonna-10', minzoom: NONNA_CLOSE_ZOOM, layout, paint: style }, before)
+  }
+  // The tiles are painted with the colour of the water in them, so when the water changes colour they are asked for and painted again, in their place in the stack.
+  function refreshNonna() {
+    if (!map.getLayer('seafloor-nonna-10')) return
+    const ids = map.getStyle().layers.map((l) => l.id), above = ids[ids.indexOf('seafloor-nonna-10') + 1]
+    for (const id of ['seafloor-nonna-10', 'seafloor-nonna']) map.removeLayer(id)
+    for (const res of [100, 10]) map.removeSource(`nonna-${res}`)
+    nonna.worker?.terminate(); nonna.worker = null // its answers for each colour were made for the old water
+    for (const job of nonna.jobs.values()) job.reject(new Error('the sea changed colour'))
+    nonna.jobs.clear()
+    addNonna(above, state.seafloor.on)
+  }
+  // The Night look: the water is dark, the trails of the currents and the wind are pale, the temperature and saltiness need more paint, and the
+  // CHS tiles are painted again on the dark water. The basemap and the labels are darkened by js/night.js.
+  function setNight(on) {
+    flow.setNight(on)
+    nonna.sea = on ? NIGHT_SEA : nonna.daySea
+    refreshNonna()
+    if (map.getLayer('sea-scalar')) map.setPaintProperty('sea-scalar', 'raster-opacity', on ? NIGHT_SCALAR_OPACITY : SCALAR_OPACITY)
+    nonna.night = on
+  }
   async function loadSeafloor() {
     return { data: null, message: nonna.failed && !nonna.ok ? SEAFLOOR_FAILURE : SEAFLOOR_MESSAGE, state: nonna.failed && !nonna.ok ? 'fail' : 'ok' }
   }
@@ -805,8 +861,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       : [el('p', 'Predictions for this station could not be loaded just now. Try again later.'), el('p', 'Predictions, not for navigation. Source: NOAA/NOS/CO-OPS.', 'src')]))
   }
 
-  // ---- the readout for a click on the sea: the modelled current of the hour shown, from the grid already loaded,
-  // and the temperature or saltiness at the place, which is asked of the service for that one place when that layer is on.
+  // ---- the readout for a click on the sea: the modelled current of the hour shown and the temperature or saltiness at the place,
+  // read from the grids already loaded, so a click makes no request.
   const waterLayerId = () => map.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))?.id
   function seaReadout(e) {
     const { lngLat, point } = e, shown = sea.shown, kind = activeScalar()
@@ -823,15 +879,11 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       box.append(el('p', `Surface current for ${pacificHour(shown.time)}.`))
     }
     if (kind && scalar.shown?.kind === kind) {
-      const word = el('p', `Surface ${SCALARS[kind].what}: reading the model…`), at = scalar.shown.time
-      box.append(word)
-      const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 15000)
-      json(scalarInfoUrl(kind, lngLat.lng, lngLat.lat, at), ac.signal).then((reply) => {
-        const v = scalarReading(kind, reply)
-        word.textContent = v == null ? `Surface ${SCALARS[kind].what}: the model has no value here.` : `Surface ${SCALARS[kind].what}: ${scalarText(kind, v)} (for ${pacificHour(at)}).`
-      }, () => { word.textContent = `Surface ${SCALARS[kind].what}: could not be read just now.` }).finally(() => { clearTimeout(timer); box.dispatchEvent(new Event('filled')) })
+      // The number is read from the grid the picture was made from, so it is the one the colour stands for.
+      const v = scalarAt(scalar.shown.grid, lngLat.lng, lngLat.lat)
+      box.append(el('p', v == null ? `Surface ${SCALARS[kind].what}: the model has no value here.` : `Surface ${SCALARS[kind].what}: ${scalarText(kind, v)} (for ${pacificHour(scalar.shown.time)}).`))
     }
-    box.append(el('p', uv ? 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 1 km grid.' : 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 500 m grid.', 'src'))
+    box.append(el('p', 'Model estimate, not for navigation. Environment Canada’s CIOPS Salish Sea model (experimental), on a 1 km grid.', 'src'))
     return box
   }
 
@@ -866,11 +918,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     // The Canadian Hydrographic Service tiles over it: 100 m cells below map zoom 11 and 10 m cells from there. Tiles are asked for
     // by the "nonna" protocol (loadNonnaTile), and only while their layer is shown, which is while the box is ticked. The tile
     // already carries the layer's opacity, mixed with the colour of the water under it, so the layer itself is opaque.
-    nonna.sea = rgbOf(water?.paint?.['fill-color']) || (basemap ? [194, 200, 202] : [238, 240, 234])
-    for (const res of [100, 10]) map.addSource(`nonna-${res}`, { type: 'raster', tiles: [`nonna://${res}/{z}/{x}/{y}`], tileSize: 256, maxzoom: NONNA_MAX_ZOOM[res], attribution: NONNA_ATTRIB })
-    const nonnaStyle = { 'raster-opacity': 1, 'raster-fade-duration': 0 }
-    map.addLayer({ id: 'seafloor-nonna', type: 'raster', source: 'nonna-100', maxzoom: NONNA_CLOSE_ZOOM, layout: hidden, paint: nonnaStyle }, ecoBefore)
-    map.addLayer({ id: 'seafloor-nonna-10', type: 'raster', source: 'nonna-10', minzoom: NONNA_CLOSE_ZOOM, layout: hidden, paint: nonnaStyle }, ecoBefore)
+    nonna.sea = nonna.daySea = rgbOf(water?.paint?.['fill-color']) || (basemap ? [194, 200, 202] : [238, 240, 234])
+    addNonna(ecoBefore, false)
 
     src('ov-ecoregions', ECO_ATTRIB)
     map.addLayer({ id: 'ecoregions-fill', type: 'fill', source: 'ov-ecoregions', layout: hidden, paint: { 'fill-color': '#4f8a5b', 'fill-opacity': 0.22 } }, ecoBefore)
@@ -1072,5 +1121,5 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   // Areas of the sea. A click on the sea that reaches one of these also gets the sea readout, above the area's popup.
   const SEA_AREA_LAYERS = ['kelp-fill', 'eelgrass-fill', 'protected-fill', 'srkw-fill', 'cetaceans-fill']
 
-  return { addLayers, addLabels, popupFor, seaReadout, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, seaAreaLayers: SEA_AREA_LAYERS, defs: DEFS, state, radar, sea, wind, scalar, tideCache, flow, enable, disable, showFrame }
+  return { addLayers, addLabels, popupFor, seaReadout, setNight, queryLayers: QUERY_LAYERS, popupLayers: POPUP_LAYERS, seaAreaLayers: SEA_AREA_LAYERS, defs: DEFS, state, radar, sea, wind, scalar, tideCache, flow, enable, disable, showFrame }
 }

@@ -2,6 +2,7 @@
 // page works from any GitHub Pages project path (https://<org>.github.io/<repo>/).
 import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWorkerUrl, addProtocol } from '../vendor/maplibre-gl.mjs'
 import { createOverlays } from './overlays.js'
+import { createNight } from './night.js'
 
 // MapLibre 6.x ships ES modules only, so its worker is pointed at explicitly.
 setWorkerUrl(new URL('../vendor/maplibre-gl-worker.mjs', import.meta.url).href)
@@ -39,6 +40,15 @@ const TERRAIN_MAX_PITCH = 75
 // MapLibre has no way to remove a sky, so turning 3D off sets its own default: nothing drawn.
 const NO_SKY = { 'sky-color': 'transparent', 'horizon-color': 'transparent', 'fog-color': 'transparent', 'fog-ground-blend': 1, 'atmosphere-blend': 0 }
 const TERRAIN_SKY = { 'sky-color': '#8db7e0', 'horizon-color': '#e8eef1', 'fog-color': '#eef0ea', 'sky-horizon-blend': 0.5, 'horizon-fog-blend': 0.6, 'fog-ground-blend': 0.5, 'atmosphere-blend': 0 }
+const NIGHT_SKY = { 'sky-color': '#0b1522', 'horizon-color': '#1b2735', 'fog-color': '#121a24', 'sky-horizon-blend': 0.5, 'horizon-fog-blend': 0.6, 'fog-ground-blend': 0.5, 'atmosphere-blend': 0 }
+// The page's own layers that need a colour of their own at night (the Night look darkens the basemap and every label by itself): the hillshade
+// would glow, and the lakes and wetlands, drawn pale for a pale map, would be bright patches on a dark one.
+const NIGHT_PAINT = {
+  hillshade: { 'hillshade-shadow-color': '#000000', 'hillshade-highlight-color': '#5c676e', 'hillshade-accent-color': '#20262b' },
+  lakes: { 'fill-color': '#2b5f80' },
+  wetlands: { 'fill-color': '#2f6a5c' },
+  'muni-line': { 'line-color': '#8b949c' },
+}
 
 // Flow: a pale dash pattern slid along the creek lines makes dashes march in the
 // direction of the line, which data/streams-flow.geojson draws downstream.
@@ -196,7 +206,7 @@ motionQuery.addEventListener('change', () => { flowBox.checked = !motionQuery.ma
 // Off, the map is flat and north-up. On, it tilts, can be rotated and pitched, and gets a sky.
 // The hillshade box does not change when this one does. MapLibre drapes the flat layers
 // (parks, creeks, watersheds and the rest) over the relief.
-const terrainBox = $('terrain3d')
+const terrainBox = $('terrain3d'), nightBox = $('night')
 function setNavigation(compass) {
   map.removeControl(nav)
   nav = new NavigationControl({ showCompass: compass, visualizePitch: compass })
@@ -218,7 +228,7 @@ function setTerrain3d() {
     map.touchZoomRotate.enableRotation()
     map.touchPitch.enable()
     map.setTerrain({ source: 'terrain-dem', exaggeration: TERRAIN_EXAGGERATION })
-    map.setSky(TERRAIN_SKY)
+    map.setSky(nightBox.checked ? NIGHT_SKY : TERRAIN_SKY)
     map.easeTo({ pitch: TERRAIN_PITCH, duration })
   } else {
     map.setTerrain(null)
@@ -310,6 +320,16 @@ map.once('load', () => {
     label('pins-label', 'pins', ['get', 'title'], 0, { 'text-offset': [0, 1.4], 'text-anchor': 'top', 'text-optional': true }, { 'text-color': '#1d1d1d' })
     overlays.addLabels({ font })
   }
+
+  // The Night look is off when the page opens. Its box darkens the basemap and the labels, and tells the live layers and the sky.
+  const night = createNight({ map, basemapSource: water?.source ?? null, overrides: NIGHT_PAINT })
+  const setNight = () => {
+    night.set(nightBox.checked)
+    overlays.setNight(nightBox.checked)
+    if (map.getTerrain()) map.setSky(nightBox.checked ? NIGHT_SKY : TERRAIN_SKY)
+  }
+  nightBox.addEventListener('change', setNight)
+  if (nightBox.checked) setNight() // a browser that keeps a ticked box across a reload
 
   // Layers start in the state the checkboxes describe.
   applyToggles()

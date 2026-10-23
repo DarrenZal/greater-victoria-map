@@ -242,6 +242,65 @@ export function normaliseLife(results) {
   return collection(out)
 }
 
+// ---- asking the GeoMet server (geo.weather.gc.ca)
+// Its replies take from 0.5 to 12 s, and about one request in six times out or is refused. So each request has its own time limit, covering
+// the reply to its last byte, and one more try after a short wait when the first failed in a way a second could mend: no answer in time, a
+// broken connection, or an answer that says the server is busy or broken. A request the server refuses for its own sake (a missing layer,
+// an hour out of range) or answers with the wrong kind of file is not tried twice. The caller's signal stops everything at once.
+export const GEOMET_TRY_MS = 15000 // the time limit of one try
+export const GEOMET_SLOW_MS = 6000 // after this long without an answer the status line says the server is slow
+export const GEOMET_WAIT_MS = 1500 // between the first try and the second
+export const GEOMET_SLOW_LINE = 'Environment Canada’s server is slow to answer.'
+export const GEOMET_RETRY_LINE = 'Environment Canada’s server did not answer. Trying once more.'
+const RETRY_STATUS = [408, 425, 429, 500, 502, 503, 504]
+const geometError = (message, reason, status) => Object.assign(new Error(message), { reason, status })
+// What the status line adds to a failure: nothing for a failure that is not the server's, or a plain sentence.
+export function geometWhy(e) {
+  if (e?.reason === 'down') return ' Environment Canada’s server is not answering.'
+  if (e?.reason === 'error') return ' Environment Canada’s server sent an error.'
+  return ''
+}
+// The reply to `url` as `as` ('text', 'arrayBuffer' or 'blob'). `say('slow')` is called once if the first try is slow, and `say('retry')`
+// as the wait before the second begins. `type` is a pattern the content type must match. `tryMs`, `slowMs`, `waitMs` and `fetchImpl` are for the checks.
+// A failure carries `reason`: 'down' (no answer), 'error' (the server's own error, with `status`), 'wrong' (the wrong kind of file) or 'cancelled'.
+export async function geometGet(url, as, { signal, say, type, tryMs = GEOMET_TRY_MS, slowMs = GEOMET_SLOW_MS, waitMs = GEOMET_WAIT_MS, fetchImpl = (...a) => fetch(...a) } = {}) {
+  if (!['text', 'arrayBuffer', 'blob'].includes(as)) throw new Error('the reply must be read as text, arrayBuffer or blob')
+  let failure
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal?.aborted) throw geometError('cancelled', 'cancelled')
+    if (attempt) {
+      say?.('retry')
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, waitMs), cancel = () => { clearTimeout(t); reject(geometError('cancelled', 'cancelled')) }
+        if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true })
+      })
+    }
+    let limited = false
+    const ac = new AbortController(), stop = () => ac.abort(), slow = say ? setTimeout(() => { if (!attempt) say('slow') }, slowMs) : 0
+    const limit = setTimeout(() => { limited = true; ac.abort() }, tryMs)
+    signal?.addEventListener('abort', stop, { once: true })
+    try {
+      const reply = await fetchImpl(url, { signal: ac.signal })
+      if (!reply.ok) {
+        failure = geometError(`HTTP ${reply.status}`, 'error', reply.status)
+        if (RETRY_STATUS.includes(reply.status)) continue
+        throw failure
+      }
+      // Out of range, the service answers HTTP 200 with a description of the error.
+      if (type && !type.test(reply.headers.get('content-type') || '')) throw geometError('the service sent the wrong kind of file', 'wrong')
+      return await reply[as]()
+    } catch (e) {
+      if (signal?.aborted) throw geometError('cancelled', 'cancelled')
+      if (e?.reason === 'wrong' || (e === failure && !RETRY_STATUS.includes(e.status))) throw e
+      if (e !== failure) failure = geometError(limited ? 'no answer in time' : String(e?.message || e), 'down')
+    } finally {
+      clearTimeout(slow); clearTimeout(limit)
+      signal?.removeEventListener('abort', stop)
+    }
+  }
+  throw failure
+}
+
 // ---- sea currents (ECCC GeoMet WCS, CIOPS-SalishSea model) and wind (HRDPS, same service)
 export const CURRENTS_LAYER = 'CIOPS-SalishSea_500m_SeaWaterVelocity_0.5m' // the layer whose time dimension lists the hours
 export const CURRENTS_BOX = [-124.5, 47.8, -122.6, 49.2] // west, south, east, north: the map's reach (REGION) and a margin
@@ -413,6 +472,7 @@ export function horizonRow(height, fov, pitch) {
 export function screenField(g, width, height, step, places) {
   const cols = Math.ceil(width / step) + 1, rows = Math.ceil(height / step) + 1, n = cols * rows
   const vx = new Float32Array(n).fill(NaN), vy = new Float32Array(n).fill(NaN), speed = new Float32Array(n).fill(NaN)
+  const ux = new Float32Array(n).fill(NaN), uy = new Float32Array(n).fill(NaN) // the flow itself, east and north in m/s
   const sea = new Uint8Array(n), list = []
   const { spacing } = places, lng = new Float64Array(4), lat = new Float64Array(4)
   for (let j = 0; j < rows; j++) {
@@ -437,15 +497,27 @@ export function screenField(g, width, height, step, places) {
       const x = (d * dLng - b * dLat) / det, y = (a * dLat - c * dLng) / det
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue
       const o = j * cols + i
-      vx[o] = x; vy[o] = y; speed[o] = Math.hypot(uv[0], uv[1]); sea[o] = 1
+      vx[o] = x; vy[o] = y; speed[o] = Math.hypot(uv[0], uv[1]); ux[o] = uv[0]; uy[o] = uv[1]; sea[o] = 1
       list.push(o)
     }
   }
-  return { cols, rows, step, vx, vy, speed, sea, list: Int32Array.from(list) }
+  return { cols, rows, step, vx, vy, speed, ux, uy, vecs: [vx, vy, ux, uy], sea, list: Int32Array.from(list) }
 }
 // The screen velocity [px/s, px/s, m/s] at a pixel, or false where there is no flow.
 export function fieldAt(f, x, y, out) {
   return bilinear([f.vx, f.vy, f.speed], f.sea, f.cols, f.rows, x / f.step, y / f.step, out)
+}
+// The same, between two fields of the same view for two hours: `t` is how far from `a` to `b` the time has gone (0 to 1). The flow is mixed as a
+// vector, so a current that turns round between the hours slows to a stop on the way and does not jump, and its speed is the speed of the mixed
+// vector, not the mix of the two speeds. Where only one of the fields has flow, that one is used.
+const mixA = [0, 0, 0, 0], mixB = [0, 0, 0, 0]
+export function fieldBlendAt(a, b, t, x, y, out) {
+  const okA = bilinear(a.vecs, a.sea, a.cols, a.rows, x / a.step, y / a.step, mixA), okB = bilinear(b.vecs, b.sea, b.cols, b.rows, x / b.step, y / b.step, mixB)
+  if (!okA && !okB) return false
+  const wa = okA ? (okB ? 1 - t : 1) : 0, wb = okB ? (okA ? t : 1) : 0
+  out[0] = wa * mixA[0] + wb * mixB[0]; out[1] = wa * mixA[1] + wb * mixB[1]
+  out[2] = Math.hypot(wa * mixA[2] + wb * mixB[2], wa * mixA[3] + wb * mixB[3])
+  return true
 }
 
 // Pixels the picture of the water moves per metre the water travels, typical of this view: the middle value
@@ -474,25 +546,77 @@ export function currentReadout([east, north]) {
   return { ms, knots: ms * 3600 / 1852, still: ms < STILL_MS, toward: ms < STILL_MS ? null : compassWord(Math.atan2(east, north) * 180 / Math.PI) }
 }
 
-// ---- sea temperature and saltiness (ECCC GeoMet WMS, the CIOPS-SalishSea model): one picture for each hour
-// The service draws the picture with its own colour style, so the key under the box is made by hand from
-// colours measured in that picture (see data/SOURCES.md). The temperature layer is in kelvin, the key is in
-// degrees Celsius.
+// ---- sea temperature and saltiness (ECCC GeoMet WCS, the CIOPS-SalishSea model): the model's numbers for each hour, coloured here
+// Each hour is one GeoTIFF of 32-bit numbers over the same box and at the same size as the sea currents, read with readGeoTiff. The service's
+// own pictures were not used: their colour styles run over about 30 degrees, so the 9 to 13 degree sea of the Salish Sea came out as one band
+// of green. Here the numbers are coloured in the browser with a ramp that spans the Salish Sea's real range and is the same for every hour. The
+// temperature layer is in kelvin, the key is in degrees Celsius.
 export const SCALARS = {
-  temperature: { layer: 'CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m', style: 'SEA_TEMPSURF-DEFAULT', what: 'sea temperature', unit: '°C' },
-  salinity: { layer: 'CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m', style: 'SEA_SALT-COASTAL', what: 'sea saltiness', unit: 'psu' },
+  temperature: { layer: 'CIOPS-SalishSea_500m_SeaWaterPotentialTemp_0.5m', what: 'sea temperature', unit: '°C' },
+  salinity: { layer: 'CIOPS-SalishSea_500m_SeaWaterSalinity_0.5m', what: 'sea saltiness', unit: 'psu' },
 }
-// The colour the service draws for a value, as [value, [red, green, blue]], measured from its own pictures on
-// 2026-10-22. Temperature: the Salish Sea values 10 to 13 degrees were read from the Salish Sea picture itself,
-// the others from the East coast model drawn with the same style, shifted to line up (good to about half a degree).
-// Saltiness: the whole range was read from the Salish Sea picture. Below 20 psu the style is one dark blue and
-// above 32 psu one dark red.
-export const SCALES = {
-  temperature: [[6, [14, 118, 239]], [8, [29, 174, 224]], [10, [45, 231, 208]], [11, [58, 253, 195]], [12, [89, 253, 164]], [13, [120, 253, 134]], [14, [141, 253, 112]], [16, [188, 254, 66]], [18, [253, 247, 1]]],
-  salinity: [[20, [0, 0, 167]], [21, [0, 0, 234]], [22, [0, 61, 255]], [23, [0, 158, 255]], [24, [2, 253, 252]], [25, [75, 253, 178]], [26, [156, 254, 97]], [27, [225, 254, 28]], [28, [254, 203, 0]], [29, [254, 122, 0]], [30, [254, 52, 0]], [30.5, [254, 15, 0]], [31, [231, 0, 0]], [31.5, [201, 0, 0]], [32, [170, 0, 0]]],
+// The colour ramps: `colours` are the sRGB colours at `from`, `from + step`, `from + 2 * step` and so on. Between them the colour is a smooth
+// curve through the points in CIELAB, a space where equal steps look about equally different, so the ramp has no bands and no muddy middle.
+// Beyond the first and last the colour stays as it is. The range of each is one fixed scale, so a colour means the same at every hour. On 22
+// October the sea held 9.4 to 13.2 degrees (median 11.7) and 12.6 to 32.3 psu (median 29.4, nine tenths of it between 26.6 and 31.2), and the
+// ramps run wider than that on both sides to leave room for the seasons: 6 to 20 degrees puts October's range over a third of the ramp, from
+// blue through teal to green, and 20 to 34 psu puts the saltiness over the middle of its ramp (see data/SOURCES.md).
+const RAMPS = {
+  temperature: { from: 6, step: 2, colours: [[47, 54, 148], [35, 112, 190], [28, 164, 196], [60, 190, 150], [140, 205, 95], [235, 215, 65], [245, 150, 40], [214, 60, 52]] },
+  salinity: { from: 20, step: 2, colours: [[247, 236, 168], [196, 226, 140], [120, 204, 146], [58, 175, 168], [38, 136, 190], [52, 94, 178], [80, 66, 160], [66, 38, 120]] },
 }
+export const SCALE_RANGE = Object.fromEntries(Object.entries(RAMPS).map(([k, r]) => [k, [r.from, r.from + r.step * (r.colours.length - 1)]]))
 // The ticks written under each key.
-export const SCALE_TICKS = { temperature: [6, 8, 10, 12, 14, 16, 18], salinity: [20, 22, 24, 26, 28, 30, 32] }
+export const SCALE_TICKS = Object.fromEntries(Object.entries(RAMPS).map(([k, r]) => [k, r.colours.map((_, i) => r.from + r.step * i)]))
+
+// sRGB to CIELAB (D65) and back, from the standard formulas (IEC 61966-2-1 and CIE 15).
+const WHITE = [0.95047, 1, 1.08883]
+const toLinear = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+const fromLinear = (c) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055)
+const labF = (t) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116)
+const labFInv = (t) => (t ** 3 > 216 / 24389 ? t ** 3 : (116 * t - 16) * 27 / 24389)
+export function rgbToLab([r, g, b]) {
+  const R = toLinear(r), G = toLinear(g), B = toLinear(b)
+  const fx = labF((0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / WHITE[0]), fy = labF(0.2126729 * R + 0.7151522 * G + 0.072175 * B), fz = labF((0.0193339 * R + 0.119192 * G + 0.9503041 * B) / WHITE[2])
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)]
+}
+export function labToRgb([l, a, b]) {
+  const fy = (l + 16) / 116, X = labFInv(fy + a / 500) * WHITE[0], Y = labFInv(fy), Z = labFInv(fy - b / 200) * WHITE[2]
+  const lin = [3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z, -0.969266 * X + 1.8760108 * Y + 0.041556 * Z, 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z]
+  return lin.map((c) => Math.round(Math.min(255, Math.max(0, fromLinear(Math.min(1, Math.max(0, c)))))))
+}
+const rampLab = {}
+const rampOf = (kind) => {
+  const r = RAMPS[kind]
+  if (!r) throw new Error('the sea layer must be temperature or salinity')
+  return (rampLab[kind] ||= r.colours.map(rgbToLab))
+}
+// The colour of the ramp at a value, [red, green, blue]. A uniform Catmull-Rom curve through the points, so the colour and its change are smooth.
+export function rampColour(kind, v) {
+  const lab = rampOf(kind), { from, step, colours } = RAMPS[kind]
+  if (!Number.isFinite(v)) throw new Error('a number is needed')
+  const x = Math.min(Math.max((v - from) / step, 0), lab.length - 1), i = Math.min(Math.floor(x), lab.length - 2), t = x - i
+  if (t === 0) return colours[i].slice()
+  if (t === 1) return colours[i + 1].slice()
+  const p0 = lab[Math.max(i - 1, 0)], p1 = lab[i], p2 = lab[i + 1], p3 = lab[Math.min(i + 2, lab.length - 1)]
+  return labToRgb(p1.map((_, k) => 0.5 * (2 * p1[k] + (p2[k] - p0[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t * t + (3 * p1[k] - p0[k] - 3 * p2[k] + p3[k]) * t * t * t)))
+}
+// 1024 colours across the ramp's range, three bytes each, for colouring a picture.
+export const RAMP_STEPS = 1024
+const luts = {}
+export function rampLut(kind) {
+  if (luts[kind]) return luts[kind]
+  const [lo, hi] = SCALE_RANGE[kind], out = new Uint8ClampedArray(RAMP_STEPS * 3)
+  for (let i = 0; i < RAMP_STEPS; i++) out.set(rampColour(kind, lo + (hi - lo) * i / (RAMP_STEPS - 1)), i * 3)
+  return (luts[kind] = out)
+}
+// A CSS gradient for the key under the box, from the first value to the last, with a stop every half degree or psu. The browser mixes the colours
+// between two stops in straight lines, which at that spacing is within 2 of the ramp in each channel, so the bar is the ramp.
+export function rampGradient(kind) {
+  const [lo, hi] = SCALE_RANGE[kind], n = Math.round((hi - lo) / 0.5)
+  const stops = Array.from({ length: n + 1 }, (_, i) => `rgb(${rampColour(kind, lo + (hi - lo) * i / n).join(', ')}) ${Math.round(i / n * 1000) / 10}%`)
+  return `linear-gradient(to right, ${stops.join(', ')})`
+}
 
 export function scalarCapabilitiesUrl(kind) {
   return `${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&LAYER=${scalarOf(kind).layer}`
@@ -516,35 +640,79 @@ export function scalarHour(times, follow, now = Date.now()) {
   const w = hourWindow(times, now)
   return w.times[w.at]
 }
-// One picture of the map area for one hour, in web Mercator like the radar.
-export function scalarImageUrl(kind, time, geometry = radarGeometry()) {
+// One hour of the numbers over the box of the currents, as a GeoTIFF: the same request as for a component of the currents, for another coverage.
+export function scalarUrl(kind, time) {
   const s = scalarOf(kind)
   if (!Number.isFinite(Date.parse(time))) throw new Error('an hour is needed')
-  const p = new URLSearchParams({ service: 'WMS', version: '1.3.0', request: 'GetMap', layers: s.layer, styles: s.style, crs: 'EPSG:3857', bbox: geometry.bbox.join(','), width: String(geometry.width), height: String(geometry.height), format: 'image/png', transparent: 'true', time })
+  const [w, south, e, n] = CURRENTS_BOX
+  const p = new URLSearchParams({ service: 'WCS', version: '2.0.1', request: 'GetCoverage', coverageid: s.layer, format: 'image/tiff', subsettingcrs: 'http://www.opengis.net/def/crs/EPSG/0/4326', scalefactor: String(CURRENTS_SCALE), time })
+  p.append('subset', `x(${w},${e})`); p.append('subset', `y(${south},${n})`)
   return `${GEOMET}?${p}`
 }
-// The value at one place, asked of the service by a tiny 3 x 3 pixel request around it (WMS 1.3.0 gives a
-// latitude, longitude box).
-export function scalarInfoUrl(kind, lng, lat, time) {
-  const s = scalarOf(kind), d = 0.01
-  if (!(inBox(lng, lat, REGION)) || !Number.isFinite(Date.parse(time))) throw new Error('a place inside the map and an hour are needed')
-  const p = new URLSearchParams({ service: 'WMS', version: '1.3.0', request: 'GetFeatureInfo', layers: s.layer, query_layers: s.layer, crs: 'EPSG:4326', bbox: [lat - d, lng - d, lat + d, lng + d].map((x) => x.toFixed(5)).join(','), width: '3', height: '3', i: '1', j: '1', info_format: 'application/json', feature_count: '1', time })
-  return `${GEOMET}?${p}`
-}
-// The value from a GetFeatureInfo reply: degrees Celsius for the temperature (the service gives kelvin) or psu
-// for the saltiness. null where there is no model value (land gives an empty reply) or the number is not
-// believable.
-export function scalarReading(kind, reply) {
+// The numbers of one hour as a grid in degrees Celsius or psu. A cell is sea where the number is believable: the temperature between 250 and 330 kelvin,
+// the saltiness above 0 and not above 45. Exactly zero is how the model marks land, and anything else (NaN, a fill value) is no data. The grid has to
+// cover everywhere the map can go, so a picture cannot land in the wrong place.
+export function scalarGrid(kind, tiff) {
   scalarOf(kind)
-  const raw = num(reply?.features?.[0]?.properties?.value)
-  if (raw == null) return null
-  if (kind === 'temperature') return raw >= 250 && raw <= 330 ? raw - 273.15 : null
-  return raw >= 0 && raw <= 45 ? raw : null
+  const { width, height, bbox, data } = tiff, v = new Float32Array(data.length), sea = new Uint8Array(data.length)
+  let n = 0
+  for (let i = 0; i < data.length; i++) {
+    const raw = data[i]
+    const ok = kind === 'temperature' ? raw >= 250 && raw <= 330 : raw > 0 && raw <= 45
+    if (!ok) continue
+    v[i] = kind === 'temperature' ? raw - 273.15 : raw; sea[i] = 1; n++
+  }
+  if (bbox[0] > REGION[0] || bbox[1] > REGION[1] || bbox[2] < REGION[2] || bbox[3] < REGION[3]) throw new Error('the grid does not cover the map area')
+  if (n < data.length * 0.05) throw new Error('the grid has hardly any sea in it')
+  // The sea mask blurred over a cell (weights 1, 2, 1 each way), so the edge drawn between sea and land is a smooth curve and not the staircase of 1 km cells.
+  const soft = new Float32Array(data.length), at = (x, y) => (x >= 0 && y >= 0 && x < width && y < height ? sea[y * width + x] : 0)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      soft[y * width + x] = (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1) + 2 * (at(x - 1, y) + 2 * at(x, y) + at(x + 1, y)) + at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1)) / 16
+    }
+  }
+  return { kind, width, height, bbox, v, sea, soft }
+}
+// The value at a place, bilinear between the cell centres that are sea (so it stops at the coast), or null on land and outside the grid.
+export function scalarAt(g, lng, lat) {
+  const [w, s, e, n] = g.bbox, out = [0]
+  return bilinear([g.v], g.sea, g.width, g.height, (lng - w) / (e - w) * g.width - 0.5, (n - lat) / (n - s) * g.height - 0.5, out) ? out[0] : null
 }
 export const scalarText = (kind, value) => {
   if (!Number.isFinite(value)) throw new Error('the value is not a number')
   return `${(Math.round(value * 10) / 10).toFixed(1)} ${scalarOf(kind).unit}`
 }
+// The picture of one hour, `width` x `height` pixels over the area of `geometry` (web Mercator, as the radar picture), as RGBA bytes. Each pixel is
+// coloured from the value at its place, so the colours are the ramp's and never a blend of two of them. The edge of the sea is drawn from the blurred
+// mask (`soft`) and feathered over about half a cell, so the coast is a smooth curve and not a staircase of cells.
+export function scalarPicture(g, geometry, width, height) {
+  const lut = rampLut(g.kind), [lo, hi] = SCALE_RANGE[g.kind], data = new Uint8ClampedArray(width * height * 4)
+  const [x0, y0, x1, y1] = geometry.bbox, [w, s, e, n] = g.bbox, cols = g.width, rows = g.height
+  const fxs = new Float64Array(width)
+  for (let x = 0; x < width; x++) fxs[x] = (((x + 0.5) / width * (x1 - x0) + x0) / 20037508.34 * 180 - w) / (e - w) * cols - 0.5
+  for (let y = 0; y < height; y++) {
+    const lat = (2 * Math.atan(Math.exp(((y1 - (y + 0.5) / height * (y1 - y0)) / 20037508.34) * Math.PI)) - Math.PI / 2) * 180 / Math.PI
+    const fy = (n - lat) / (n - s) * rows - 0.5, j = Math.floor(fy), ty = fy - j
+    for (let x = 0; x < width; x++) {
+      const fx = fxs[x], i = Math.floor(fx), tx = fx - i
+      let seaW = 0, sum = 0, softW = 0
+      for (let k = 0; k < 4; k++) {
+        const cx = i + (k & 1), cy = j + (k >> 1)
+        if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue
+        const wt = (k & 1 ? tx : 1 - tx) * (k >> 1 ? ty : 1 - ty), at = cy * cols + cx
+        softW += wt * g.soft[at]
+        if (g.sea[at]) { seaW += wt; sum += wt * g.v[at] }
+      }
+      if (seaW === 0 || softW < 0.3) continue
+      const o = (y * width + x) * 4, c = Math.round(Math.min(Math.max((sum / seaW - lo) / (hi - lo), 0), 1) * (RAMP_STEPS - 1)) * 3
+      data[o] = lut[c]; data[o + 1] = lut[c + 1]; data[o + 2] = lut[c + 2]
+      const a = Math.min((softW - 0.3) / 0.3, 1)
+      data[o + 3] = Math.round(255 * a * a * (3 - 2 * a))
+    }
+  }
+  return data
+}
+
 // The colour of a key at a value: between the measured points, and the end colour beyond them.
 export function scaleColour(scale, v) {
   if (!scale.length || !Number.isFinite(v)) throw new Error('a scale and a number are needed')
@@ -561,6 +729,50 @@ export function scaleColour(scale, v) {
 export function scaleGradient(scale, from, to) {
   const stops = [from, ...scale.map((s) => s[0]).filter((v) => v > from && v < to), to].map((v) => `rgb(${scaleColour(scale, v).join(', ')}) ${(Math.round((v - from) / (to - from) * 1000) / 10)}%`)
   return `linear-gradient(to right, ${stops.join(', ')})`
+}
+
+// ---- the Night look: the basemap's own colours, darkened
+// The basemap (OpenFreeMap's Positron) is pale. Its colours are turned into a dark set in the browser, each by what it is for (`role`): the
+// ground and the sea get set colours, text becomes light and its halo dark, and everything else keeps its look turned about the ground: what
+// was darker than the land becomes lighter than the ground by about the same, and what was lighter (white roads) a little lighter still. The hue is
+// kept and the chroma reduced. OpenFreeMap also serves a dark style of its own, which was not used: it has no documentation and its labels are
+// grey on black.
+export const NIGHT_GROUND = [30, 34, 40]
+export const NIGHT_SEA = [13, 31, 50]
+const NIGHT_WATERLINE = [28, 58, 80]
+const LAND_L = 96.4 // the lightness (CIELAB) of the Positron land, which is the ground the other colours are measured from
+const clampL = (l) => Math.min(100, Math.max(0, l))
+// A colour [red, green, blue, alpha] for a role: 'ground', 'sea', 'waterline', 'text', 'halo' or 'feature' (anything else drawn on the map).
+export function nightColour([r, g, b, a], role) {
+  if (role === 'ground') return [...NIGHT_GROUND, a]
+  if (role === 'sea') return [...NIGHT_SEA, a]
+  if (role === 'waterline') return [...NIGHT_WATERLINE, a]
+  const [l, la, lb] = rgbToLab([r, g, b])
+  let l2, chroma
+  if (role === 'text') { l2 = 94 - 0.5 * l; chroma = 1 } // black text becomes near white, grey text a lighter grey
+  else if (role === 'halo') { l2 = 6 + 0.12 * (100 - l); chroma = 0.5 } // a white halo becomes near black
+  else if (role === 'feature') { l2 = l < LAND_L ? 13 + (LAND_L - l) * 0.9 : 13 + (l - LAND_L) * 2.5; chroma = 0.7 }
+  else throw new Error(`no such role: ${role}`)
+  return [...labToRgb([clampL(l2), la * chroma, lb * chroma]), a]
+}
+// A colour of a style (a CSS colour as a string, or an expression holding some) turned to its Night colour. `parse` turns a colour string into
+// [red, green, blue, alpha] (alpha 0 to 1), or null for a string that is not a colour (the name of an operator or a field). Other values stay.
+export function nightValue(value, role, parse) {
+  if (typeof value === 'string') {
+    const c = /^(#|rgb|hsl)/i.test(value) ? parse(value) : null
+    if (!c) return value
+    const [r, g, b, a] = nightColour(c, role)
+    return `rgba(${r}, ${g}, ${b}, ${Math.round(a * 1000) / 1000})`
+  }
+  return Array.isArray(value) ? value.map((v) => nightValue(v, role, parse)) : value
+}
+// Which role each colour of a basemap layer has. `layer` is a layer of the style, `prop` the name of the paint property.
+export function nightRole(layer, prop) {
+  if (layer.type === 'background') return 'ground'
+  if (layer.type === 'symbol') return prop === 'text-halo-color' || prop === 'icon-halo-color' ? 'halo' : 'text'
+  if (layer.type === 'fill' && layer['source-layer'] === 'water') return 'sea'
+  if (layer['source-layer'] === 'waterway') return 'waterline'
+  return 'feature'
 }
 
 // ---- tides and tidal currents (NOAA CO-OPS predictions)
