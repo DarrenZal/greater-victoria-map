@@ -1645,10 +1645,11 @@ async function checkMarine(page, requests, t, name, shot) {
     const anchorTop = /maplibregl-popup-anchor-top/.test(pop.className) // content below the tip
     // The places beside the tip, on the side away from the content, in the map and clear of the banner and the attribution.
     const probes = [100, 200, 300].map((d) => [x, Math.round(anchorTop ? r.top - d : r.bottom + d)]).filter(([px, py]) => py > 90 && py < innerHeight - 90)
-    const tops = probes.map(([px, py]) => { const e = document.elementsFromPoint(px, py)[0]; return e ? e.tagName.toLowerCase() + (typeof e.className === 'string' && e.className ? '.' + e.className.split(' ')[0] : '') : null })
+    // A button of the page or a control of the map may be at the place (the toolbar on a phone), and that is not a blank block.
+    const tops = probes.map(([px, py]) => { const e = document.elementsFromPoint(px, py)[0]; return !e ? null : e.closest('#chrome, .maplibregl-ctrl') ? 'chrome' : e.tagName.toLowerCase() + (typeof e.className === 'string' && e.className ? '.' + e.className.split(' ')[0] : '') })
     return { contentH: Math.round(cr.height), limit: Math.round(innerHeight * 0.6), scroll: c.scrollHeight > c.clientHeight, overflow: getComputedStyle(c).overflowY, tipOutside: tr.top >= cr.bottom - 1 || tr.bottom <= cr.top + 1, probes: probes.length, tops }
   })
-  report(!!box && box.contentH <= box.limit + 1 && box.scroll && box.overflow === 'auto' && box.tipOutside && box.probes >= 1 && box.tops.every((x) => x === 'canvas.maplibregl-canvas'), t('marine: a tall popup is at most 60% of the window high and scrolls inside, and on the far side of its tip the topmost thing is the map canvas (no blank block in the page)'), JSON.stringify(box))
+  report(!!box && box.contentH <= box.limit + 1 && box.scroll && box.overflow === 'auto' && box.tipOutside && box.tops.includes('canvas.maplibregl-canvas') && box.tops.every((x) => x === 'canvas.maplibregl-canvas' || x === 'chrome'), t('marine: a tall popup is at most 60% of the window high and scrolls inside, and on the far side of its tip the topmost thing is the map canvas (or a button or control of the page), with no blank block in the page'), JSON.stringify(box))
   await untickAll()
 
   // CRIMS layers: a click on each
@@ -2193,7 +2194,13 @@ async function checkNight(page, requests, t, name, shot) {
   report(dark.layers === day.layers, t('night: no layer is added or taken away by the switch'))
   const asked = requests.slice(before).filter((u) => LIVE_HOSTS.includes(new URL(u).host) || /\/styles\//.test(u))
   report(asked.length === 0, t('night: switching it on asks no service for anything (the basemap is darkened where it is, and its style is not fetched again)'), asked.join(' '))
-  if (shot) await shot('night-flat')
+  if (shot) {
+    await page.evaluate(() => document.getElementById('night').scrollIntoView({ block: 'center' }))
+    await shot('night-panel')
+    await panel(false)
+    await shot('night-flat')
+    await panel(true)
+  }
 
   // The trails of the currents and the wind are pale, and readable on the dark sea.
   for (const id of ['currents', 'wind']) {
