@@ -577,6 +577,9 @@ export const TIDE_STATIONS = [
   { id: 'PUG1718', kind: 'current', name: 'Haro Strait, 1.2 nm west of Kellett Bluff', short: 'Haro Strait', coords: [-123.22583, 48.58872], series: true },
   { id: 'PCT1391', kind: 'current', name: 'Trial Island, 5.2 miles SSW of', short: 'Trial Island', coords: [-123.36667, 48.31667], series: false },
   { id: 'PCT1416', kind: 'current', name: 'Cattle Point, 2.8 miles SSW of', short: 'Cattle Point', coords: [-123, 48.4], series: false },
+  // The one gauge of the Canadian Hydrographic Service (CHS), asked in place of NOAA: observed and predicted levels, from its own
+  // service (IWLS). Its name, code, id and position are the service's, read on 2026-10-22.
+  { id: '07120', kind: 'level', source: 'chs', chsId: '5cebf1df3d0f4a073c4bbd1e', name: 'Victoria Harbour', short: 'Victoria Harbour', coords: [-123.370828, 48.424363], series: true },
 ]
 export const tideStation = (id) => TIDE_STATIONS.find((s) => s.id === id) || null
 export function tideFeatures() {
@@ -588,7 +591,7 @@ const noaaStamp = (t) => new Date(t).toISOString().slice(0, 16).replace('T', ' '
 // The requests for one station: the highs and lows (water level) or the slacks and maximums (currents), and, where
 // NOAA gives one, a series every 30 minutes for the curve. Times are asked for and read in UTC.
 export function tideUrls(station, now = Date.now()) {
-  if (!tideStation(station?.id)) throw new Error('unknown tide station')
+  if (!tideStation(station?.id) || station.source === 'chs') throw new Error('unknown tide station')
   const level = station.kind === 'level'
   const base = { application: TIDE_APP, format: 'json', time_zone: 'gmt', begin_date: noaaStamp(now - TIDE_BEFORE_H * 3600e3), end_date: noaaStamp(now + TIDE_AFTER_H * 3600e3), station: station.id }
   Object.assign(base, level ? { product: 'predictions', datum: 'MLLW', units: 'metric' } : { product: 'currents_predictions', units: 'english' })
@@ -660,11 +663,14 @@ export function tideCurve(tide, from, to, stepMs = 600e3) {
   }
   return { points: pts, drawn: true }
 }
+const pathOf = (points, x, y) => points.map((p, i) => `${i ? 'L' : 'M'}${Math.round(x(p.ms) * 10) / 10} ${Math.round(y(p.v) * 10) / 10}`).join(' ')
+// The path of another series on the same drawing (the observed levels over the predicted ones), from `x` and `y` of its geometry.
+export const curvePath = (points, g) => pathOf(points, g.x, g.y)
 // The drawing of a curve, as numbers for an SVG: the path, the place of "now" on it and of the zero line (currents).
 // Heights fill the plot with a margin. Currents are drawn about zero, so that flood is above the line and ebb below it.
-export function curveGeometry(points, kind, { from, to, now, width = 260, height = 92, pad = { l: 8, r: 8, t: 8, b: 20 } }) {
+export function curveGeometry(points, kind, { from, to, now, width = 260, height = 92, pad = { l: 8, r: 8, t: 8, b: 20 }, scaleWith = [] }) {
   if (points.length < 2) throw new Error('a curve needs two points')
-  const vs = points.map((p) => p.v)
+  const vs = [...points, ...scaleWith].map((p) => p.v)
   let lo = Math.min(...vs), hi = Math.max(...vs)
   if (kind === 'current') { const m = Math.max(Math.abs(lo), Math.abs(hi), 0.5) * 1.1; lo = -m; hi = m } else { const m = (hi - lo || 1) * 0.08; lo -= m; hi += m }
   const x = (ms) => pad.l + (ms - from) / (to - from) * (width - pad.l - pad.r)
@@ -672,7 +678,7 @@ export function curveGeometry(points, kind, { from, to, now, width = 260, height
   const r = (n) => Math.round(n * 10) / 10
   const at = valueAt(points, now)
   return {
-    d: points.map((p, i) => `${i ? 'L' : 'M'}${r(x(p.ms))} ${r(y(p.v))}`).join(' '),
+    d: pathOf(points, x, y),
     nowX: r(x(now)), nowY: at == null ? null : r(y(at)), nowValue: at,
     zeroY: kind === 'current' ? r(y(0)) : null, top: pad.t, bottom: height - pad.b, left: pad.l, right: width - pad.r,
     min: Math.min(...vs), max: Math.max(...vs), x, y,
@@ -697,13 +703,61 @@ export function curveTicks(from, to) {
   return out
 }
 
+// ---- Victoria Harbour tide gauge (Canadian Hydrographic Service, IWLS): observed and predicted water level
+// Asked for when its popup opens, and for nothing else: three small requests, spaced apart because the service allows 3 a second
+// and 30 a minute for each visitor.
+export const IWLS_API = 'https://api-iwls.dfo-mpo.gc.ca/api/v1/stations'
+export const IWLS_SPACING_MS = 400 // between the requests of one popup
+const IWLS_BEHIND_H = 3, IWLS_AHEAD_H = 21, IWLS_EVENTS_H = 30 // the curve runs 3 hours behind now to 21 ahead. The highs and lows look 30 ahead
+const iwlsStamp = (t) => `${new Date(t).toISOString().slice(0, 16)}:00Z` // "2026-10-22T18:10:00Z"
+export function iwlsUrls(station, now = Date.now()) {
+  if (!tideStation(station?.id) || station.source !== 'chs' || !/^[0-9a-f]{24}$/.test(station.chsId || '')) throw new Error('not a CHS station')
+  const url = (code, from, to, resolution) => `${IWLS_API}/${station.chsId}/data?${new URLSearchParams({ 'time-series-code': code, from: iwlsStamp(from), to: iwlsStamp(to), ...(resolution ? { resolution } : {}) })}`
+  const h = 3600e3
+  return {
+    hilo: url('wlp-hilo', now, now + IWLS_EVENTS_H * h), // the next highs and lows (no type given: told apart in normaliseIwls)
+    observed: url('wlo', now - IWLS_BEHIND_H * h, now, 'FIVE_MINUTES'), // what the gauge has measured
+    predicted: url('wlp', now - IWLS_BEHIND_H * h, now + IWLS_AHEAD_H * h, 'FIFTEEN_MINUTES'), // the curve
+  }
+}
+// The rows of a reply as [{ ms, v, reviewed }] in time order, or null if it is not a list. A reading flagged questionable (3), one
+// with no number or a height no harbour reaches, and one with no time are dropped.
+function iwlsRows(reply) {
+  if (!Array.isArray(reply)) return null
+  return reply.map((r) => ({ ms: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(r?.eventDate) ? Date.parse(r.eventDate) : NaN, v: num(r?.value), reviewed: r?.reviewed === true, flag: r?.qcFlagCode }))
+    .filter((r) => Number.isFinite(r.ms) && r.v != null && r.v > -5 && r.v < 15 && r.flag !== '3').sort((a, b) => a.ms - b.ms)
+}
+// The replies for the gauge as the same plain object NOAA's give: events [{ ms, type, value }] (the highs and lows, told apart by
+// their neighbours, because high and low come in turn), series [{ ms, v }] or null, and also observed [{ ms, v }] and latest
+// { ms, v, reviewed } (the newest reading) or null. Heights are metres above chart datum. A reply with no highs or lows is refused.
+// Predicted levels and observed ones are optional: a station is still shown with the highs and lows alone.
+export function normaliseIwls(station, hiloReply, predictedReply = null, observedReply = null) {
+  if (station?.source !== 'chs') throw new Error('not a CHS station')
+  const hilo = iwlsRows(hiloReply)
+  if (!hilo?.length) throw new Error('the reply held no highs and lows')
+  // The next one is high when it stands above the one after it, and the last is the opposite of the one before it.
+  const events = hilo.map((e, i) => {
+    const high = i < hilo.length - 1 ? e.v > hilo[i + 1].v : (hilo.length > 1 ? !(hilo[i - 1].v > e.v) : null)
+    return { ms: e.ms, type: high ? 'high' : 'low', value: e.v, known: high != null }
+  })
+  if (events.some((e) => !e.known)) throw new Error('could not tell a high from a low in a reply of one')
+  const out = { id: station.id, kind: 'level', source: 'chs', events: events.map(({ ms, type, value }) => ({ ms, type, value })), series: null, observed: [], latest: null, feet: null, floodDir: null, ebbDir: null, bin: null }
+  const pred = iwlsRows(predictedReply)
+  if (pred && pred.length >= 24) out.series = pred.map(({ ms, v }) => ({ ms, v }))
+  const obs = iwlsRows(observedReply)
+  if (obs?.length) {
+    out.observed = obs.map(({ ms, v }) => ({ ms, v }))
+    out.latest = { ms: obs.at(-1).ms, v: obs.at(-1).v, reviewed: obs.at(-1).reviewed }
+  }
+  return out
+}
+
 // ---- seafloor depth, drawn from the elevation tiles (ETOPO1 below the waterline at tile zoom 10 and under)
 // Metres below sea level and the colour of each, shallow to deep. The colour fades in between DEPTH_FADE_FROM and the
 // first depth and is left out above that: the coarse data puts the shore a kilometre or so out, so colouring the
 // shallows would tint land.
 export const DEPTH_FADE_FROM = 10
 export const DEPTH_STOPS = [[25, [150, 202, 222]], [50, [105, 170, 214]], [100, [66, 130, 192]], [200, [44, 92, 160]], [300, [32, 66, 128]]]
-export const DEPTH_TICKS = [50, 100, 200, 300]
 // The MapLibre colour ramp over elevation (metres, negative below the sea): transparent from the waterline down to
 // DEPTH_FADE_FROM, then fading in to the first colour and deepening to the last.
 export function depthExpression(stops = DEPTH_STOPS, fadeFrom = DEPTH_FADE_FROM) {
@@ -712,12 +766,132 @@ export function depthExpression(stops = DEPTH_STOPS, fadeFrom = DEPTH_FADE_FROM)
   for (const [d, c] of [...stops].reverse()) ramp.push(-d, rgb(c))
   return ['interpolate', ['linear'], ['elevation'], ...ramp, -fadeFrom, rgb(stops[0][1], 0), 0, rgb(stops[0][1], 0)]
 }
-// The key under the box: transparent from `from` metres, fading in to the first colour and deepening to `to`.
-export function depthGradient(from = DEPTH_FADE_FROM, to = DEPTH_STOPS.at(-1)[0], stops = DEPTH_STOPS) {
-  const at = (d) => `${Math.round((d - from) / (to - from) * 1000) / 10}%`
-  const parts = [`rgba(${stops[0][1].join(', ')}, 0) 0%`, ...stops.map(([d, c]) => `rgb(${c.join(', ')}) ${at(d)}`)]
-  return `linear-gradient(to right, ${parts.join(', ')})`
+
+// ---- seafloor depth from the Canadian Hydrographic Service (CHS NONNA), drawn over the ETOPO1 colours in Canadian waters
+// The visitor's browser asks CHS for map tiles (100 m cells, and 10 m cells close up) and paints them again here, so nothing of
+// CHS is stored on this site. The server draws depth in its own colours, a red to green to blue rainbow, and has only that one
+// style, so each pixel's colour is read back to metres and painted in this map's blues: one layer, one key. Not for navigation.
+export const NONNA_HOST = 'https://nonna-geoserver.data.chs-shc.ca'
+export const NONNA_LAYERS = { 100: 'NONNA 100', 10: 'NONNA 10' }
+export const NONNA_MAX_ZOOM = { 100: 11, 10: 14 } // the last tile zoom asked for. Beyond it the map stretches the tile
+export const NONNA_CLOSE_ZOOM = 11 // from this map zoom the 10 m tiles are drawn, below it the 100 m ones
+// The server's colour ramp, fitted on 2026-10-22 to 424,060 places where its own depth grid (WCS) and its picture (WMS) were read
+// together: straight lines between these points in red, green and blue (rms error 0.5, 0.7 and 1.2 of 255). Metres below chart
+// datum and the colour. Heights above chart datum (land) run the other way, from the first point to a brown.
+export const NONNA_RAMP = [[0, [195, 0, 0]], [10, [194, 194, 0]], [15, [0, 194, 0]], [30, [9, 102, 195]], [100, [0, 56, 149]], [1000, [2, 0, 107]]]
+export const NONNA_LAND = [[0, [195, 0, 0]], [-100, [148, 83, 0]]]
+export const NONNA_MIN_DEPTH = 1 // shallower than this (and land) is left uncoloured
+const NONNA_OFF_RAMP = 40 // a colour this far from every point of the ramp (of 441) is not a depth
+// ETOPO1's colours start at 25 m, because its grid puts the shore a kilometre or so out. CHS's depths are good to the shore, so the
+// key gets two more stops down to 1 m, each a little bluer and no lighter than the sea of the basemap, so that the colour still
+// reads as deeper than the sea around it and not as a haze over it.
+export const NONNA_STOPS = [[1, [170, 200, 225]], [10, [160, 201, 224]], ...DEPTH_STOPS]
+export const nonnaTileUrl = (res, z, x, y) => {
+  if (!NONNA_LAYERS[res] || ![z, x, y].every((n) => Number.isInteger(n) && n >= 0)) throw new Error('not a NONNA tile')
+  // The service's standard Web Mercator grid (EPSG:900913), tile rows from the top, as MapLibre asks for them.
+  return `${NONNA_HOST}/geoserver/gwc/service/wmts/rest/nonna:${encodeURIComponent(NONNA_LAYERS[res])}/raster/EPSG:900913/EPSG:900913:${z}/${y}/${x}?format=image/png`
 }
+// Metres below chart datum for one colour of the server's picture, or null for land, a drying height or a colour that is not on
+// the ramp. The nearest point on the ramp's straight lines in colour space wins, and a colour nearer the land line is land.
+export function nonnaDepth(r, g, b) {
+  let best = Infinity, depth = null
+  for (const [ramp, sign] of [[NONNA_RAMP, 1], [NONNA_LAND, -1]]) {
+    for (let i = 1; i < ramp.length; i++) {
+      const [d0, c0] = ramp[i - 1], [d1, c1] = ramp[i]
+      const vx = c1[0] - c0[0], vy = c1[1] - c0[1], vz = c1[2] - c0[2]
+      const t = Math.min(1, Math.max(0, ((r - c0[0]) * vx + (g - c0[1]) * vy + (b - c0[2]) * vz) / (vx * vx + vy * vy + vz * vz)))
+      const dist = Math.hypot(r - (c0[0] + t * vx), g - (c0[1] + t * vy), b - (c0[2] + t * vz))
+      if (dist < best) { best = dist; depth = sign > 0 ? d0 + t * (d1 - d0) : null }
+    }
+  }
+  return best <= NONNA_OFF_RAMP ? depth : null
+}
+// This map's colour for a depth in metres: straight lines between the key's stops, the end colour beyond them.
+export const nonnaColour = (depth) => scaleColour(NONNA_STOPS, depth)
+// The server's picture has a hairline with no data where two of its 0.1 degree sheets meet (1 or 2 pixels wide, all along the tile).
+// Fill any run of NONNA_GAP_MAX pixels or fewer with no data that has data on both sides, along a row and then down a column, with
+// the colour of the pixel before it, so the grid of sheets does not show as lines across the sea. Wider gaps are real and are left.
+// A hairline that falls on the edge of a tile is filled from the line inside it.
+export const NONNA_GAP_MAX = 2
+export function nonnaFill(rgba, width, maxRun = NONNA_GAP_MAX) {
+  if (!(rgba?.length % 4 === 0) || !Number.isInteger(width) || width < 1 || (rgba.length / 4) % width !== 0) throw new Error('a tile and its width are needed')
+  const height = rgba.length / 4 / width
+  let filled = 0
+  const data = (i) => rgba[i + 3] >= 128
+  // One pass along a line of `count` pixels that start at pixel `start` and are `step` pixels apart.
+  const pass = (start, step, count) => {
+    let before = -1 // the last pixel with data, and where the run of pixels without it began
+    let runFrom = -1
+    for (let k = 0; k < count; k++) {
+      const i = (start + k * step) * 4
+      if (data(i)) {
+        if (before >= 0 && runFrom >= 0 && k - runFrom <= maxRun) {
+          for (let j = runFrom; j < k; j++) { const o = (start + j * step) * 4; rgba[o] = rgba[before]; rgba[o + 1] = rgba[before + 1]; rgba[o + 2] = rgba[before + 2]; rgba[o + 3] = 255; filled++ }
+        }
+        before = i; runFrom = -1
+      } else if (runFrom < 0) runFrom = k
+    }
+  }
+  for (let y = 0; y < height; y++) pass(y * width, 1, width)
+  for (let x = 0; x < width; x++) pass(x, width, height)
+  // The same hairline can lie along the very edge of a tile, with its other side in the next tile. A whole row or column at the edge
+  // (95% or more of it empty) of maxRun lines or fewer, with a line inside it that is at least half drawn, is filled from that line.
+  const share = (start, step, count) => { let n = 0; for (let k = 0; k < count; k++) if (data((start + k * step) * 4)) n++; return n / count }
+  const edge = (lineStart, lineCount, along, alongStep) => {
+    // Lines are numbered from the edge inward. `lineStart(k)` is the first pixel of line k.
+    let run = 0
+    while (run < lineCount && share(lineStart(run), alongStep, along) <= 0.05) run++
+    if (run < 1 || run > maxRun || run >= lineCount || share(lineStart(run), alongStep, along) < 0.5) return
+    for (let k = 0; k < run; k++) for (let j = 0; j < along; j++) {
+      const src = (lineStart(run) + j * alongStep) * 4, dst = (lineStart(k) + j * alongStep) * 4
+      if (!data(dst) && data(src)) { rgba[dst] = rgba[src]; rgba[dst + 1] = rgba[src + 1]; rgba[dst + 2] = rgba[src + 2]; rgba[dst + 3] = 255; filled++ }
+    }
+  }
+  edge((k) => k * width, height, width, 1) // top rows
+  edge((k) => (height - 1 - k) * width, height, width, 1) // bottom rows
+  edge((k) => k, width, height, width) // left columns
+  edge((k) => width - 1 - k, width, height, width) // right columns
+  return filled
+}
+// Paint a tile again, in place. `rgba` is the pixels of the server's picture (a Uint8ClampedArray). Each pixel with a depth of
+// NONNA_MIN_DEPTH or more becomes this map's colour for it, already mixed with the colour of the sea under it at the layer's
+// opacity, and made opaque, so that the coarse ETOPO1 colours below do not show through it. Every other pixel becomes clear.
+// `cache` keeps the answer for each colour met, because a tile holds a few hundred colours in its 65,536 pixels.
+export function nonnaPaint(rgba, sea, opacity, cache = new Map(), width = Math.round(Math.sqrt(rgba?.length / 4))) {
+  if (!(rgba?.length % 4 === 0) || sea?.length !== 3 || !(opacity > 0 && opacity <= 1)) throw new Error('a tile, the sea colour and an opacity are needed')
+  nonnaFill(rgba, width)
+  let painted = 0
+  for (let i = 0; i < rgba.length; i += 4) {
+    let out = -1
+    if (rgba[i + 3] >= 128) {
+      const key = (rgba[i] << 16) | (rgba[i + 1] << 8) | rgba[i + 2]
+      out = cache.get(key)
+      if (out === undefined) {
+        const d = nonnaDepth(rgba[i], rgba[i + 1], rgba[i + 2])
+        if (d == null || d < NONNA_MIN_DEPTH) out = -1
+        else { const c = nonnaColour(d).map((v, k) => Math.round(v * opacity + sea[k] * (1 - opacity))); out = (c[0] << 16) | (c[1] << 8) | c[2] }
+        cache.set(key, out)
+      }
+    }
+    if (out < 0) { rgba[i + 3] = 0; continue }
+    rgba[i] = out >> 16; rgba[i + 1] = (out >> 8) & 255; rgba[i + 2] = out & 255; rgba[i + 3] = 255
+    painted++
+  }
+  return painted
+}
+// The key under the box, from `from` to `to` metres in this map's colours (the first stop shallower than `from` sets the start).
+export const NONNA_TICKS = [10, 50, 100, 200, 300]
+export const nonnaGradient = (from = 0, to = DEPTH_STOPS.at(-1)[0]) => scaleGradient(NONNA_STOPS, from, to)
+
+// ---- the notices the two Canadian Hydrographic Service licences require
+// Each licence asks for its notice "in a prominent location" on a product made from its data. These are the licences' own words,
+// with the place for the user's name filled in. The IWLS licence (tides.gc.ca, dated 2023-08-14) leaves no full stop at the end of
+// its notice. The NONNA licence is the PDF linked from the catalogue record. Both were read on 2026-10-22.
+export const CHS_USER = 'Darren Zal'
+export const IWLS_LICENCE_URL = 'https://tides.gc.ca/en/licence-agreement'
+export const NONNA_LICENCE_URL = 'https://api-proxy.edh-cde.dfo-mpo.gc.ca/catalogue/records/d3881c4c-650d-4070-bf9b-1e00aabf0a1d/attachments/CHS_NONNA_LICENCE-LICENCE_NONNA_DU_SHC.pdf'
+export const IWLS_NOTICE = `This product is not to be used for navigation. This product was made by or for the User ${CHS_USER} and contains intellectual property (Data) of the Canadian Hydrographic Service of the Department of Fisheries and Oceans. The copyrights in the Data are and remain the property of His Majesty the King in Right of Canada and shall not be sold, licensed, leased, assigned or given to a third party. The incorporation of the Data in this product does not constitute an endorsement or an approval of this product by the Canadian Hydrographic Service, the Department of Fisheries and Oceans or His Majesty the King in Right of Canada`
+export const NONNA_NOTICE = `This product was made by ${CHS_USER} and contains intellectual property of the Canadian Hydrographic Service (CHS) of the Department of Fisheries and Oceans. This product does not meet the requirements of the Navigation Safety Regulations, 2020 under the Canada Shipping Act, 2001. Charts and publications issued by or on the authority of CHS must be used to meet the requirements of those regulations. The copyright in the data are and remain the property of His Majesty the King in Right of Canada and shall not be sold, licensed, leased, assigned or given to a third party. The incorporation of CHS data in this product does not constitute an endorsement or an approval of this product by the Canadian Hydrographic Service, the Department of Fisheries and Oceans or His Majesty the King in Right of Canada.`
 
 // ---- marine life and protection: seven files in data/, built by scripts/fetch-layers.sh from open government data
 // None shows where an animal is now. The protected areas, the critical habitat and the CRIMS survey are drawn from

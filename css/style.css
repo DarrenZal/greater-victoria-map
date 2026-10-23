@@ -70,6 +70,9 @@ body {
 #panel label { display: flex; gap: 10px; align-items: center; min-height: 44px; cursor: pointer; }
 #panel input[type=checkbox] { flex: none; width: 20px; height: 20px; accent-color: var(--accent); }
 #panel .empty { margin: 0 0 4px; font-size: 13px; opacity: .85; }
+/* The notice a Canadian Hydrographic Service licence requires in a prominent place, under the layer it belongs to. */
+#panel .chs-notice { margin: 4px 0 8px; padding: 4px 8px; font-size: 12px; opacity: 1; border-left: 3px solid var(--accent); }
+#panel .chs-notice[hidden] { display: none; }
 /* A sub-toggle belongs to the layer above it and sits one step in. */
 #panel .sub { margin-left: 30px; }
 #panel label.sub { min-height: 40px; }
@@ -154,8 +157,11 @@ button:focus-visible, summary:focus-visible, input:focus-visible, a:focus-visibl
 .maplibregl-popup-content .tag { display: inline-block; margin-bottom: 6px; padding: 1px 8px; border-radius: 10px; background: #e6efe9; font-size: 12px; }
 .maplibregl-popup-content p { margin: 0 0 6px; }
 .maplibregl-popup-content .src { font-size: 12px; color: #4a554f; }
+.maplibregl-popup-content .notice { margin-top: 8px; padding-left: 8px; border-left: 3px solid #1f5a43; color: #1d2a24; }
 .maplibregl-popup-content hr { border: 0; border-top: 1px solid #d5dad3; margin: 8px 0; }
 .maplibregl-popup-content { max-height: 60vh; overflow: auto; }
+/* The popup of the Canadian Hydrographic Service gauge carries a long notice its licence requires, so it may use more of the screen. */
+.maplibregl-popup-content:has(.tide-body .notice) { max-height: calc(100dvh - var(--banner-h) - 100px); }
 .maplibregl-popup-content a { color: #1f5a43; }
 .maplibregl-popup-close-button { min-height: 0; padding: 0 6px; background: transparent; border: 0; color: #1d2a24; }
 

@@ -1,6 +1,6 @@
 // Greater Victoria demo map. Plain ES module, no build step. Every path is relative so the
 // page works from any GitHub Pages project path (https://<org>.github.io/<repo>/).
-import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWorkerUrl } from '../vendor/maplibre-gl.mjs'
+import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWorkerUrl, addProtocol } from '../vendor/maplibre-gl.mjs'
 import { createOverlays } from './overlays.js'
 
 // MapLibre 6.x ships ES modules only, so its worker is pointed at explicitly.
@@ -136,7 +136,7 @@ function noteBasemapDown() {
 if (!basemap) noteBasemapDown()
 map.on('error', (e) => { if (basemap && e.sourceId === 'openmaptiles') noteBasemapDown() })
 
-const overlays = createOverlays({ map, $, el, link, basemap, motionQuery })
+const overlays = createOverlays({ map, $, el, link, basemap, motionQuery, addProtocol })
 
 // group -> layer ids, for the toggles
 const GROUPS = {
@@ -422,8 +422,24 @@ map.on('click', (e) => {
   const body = popup.getElement()?.querySelector('.maplibregl-popup-content')
   if (body) body.scrollTop = 0
   // A popup whose text arrives later (a tide prediction, a temperature) says so, and is placed again for its new size.
-  content.addEventListener('filled', () => popup.setLngLat(e.lngLat))
+  content.addEventListener('filled', () => { popup.setLngLat(e.lngLat); if (content.querySelector('.tide-body')) requestAnimationFrame(() => keepInView(popup)) })
 })
+// The popup of a tide station grows when its levels arrive, and the gauge's carries a long licence notice, so it can reach past the edge of
+// the screen and then cannot be read to its end. Pan the map by the least that brings it back, clear of the banner at the top and the
+// attribution at the bottom. A popup taller than the room keeps its top in view.
+function keepInView(popup) {
+  const box = popup.getElement()?.querySelector('.maplibregl-popup-content')
+  if (!box) return
+  const m = map.getContainer().getBoundingClientRect(), r = box.getBoundingClientRect()
+  const attrib = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect()
+  const top = banner.getBoundingClientRect().bottom + 8, bottom = Math.min(m.bottom - 8, attrib && attrib.height > 0 ? attrib.top - 8 : Infinity)
+  const left = m.left + 8, right = m.right - 8
+  let dy = 0, dx = 0
+  if (r.top < top) dy = r.top - top // negative: the map moves down
+  else if (r.bottom > bottom) dy = Math.min(r.bottom - bottom, r.top - top)
+  if (r.left < left) dx = r.left - left; else if (r.right > right) dx = r.right - right
+  if (dx || dy) map.panBy([Math.round(dx), Math.round(dy)], { duration: motionQuery.matches ? 0 : 250 })
+}
 for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
   map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })

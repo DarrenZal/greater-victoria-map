@@ -10,8 +10,10 @@
 // are on by default, elevation tiles from s3.amazonaws.com, and the desktop run ticks each live layer against its real service
 // (api.weather.gc.ca, geo.weather.gc.ca, earthquake.usgs.gov, api.gbif.org, api.tidesandcurrents.noaa.gov), so this needs network.
 // Sea currents are checked on both screen sizes, in 2D and 3D and under reduced motion, against geo.weather.gc.ca, and so are
-// Wind, Sea temperature and Sea saltiness (same host), Tides and tidal currents (NOAA, one popup for each station) and Seafloor
-// depth (drawn from the elevation tiles). The failure lines are checked separately with the outside hosts blocked.
+// Wind, Sea temperature and Sea saltiness (same host), Tides and tidal currents (NOAA, one popup for each station, and the Victoria
+// Harbour gauge of the Canadian Hydrographic Service at api-iwls.dfo-mpo.gc.ca) and Seafloor depth (ETOPO1 colours drawn from the
+// elevation tiles, and over them the Canadian Hydrographic Service's NONNA tiles from nonna-geoserver.data.chs-shc.ca, which the check
+// also compares with that service's own depth grid). The failure lines are checked separately with the outside hosts blocked.
 //
 // The page is declared ready by window.__ready, not map.loaded() or the 'idle'
 // event, because neither settles while the flow dashes animate.
@@ -24,25 +26,30 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.geojson': 'application/geo+json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8' }
 const BOWKER = [-123.3165974, 48.4309387]
 // Map layers of the optional overlays that exist from the start, all hidden. The radar layer is made on first use.
-const OVERLAY_LAYERS = ['radar-credit', 'currents-credit', 'wind-credit', 'temperature-credit', 'salinity-credit', 'seafloor', 'tides-dot', 'tides-label', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label', 'protected-fill', 'protected-line', 'srkw-fill', 'srkw-line', 'cetaceans-fill', 'cetaceans-line', 'kelp-fill', 'kelp-line', 'eelgrass-fill', 'eelgrass-line', 'herring-line', 'seabirds-dot']
+const OVERLAY_LAYERS = ['radar-credit', 'currents-credit', 'wind-credit', 'temperature-credit', 'salinity-credit', 'seafloor', 'seafloor-nonna', 'seafloor-nonna-10', 'tides-dot', 'tides-label', 'ecoregions-fill', 'ecoregions-sea-mask', 'ecoregions-line', 'alerts-fill', 'alerts-line', 'industry-dot', 'life-dot', 'water-dot', 'conditions-dot', 'aqhi-dot', 'quakes-dot', 'aqhi-label', 'conditions-label', 'water-label', 'quakes-label', 'protected-fill', 'protected-line', 'srkw-fill', 'srkw-line', 'cetaceans-fill', 'cetaceans-line', 'kelp-fill', 'kelp-line', 'eelgrass-fill', 'eelgrass-line', 'herring-line', 'seabirds-dot']
 // What each box asks of the network when ticked: [host, ...] and the file it loads from this site.
+// The radar is last: once ticked it asks again every 6 minutes while on, which would land in the window of whichever box is being ticked then
+// (a request from another host than its own) and would stall the page, if it were ticked first and the others took a long time.
 const OVERLAY_NET = {
-  radar: { hosts: ['geo.weather.gc.ca'] }, currents: { hosts: ['geo.weather.gc.ca'] }, wind: { hosts: ['geo.weather.gc.ca'] }, alerts: { hosts: ['api.weather.gc.ca'] }, aqhi: { hosts: ['api.weather.gc.ca'] },
+  currents: { hosts: ['geo.weather.gc.ca'] }, wind: { hosts: ['geo.weather.gc.ca'] }, alerts: { hosts: ['api.weather.gc.ca'] }, aqhi: { hosts: ['api.weather.gc.ca'] },
   temperature: { hosts: ['geo.weather.gc.ca'] }, salinity: { hosts: ['geo.weather.gc.ca'] },
-  // Tides ask NOAA only when a station is clicked, and the seafloor colours come from tiles the page already has: ticking either contacts no outside host.
-  tides: { hosts: [] }, seafloor: { hosts: [] },
+  // Tides ask NOAA or the Canadian Hydrographic Service only when a station is clicked, so ticking them contacts no outside host. Seafloor depth asks
+  // the Canadian Hydrographic Service for tiles as soon as it is ticked (its ETOPO1 colours come from tiles the page already has).
+  tides: { hosts: [] }, seafloor: { hosts: ['nonna-geoserver.data.chs-shc.ca'] },
   conditions: { hosts: ['api.weather.gc.ca'] }, water: { hosts: ['api.weather.gc.ca'] }, quakes: { hosts: ['earthquake.usgs.gov'] },
   life: { hosts: ['api.gbif.org'] }, ecoregions: { hosts: [], file: 'data/ecoregions.geojson' }, industry: { hosts: [], file: 'data/industry-waste.geojson' },
   // Marine life and protection: one file of this site each, so ticking contacts no outside host.
   protected: { hosts: [], file: 'data/marine-protected.geojson' }, srkw: { hosts: [], file: 'data/srkw-habitat.geojson' }, cetaceans: { hosts: [], file: 'data/whale-density.geojson' },
   kelp: { hosts: [], file: 'data/kelp.geojson' }, eelgrass: { hosts: [], file: 'data/eelgrass.geojson' }, herring: { hosts: [], file: 'data/herring-spawn.geojson' }, seabirds: { hosts: [], file: 'data/seabird-colonies.geojson' },
+  radar: { hosts: ['geo.weather.gc.ca'] },
 }
-const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov']
+const NONNA_HOST = 'nonna-geoserver.data.chs-shc.ca', IWLS_HOST = 'api-iwls.dfo-mpo.gc.ca'
+const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov', NONNA_HOST, IWLS_HOST]
 const ECCC_STATEMENT = 'Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.'
 // Text the map's attribution must carry while each layer is on.
 const OVERLAY_ATTRIB = {
   radar: ECCC_STATEMENT, currents: ECCC_STATEMENT, wind: ECCC_STATEMENT, alerts: ECCC_STATEMENT, aqhi: ECCC_STATEMENT, conditions: ECCC_STATEMENT, water: ECCC_STATEMENT,
-  temperature: ECCC_STATEMENT, salinity: ECCC_STATEMENT, tides: 'NOAA/NOS/CO-OPS', seafloor: 'ETOPO1',
+  temperature: ECCC_STATEMENT, salinity: ECCC_STATEMENT, tides: 'NOAA/NOS/CO-OPS', seafloor: 'Seafloor depth in Canadian waters: Canadian Hydrographic Service (NONNA, not for navigation)',
   quakes: 'U.S. Geological Survey', life: 'GBIF', ecoregions: 'Ecoregions 2017 \u00a9 Resolve', industry: 'HydroWASTE',
   protected: 'Protected areas: CPCAD', srkw: 'Killer whale critical habitat', cetaceans: 'Whale and porpoise model', kelp: 'Coastal habitat: CRIMS', eelgrass: 'Coastal habitat: CRIMS', herring: 'Coastal habitat: CRIMS', seabirds: 'Coastal habitat: CRIMS',
 }
@@ -87,16 +94,19 @@ export async function runBrowserChecks() {
   return failures
 }
 
+// The Canadian Hydrographic Service's tide service (IWLS) answers HTTP 500, with no CORS header, to a user agent that says "HeadlessChrome"
+// (found on 2026-10-22), so the check names itself as the ordinary Chrome it is. A visitor's own browser does not say it.
+const userAgent = (browser) => `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browser.version()} Safari/537.36`
 async function openPage(browser, base, vp, { blockTiles = false, reducedMotion = 'no-preference' } = {}) {
-  const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: 1, reducedMotion })
+  const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: 1, reducedMotion, userAgent: userAgent(browser) })
   const page = await ctx.newPage()
   const problems = [], warnings = [], requests = []
   page.on('request', (r) => requests.push(r.url()))
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console error: ' + m.text().slice(0, 200)); else if (m.type() === 'warning') warnings.push(m.text().slice(0, 160)) })
   page.on('pageerror', (e) => problems.push('page error: ' + e.message.slice(0, 200)))
   page.on('requestfailed', (r) => {
-    // MapLibre cancels elevation tiles it no longer needs, for example while the map tilts into 3D at load.
-    if (/ERR_ABORTED/.test(r.failure()?.errorText || '') && new URL(r.url()).host === 's3.amazonaws.com') return
+    // MapLibre cancels elevation tiles and Canadian Hydrographic Service tiles it no longer needs, for example while the map tilts into 3D at load or moves on.
+    if (/ERR_ABORTED/.test(r.failure()?.errorText || '') && ['s3.amazonaws.com', NONNA_HOST].includes(new URL(r.url()).host)) return
     if (!blockTiles || !r.url().includes('tiles.openfreemap.org')) problems.push(`request failed (${r.failure()?.errorText || '?'}): ` + r.url().slice(0, 120))
   })
   page.on('response', (r) => { if (r.url().startsWith(base) && r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url().slice(0, 120)}`) })
@@ -1068,9 +1078,11 @@ async function checkTides(page, requests, t, name, shot) {
   await waitStatus(page, 'tides').catch(() => {})
   await page.waitForTimeout(1500)
   const st0 = await statusOf(page, 'tides')
-  const mk = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('tides-dot', 'visibility'), n: window.__map.queryRenderedFeatures({ layers: ['tides-dot'] }).length, kinds: [...new Set(window.__map.queryRenderedFeatures({ layers: ['tides-dot'] }).map((f) => f.properties.kind))].sort().join(), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent, note: !document.getElementById('tides-note').hidden }))
-  report(st0.state === 'ok' && st0.text === '2 water level stations and 5 tidal current stations. Click one to ask NOAA for its predictions. Predictions, not for navigation.' && mk.vis === 'visible' && mk.n === 7 && mk.kinds === 'current,level' && mk.note && mk.attrib.includes('NOAA/NOS/CO-OPS'), t('tides: ticking shows seven stations (two water level, five current), a status line that says predictions are not for navigation, and the NOAA credit on the map'), JSON.stringify({ st0, mk: { ...mk, attrib: undefined } }))
-  report(noaa().length === 0, t('tides: ticking the box asks NOAA nothing (the stations come from a list in the page)'), String(noaa().length))
+  const mk = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('tides-dot', 'visibility'), n: window.__map.queryRenderedFeatures({ layers: ['tides-dot'] }).length, kinds: [...new Set(window.__map.queryRenderedFeatures({ layers: ['tides-dot'] }).map((f) => f.properties.kind))].sort().join(), attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent, note: !document.getElementById('tides-note').hidden, notice: (() => { const n = document.getElementById('tides-chs-notice'); return { shown: !n.hidden, text: n.textContent, visible: n.getBoundingClientRect().height > 0 } })() }))
+  const D = await page.evaluate(async () => { const m = await import('/js/overlays-data.js'); return { iwls: m.IWLS_NOTICE, nonna: m.NONNA_NOTICE } })
+  report(st0.state === 'ok' && st0.text === '3 water level stations and 5 tidal current stations. Click one to ask NOAA, or the Canadian Hydrographic Service for Victoria Harbour. Not for navigation.' && mk.vis === 'visible' && mk.n === 8 && mk.kinds === 'current,level' && mk.note && mk.attrib.includes('NOAA/NOS/CO-OPS') && mk.attrib.includes('Canadian Hydrographic Service for Victoria Harbour'), t('tides: ticking shows eight stations (three water level, five current), a status line that says they are not for navigation, and the NOAA and Canadian Hydrographic Service credits on the map'), JSON.stringify({ st0, mk: { ...mk, attrib: undefined } }))
+  report(mk.notice.shown && mk.notice.visible && mk.notice.text === D.iwls && /^This product is not to be used for navigation\./.test(mk.notice.text) && mk.notice.text.includes('made by or for the User Darren Zal'), t('tides: while the box is ticked the panel shows the notice the Canadian Hydrographic Service licence requires, word for word, with the name filled in'), JSON.stringify(mk.notice))
+  report(noaa().length === 0 && hostCount(requests, IWLS_HOST) === 0, t('tides: ticking the box asks NOAA and the Canadian Hydrographic Service nothing (the stations come from a list in the page)'), String(noaa().length))
   if (shot) { await page.evaluate(() => document.getElementById('tides-note').scrollIntoView({ block: 'center' })); await shot('tides-panel'); if (!wide) await panel(false); await shot('tides'); await panel(true) }
   await panel(false)
 
@@ -1084,7 +1096,7 @@ async function checkTides(page, requests, t, name, shot) {
     // The dot is drawn from a source that is cut into tiles again for a new view, so a click waits until the map can find it there.
     await page.waitForFunction(([x, y]) => window.__map.queryRenderedFeatures([[x - 8, y - 8], [x + 8, y + 8]], { layers: ['tides-dot'] }).length > 0, [at.x, at.y], { timeout: 20000 }).catch(() => {})
     await page.mouse.click(at.x, at.y)
-    await page.waitForFunction(() => { const b = document.querySelector('.tide-body'); return !!b && !/Asking NOAA/.test(b.textContent) }, null, { timeout: 40000 }).catch(() => {})
+    await page.waitForFunction(() => { const b = document.querySelector('.tide-body'); return !!b && !/^Asking /.test(b.textContent) }, null, { timeout: 40000 }).catch(() => {})
     await page.waitForTimeout(400)
   }
   const popup = () => page.evaluate(() => {
@@ -1139,26 +1151,118 @@ async function checkTides(page, requests, t, name, shot) {
   report(own() === asked && !!again && again.title.startsWith('Race Rocks'), t('tides: opening a station again asks NOAA nothing more while the box stays ticked'), JSON.stringify([asked, own()]))
   const after = await page.evaluate(() => window.__overlays.tideCache.size)
   report(after === 7 && own() === 12, t('tides: seven stations were opened and twelve requests were made in all (2 + 2 + 2 + 2 + 2 + 1 + 1)'), JSON.stringify({ cache: after, n: own() }))
+  // The Victoria Harbour gauge of the Canadian Hydrographic Service: nothing is asked until its dot is clicked, then three requests a
+  // little apart, no more while the same popup is opened again, and nothing polls. The popup is compared with what the service says.
+  const iwls = () => requests.filter((u) => new URL(u).host === IWLS_HOST)
+  const iwlsAsk = async (code, minutesBefore, minutesAfter, resolution) => {
+    const stamp = (ms) => `${new Date(ms).toISOString().slice(0, 16)}:00Z`, now = Date.now()
+    const q = new URLSearchParams({ 'time-series-code': code, from: stamp(now - minutesBefore * 60e3), to: stamp(now + minutesAfter * 60e3), ...(resolution ? { resolution } : {}) })
+    const r = await fetch(`https://${IWLS_HOST}/api/v1/stations/5cebf1df3d0f4a073c4bbd1e/data?${q}`, { headers: { 'user-agent': userAgent(page.context().browser()) }, signal: AbortSignal.timeout(30000) })
+    return r.ok ? r.json() : null
+  }
+  report(iwls().length === 0, t('gauge: nothing is requested from the Canadian Hydrographic Service before the dot of Victoria Harbour is clicked'), String(iwls().length))
+  // The page's own requests are timed by a note kept of each call of fetch (the browser keeps only 250 resource timings, and a map has more)
+  await page.evaluate(() => { const f = window.fetch.bind(window); window.__fetchLog = []; window.fetch = (...a) => { window.__fetchLog.push([String(a[0]), Math.round(performance.now())]); return f(...a) } })
+  await click('07120', 11)
+  // The popup grew when the levels came, so the map pans it into view. A headless browser draws a frame or two a second, so wait for the pan to end.
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(800)
+  const g = await page.evaluate(() => {
+    const c = document.querySelector('.maplibregl-popup-content'); if (!c) return null
+    const svg = c.querySelector('svg.tide-curve'), paths = svg ? [...svg.querySelectorAll('path')] : [], r = c.getBoundingClientRect()
+    const cs = getComputedStyle(c), n = c.querySelector('.notice')
+    return {
+      title: c.querySelector('h3')?.textContent, tag: c.querySelector('.tag')?.textContent, text: c.innerText.replace(/\s+/g, ' '), rows: [...c.querySelectorAll('.tide-events tr')].map((x) => [...x.children].map((y) => y.textContent)),
+      svg: svg ? { label: svg.getAttribute('aria-label'), viewBox: svg.getAttribute('viewBox'), dots: svg.querySelectorAll('circle').length, cx: Number(svg.querySelector('circle')?.getAttribute('cx')), texts: [...svg.querySelectorAll('text')].map((x) => x.textContent), img: svg.querySelectorAll('img, image, script, foreignObject').length,
+        paths: paths.map((p) => ({ cls: p.getAttribute('class'), stroke: p.getAttribute('stroke'), points: (p.getAttribute('d').match(/L/g) || []).length + 1, lastX: Number(p.getAttribute('d').match(/L([\d.]+) /g)?.at(-1)?.slice(1)) })) } : null,
+      links: [...c.querySelectorAll('a')].map((a) => a.href + ' ' + a.rel), notes: [...c.querySelectorAll('.src')].map((x) => x.textContent).join(' '), notice: n?.textContent, noticeVisible: !!n && n.getBoundingClientRect().height > 10,
+      within: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight, scrolls: c.scrollHeight > c.clientHeight + 2, maxHeight: cs.maxHeight, box: [Math.round(r.top), Math.round(r.bottom), innerHeight],
+      resources: window.__fetchLog.filter((e) => e[0].includes('api-iwls')).map((e) => [e[0].match(/time-series-code=([^&]+)/)?.[1], e[1]]).sort((a, b) => a[1] - b[1]),
+    }
+  })
+  const gaugeReqs = iwls()
+  const ps = gaugeReqs.map((u) => Object.fromEntries(new URL(u).searchParams))
+  report(gaugeReqs.length === 3 && ps.map((q) => q['time-series-code']).sort().join() === 'wlo,wlp,wlp-hilo' && ps.find((q) => q['time-series-code'] === 'wlo').resolution === 'FIVE_MINUTES' && ps.find((q) => q['time-series-code'] === 'wlp').resolution === 'FIFTEEN_MINUTES' && !ps.find((q) => q['time-series-code'] === 'wlp-hilo').resolution && gaugeReqs.every((u) => u.startsWith('https://api-iwls.dfo-mpo.gc.ca/api/v1/stations/5cebf1df3d0f4a073c4bbd1e/data?')) && ps.every((q) => /^\d{4}-\d\d-\d\dT\d\d:\d\d:00Z$/.test(q.from) && /^\d{4}-\d\d-\d\dT\d\d:\d\d:00Z$/.test(q.to)), t('gauge: clicking the dot asks the Canadian Hydrographic Service three times, for the highs and lows, the observed levels (every 5 minutes) and the predicted levels (every 15 minutes), in UTC, for the one station'), JSON.stringify(gaugeReqs.map((u) => u.slice(70, 200))))
+  const gaps = g ? g.resources.slice(1).map((x, i) => x[1] - g.resources[i][1]) : []
+  report(g && g.resources.length === 3 && gaps.every((x) => x >= 350) && g.resources[0][0] === 'wlp-hilo', t('gauge: the three requests start at least 350 ms apart (the service allows 3 a second and 30 a minute), the highs and lows first'), JSON.stringify(g?.resources))
+  const hiloSaid = await iwlsAsk('wlp-hilo', 0, 30 * 60), obsSaid = await iwlsAsk('wlo', 20, 0, 'FIVE_MINUTES')
+  if (g && hiloSaid && obsSaid) {
+    const ev = hiloSaid.map((e) => ({ ms: Date.parse(e.eventDate), v: e.value })).sort((a, b) => a.ms - b.ms).map((e, i, all) => ({ ...e, type: i < all.length - 1 ? (e.v > all[i + 1].v ? 'High tide' : 'Low tide') : (e.v >= all[i - 1].v ? 'High tide' : 'Low tide') }))
+    const next = (type) => ev.find((e) => e.type === type && e.ms > Date.now() - 120e3)
+    const want = Object.fromEntries(['High tide', 'Low tide'].map((k) => [k, next(k)]))
+    const clockOf = (ms) => page.evaluate(async (ms) => (await import('/js/overlays-data.js')).tideClock(ms, Date.now()), ms)
+    const high = g.rows.find((r) => r[0] === 'High tide'), low = g.rows.find((r) => r[0] === 'Low tide'), seen = g.rows.find((r) => r[0] === 'Observed')
+    const obsLast = obsSaid.filter((o) => o.qcFlagCode !== '3').at(-1)
+    const latest = await page.evaluate(() => window.__overlays.tideCache.get('07120')?.tide.latest ?? null)
+    const order = g.rows.map((r) => r[0]).filter((l) => l !== 'Observed')
+    report(!!high && !!low && high[2] === `${want['High tide'].v.toFixed(2)} m` && low[2] === `${want['Low tide'].v.toFixed(2)} m` && high[1] === await clockOf(want['High tide'].ms) && low[1] === await clockOf(want['Low tide'].ms) && order.join() === [want['High tide'], want['Low tide']].sort((a, b) => a.ms - b.ms).map((e) => e.type).join(), t('gauge: the popup gives the next high and low tide, soonest first, in Pacific time, with the heights the service gives'), JSON.stringify({ rows: g.rows, want }))
+    report(!!seen && /^\d\.\d\d m$/.test(seen[2]) && TIDE_CLOCK.test(seen[1]) && !!latest && !!obsLast && Math.abs(latest.ms - Date.parse(obsLast.eventDate)) <= 10 * 60e3 && Math.abs(Number(seen[2].replace(' m', '')) - obsLast.value) <= 0.25 && Date.now() - latest.ms < 30 * 60e3, t('gauge: the popup gives the latest observed level with its time (within 30 minutes of now, and within 10 minutes and a quarter of a metre of what the service says a moment later)'), JSON.stringify({ seen, latest, obsLast }))
+  } else report(false, t('gauge: the check could not ask the Canadian Hydrographic Service itself for the highs, lows and observed levels'), JSON.stringify({ g: !!g, hiloSaid: !!hiloSaid, obsSaid: !!obsSaid }))
+  const obsP = g?.svg?.paths.find((x) => x.cls === 'observed'), predP = g?.svg?.paths.find((x) => x.cls === 'predicted')
+  report(!!g && g.title === 'Victoria Harbour' && g.tag === 'tide gauge' && g.svg?.viewBox === '0 0 260 106' && /^Predicted tide height for the 24 hours around now, from [\d.]+ to [\d.]+ metres\. The observed height is drawn over it up to now\. A red line marks now\.$/.test(g.svg.label) && g.svg.paths.length === 2 && !!predP && !!obsP && predP.stroke !== obsP.stroke && predP.points >= 90 && obsP.points >= 30 && obsP.points <= 40 && g.svg.dots === 1 && g.svg.cx > 30 && g.svg.cx < 47 && Math.abs(obsP.lastX - g.svg.cx) <= 8 && ['12 a.m.', '6 a.m.', '12 p.m.', '6 p.m.', 'now', 'predicted', 'observed'].every((x) => g.svg.texts.includes(x)) && g.svg.img === 0, t('gauge: the popup has a 24 hour curve as SVG, the predicted levels (about 96 points) with the observed ones (about 36, up to now) drawn over them in another colour, a now marker three 24ths of the way across, the axis in Pacific hours and a key'), JSON.stringify({ ...g?.svg, texts: g?.svg?.texts.join('|') }))
+  report(!!g && g.text.includes('Not for navigation.') && g.text.includes('Source: Canadian Hydrographic Service, station 07120') && g.text.includes('chart datum') && g.text.includes('Pacific time') && g.notice === D.iwls && g.noticeVisible && g.links.length === 1 && g.links[0].startsWith('https://tides.gc.ca/en/stations/07120') && g.links[0].includes('noopener') && g.within, t('gauge: the popup says not for navigation, names the Canadian Hydrographic Service and the datum, carries the licence notice word for word where it can be read, links to the station page and sits wholly on the screen'), JSON.stringify({ notice: g?.notice?.slice(0, 60), visible: g?.noticeVisible, links: g?.links, within: g?.within, box: g?.box }))
+  if (shot) await shot('tide-gauge')
+  const gaugeAsked = iwls().length
+  await click('07120', 11)
+  report(iwls().length === gaugeAsked && !!(await popup()), t('gauge: opening the popup again asks the service nothing more while the box stays ticked'), String(iwls().length))
+  const opened = await page.evaluate(() => window.__overlays.tideCache.size)
+  report(opened === 8 && own() === 12 && iwls().length === 3, t('tides: eight stations were opened, seven from NOAA (twelve requests) and the gauge (three requests)'), JSON.stringify({ opened, noaa: own(), chs: iwls().length }))
+
   // Unticking: markers, note, status line and credit go, the predictions kept go, and nothing more is asked
   await setBox(page, 'input[data-overlay=tides]', false)
   await page.waitForTimeout(800)
-  const off = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('tides-dot', 'visibility'), label: window.__map.getLayoutProperty('tides-label', 'visibility'), status: !document.getElementById('status-tides').hidden, note: !document.getElementById('tides-note').hidden, kept: window.__overlays.tideCache.size, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
-  report(off.vis === 'none' && off.label === 'none' && !off.status && !off.note && off.kept === 0 && !off.attrib.includes('NOAA/NOS/CO-OPS'), t('tides: unticking hides the markers, note, status line and credit and lets go of the predictions kept'), JSON.stringify({ ...off, attrib: undefined }))
-  await page.waitForTimeout(2500)
-  report(own() === 12, t('tides: nothing polls NOAA, before or after the box is ticked or unticked'), String(own()))
+  const off = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('tides-dot', 'visibility'), label: window.__map.getLayoutProperty('tides-label', 'visibility'), status: !document.getElementById('status-tides').hidden, note: !document.getElementById('tides-note').hidden, notice: !document.getElementById('tides-chs-notice').hidden, kept: window.__overlays.tideCache.size, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
+  report(off.vis === 'none' && off.label === 'none' && !off.status && !off.note && !off.notice && off.kept === 0 && !off.attrib.includes('NOAA/NOS/CO-OPS') && !off.attrib.includes('Canadian Hydrographic Service'), t('tides: unticking hides the markers, note, Canadian Hydrographic Service notice, status line and credits and lets go of the predictions kept'), JSON.stringify({ ...off, attrib: undefined }))
+  await page.waitForTimeout(3500)
+  report(own() === 12 && iwls().length === gaugeAsked, t('tides: nothing polls NOAA or the Canadian Hydrographic Service, before or after the box is ticked or unticked'), JSON.stringify([own(), iwls().length]))
   // Ticked again, a station is asked for afresh
   await setBox(page, 'input[data-overlay=tides]', true)
   await waitStatus(page, 'tides').catch(() => {})
   await click('9444090')
   report(own('9444090') === 4 && !!(await popup()), t('tides: ticked again, a station is asked for afresh (two more requests)'), String(own('9444090')))
+  await click('07120', 11)
+  report(iwls().length === gaugeAsked + 3 && !!(await popup()), t('tides: ticked again, the gauge is asked for afresh (three more requests)'), String(iwls().length))
   await setBox(page, 'input[data-overlay=tides]', false)
   await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
   await setBox(page, '#flow', true)
   await panel(panelWas)
 }
 
-// ---- seafloor depth: colours drawn in the browser from the elevation tiles
-// Colour the sea by depth and leave the land alone: read the page's pixels with the layer off and then on.
+// ---- seafloor depth: ETOPO1 colours drawn in the browser from the elevation tiles, and over them, in Canadian waters, the Canadian
+// Hydrographic Service's NONNA tiles, asked for live and painted again in the same colours
+// Sample places on the screen, told apart by asking the map: inland squares (no water within 6 px) and the basemap's water.
+const seaSamples = (page) => page.evaluate(() => {
+  const m = window.__map, wl = m.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))
+  const land = [], sea = []
+  for (let y = 110; y < innerHeight - 70; y += 14) for (let x = 24; x < innerWidth - 70; x += 14) {
+    const near = m.queryRenderedFeatures([[x - 6, y - 6], [x + 6, y + 6]], { layers: [wl.id] }).length, here = m.queryRenderedFeatures([x, y], { layers: [wl.id] }).length
+    const corners = [[x - 6, y - 6], [x + 6, y - 6], [x - 6, y + 6], [x + 6, y + 6]].every((q) => m.queryRenderedFeatures(q, { layers: [wl.id] }).length > 0)
+    if (!near) land.push([x, y]); else if (here && corners) sea.push([x, y])
+  }
+  return { land, sea }
+})
+const pagePixels = async (page, pts) => {
+  const png = await page.screenshot({ timeout: 120000 })
+  return page.evaluate(async ([b64, pts]) => { const img = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob()), c = new OffscreenCanvas(img.width, img.height), g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0); return pts.map(([x, y]) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]) }, [png.toString('base64'), pts])
+}
+const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+const colourDiff = (p, q) => Math.max(...[0, 1, 2].map((k) => Math.abs(p[k] - q[k])))
+// The service's own depth grid (WCS) at a place, in metres below chart datum (null on land, or where the service has no data). A 3 by 3 grid
+// of `metres` either side of the place, the middle one, asked for from here and not from the page.
+const mercator = (lng, lat) => [lng * 20037508.342789244 / 180, Math.log(Math.tan((90 + lat) * Math.PI / 360)) * 20037508.342789244 / Math.PI]
+async function chsDepth(res, lng, lat, metres) {
+  const [x, y] = mercator(lng, lat)
+  const url = `https://${NONNA_HOST}/geoserver/wcs?service=WCS&version=2.0.1&request=GetCoverage&coverageId=nonna__NONNA%20${res}%20Coverage&format=application%2Fgml%2Bxml&subset=X(${(x - metres).toFixed(1)},${(x + metres).toFixed(1)})&subset=Y(${(y - metres).toFixed(1)},${(y + metres).toFixed(1)})&scalesize=i(3),j(3)`
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(30000) })
+    if (!r.ok) return null
+    const v = Number((await r.text()).match(/<tupleList>([^<]*)<\/tupleList>/)?.[1].trim().split(/\s+/)[4])
+    return Number.isFinite(v) && Math.abs(v) < 1e5 ? -v : null
+  } catch { return null }
+}
+const NONNA_URL = /^https:\/\/nonna-geoserver\.data\.chs-shc\.ca\/geoserver\/gwc\/service\/wmts\/rest\/nonna:NONNA%20(100|10)\/raster\/EPSG:900913\/EPSG:900913:(\d+)\/(\d+)\/(\d+)\?format=image\/png$/
+const SEAFLOOR_STATUS = /^Depth in metres, from the Canadian Hydrographic Service in Canadian waters \(cells of 100 m, and 10 m close up\) and from NOAA’s ETOPO1 grid elsewhere\. Not for navigation\.$/
+
 async function checkSeafloor(page, requests, t, name, shot) {
   const panelWas = await page.evaluate(() => document.getElementById('panel-details').open)
   const panel = (open) => page.evaluate((o) => { document.getElementById('panel-details').open = o }, open)
@@ -1167,26 +1271,15 @@ async function checkSeafloor(page, requests, t, name, shot) {
   const tileZooms = (from) => requests.slice(from).filter((u) => new URL(u).host === 's3.amazonaws.com').map((u) => Number(u.match(/terrarium\/(\d+)\//)?.[1]))
   await panel(false)
   const hillBefore = await page.evaluate(() => ({ hill: window.__map.getLayoutProperty('hillshade', 'visibility'), terrain: !!window.__map.getTerrain() }))
-  const layer0 = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('seafloor', 'visibility'), type: window.__map.getLayer('seafloor').type, maxzoom: window.__map.getSource('seafloor').maxzoom, tiles: window.__map.getSource('seafloor').tiles, box: document.querySelector('input[data-overlay=seafloor]').checked }))
-  report(layer0.vis === 'none' && layer0.type === 'color-relief' && layer0.maxzoom === 8 && layer0.tiles[0].startsWith('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/') && !layer0.box && hillBefore.hill === 'none' && !hillBefore.terrain, t('seafloor: off at first, a colour relief on a source of its own capped at tile zoom 8, on the same tile address as the elevation layers (no new host)'), JSON.stringify({ layer0, hillBefore }))
-  // Sample places on the screen, told apart by asking the map: inland squares (no water within 6 px) and the basemap's water.
-  const goTo = (z, c) => page.evaluate(([c, z]) => window.__map.jumpTo({ center: c, zoom: z, pitch: window.__map.getPitch(), bearing: 0 }), [c, z])
-  const samples = () => page.evaluate(() => {
-    const m = window.__map, wl = m.getStyle().layers.find((l) => l.type === 'fill' && l['source-layer'] === 'water' && l.source && !/mask/.test(l.id))
-    const land = [], sea = []
-    for (let y = 110; y < innerHeight - 70; y += 14) for (let x = 24; x < innerWidth - 70; x += 14) {
-      const near = m.queryRenderedFeatures([[x - 6, y - 6], [x + 6, y + 6]], { layers: [wl.id] }).length, here = m.queryRenderedFeatures([x, y], { layers: [wl.id] }).length
-      const corners = [[x - 6, y - 6], [x + 6, y - 6], [x - 6, y + 6], [x + 6, y + 6]].every((q) => m.queryRenderedFeatures(q, { layers: [wl.id] }).length > 0)
-      if (!near) land.push([x, y]); else if (here && corners) sea.push([x, y])
-    }
-    return { land, sea }
+  const layer0 = await page.evaluate(() => {
+    const m = window.__map, ids = m.getStyle().layers.map((l) => l.id), nonna = ['seafloor-nonna', 'seafloor-nonna-10'].map((id) => { const l = m.getLayer(id), s = m.getSource(l.source); return { id, type: l.type, vis: m.getLayoutProperty(id, 'visibility'), min: l.minzoom, max: l.maxzoom, srcMax: s.maxzoom, tiles: s.tiles, tileSize: s.tileSize, order: ids.indexOf(id) } })
+    return { vis: m.getLayoutProperty('seafloor', 'visibility'), type: m.getLayer('seafloor').type, maxzoom: m.getSource('seafloor').maxzoom, tiles: m.getSource('seafloor').tiles, box: document.querySelector('input[data-overlay=seafloor]').checked, order: ids.indexOf('seafloor'), nonna }
   })
-  const pixels = async (pts) => {
-    const png = await page.screenshot({ timeout: 120000 })
-    return page.evaluate(async ([b64, pts]) => { const img = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob()), c = new OffscreenCanvas(img.width, img.height), g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0); return pts.map(([x, y]) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]) }, [png.toString('base64'), pts])
-  }
-  const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
-  const compare = async (z, label, centre = [-123.40, 48.40]) => {
+  report(layer0.vis === 'none' && layer0.type === 'color-relief' && layer0.maxzoom === 8 && layer0.tiles[0].startsWith('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/') && !layer0.box && hillBefore.hill === 'none' && !hillBefore.terrain, t('seafloor: off at first, a colour relief on a source of its own capped at tile zoom 8, on the same tile address as the elevation layers (no new host)'), JSON.stringify({ layer0, hillBefore }))
+  const [n100, n10] = layer0.nonna
+  report(n100.type === 'raster' && n10.type === 'raster' && n100.vis === 'none' && n10.vis === 'none' && n100.max === 11 && n10.min === 11 && n100.srcMax === 11 && n10.srcMax === 14 && n100.tileSize === 256 && n10.tileSize === 256 && n100.tiles[0] === 'nonna://100/{z}/{x}/{y}' && n10.tiles[0] === 'nonna://10/{z}/{x}/{y}' && layer0.order < n100.order && n100.order < n10.order, t('seafloor: the Canadian Hydrographic Service tiles are two raster layers over the ETOPO1 colours, hidden at first, the 100 m ones below map zoom 11 and the 10 m ones from there (to tile zoom 14), asked for by the page’s own "nonna" address and not straight from the server'), JSON.stringify(layer0.nonna))
+  const goTo = (z, c) => page.evaluate(([c, z]) => window.__map.jumpTo({ center: c, zoom: z, pitch: window.__map.getPitch(), bearing: 0 }), [c, z])
+  const compare = async (z, label, centre = [-123.40, 48.40], { key = 0 } = {}) => {
     const settle = async (ms = 3500) => {
       await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
       await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {})
@@ -1195,45 +1288,77 @@ async function checkSeafloor(page, requests, t, name, shot) {
     // Where the places are is asked of the map only once the view has settled, so that every tile of the basemap is in.
     await goTo(z, centre)
     await settle(3000)
-    const { land, sea } = await samples()
+    const { land, sea } = await seaSamples(page)
     const pts = [...land, ...sea]
-    const off1 = await pixels(pts)
+    const off1 = await pagePixels(page, pts)
+    const from = requests.length
     await setBox(page, 'input[data-overlay=seafloor]', true)
     await waitStatus(page, 'seafloor').catch(() => {})
     await settle()
-    const onL = await pixels(pts)
+    const onL = await pagePixels(page, pts)
+    const tiles = requests.slice(from).filter((u) => new URL(u).host === NONNA_HOST)
+    // Against the service's own depth grid: the colour in the page at places on the water is the key's colour for the depth the service gives there.
+    let keyed = null
+    if (key) {
+      const step = Math.max(1, Math.floor(sea.length / 18)), picked = sea.map((p, i) => [p, i]).filter((_, i) => i % step === 0).slice(0, 18)
+      const lnglat = await page.evaluate((pts) => pts.map(([x, y]) => window.__map.unproject([x, y]).toArray()), picked.map(([p]) => p))
+      const rows = []
+      for (let i = 0; i < picked.length; i++) {
+        const depth = await chsDepth(key, lnglat[i][0], lnglat[i][1], key === 100 ? 150 : 15)
+        if (depth != null && depth >= 3 && depth <= 280) rows.push({ depth, colour: onL[land.length + picked[i][1]] })
+      }
+      const wantColours = await page.evaluate(async (ds) => { const D = await import('/js/overlays-data.js'); return ds.map((d) => D.nonnaColour(d).map((v, k) => Math.round(v * 0.75 + [194, 200, 202][k] * 0.25))) }, rows.map((r) => r.depth))
+      const diffs = rows.map((r, i) => colourDiff(r.colour, wantColours[i])).sort((a, b) => a - b)
+      keyed = { asked: picked.length, n: rows.length, within: diffs.filter((d) => d <= 30).length, median: diffs[Math.floor(diffs.length / 2)] ?? null, max: diffs.at(-1) ?? null, depths: rows.map((r) => Math.round(r.depth)).join(' ') }
+    }
     await setBox(page, 'input[data-overlay=seafloor]', false)
     await settle(2000)
-    const off2 = await pixels(pts)
+    const off2 = await pagePixels(page, pts)
     // Only places that look the same in both pictures taken with the layer off count: labels and tiles that are still arriving change by themselves.
-    const diff = (p, q) => Math.max(...[0, 1, 2].map((k) => Math.abs(p[k] - q[k])))
-    const n = land.length, stable = pts.map((_, i) => diff(off1[i], off2[i]) <= 3)
-    const landDiff = land.map((_, i) => (stable[i] ? diff(onL[i], off1[i]) : 0)), seaIdx = sea.map((_, i) => n + i).filter((i) => stable[i])
-    const seaDiff = seaIdx.map((i) => diff(onL[i], off1[i]))
-    const darker = seaIdx.filter((i) => diff(onL[i], off1[i]) > 12 && lum(onL[i]) < lum(off1[i]) && onL[i][2] >= onL[i][0]).length
-    return { z, land: stable.slice(0, n).filter(Boolean).length, sea: seaIdx.length, landMax: Math.max(0, ...landDiff), landChanged: landDiff.filter((x) => x > 8).length, seaChanged: seaDiff.filter((x) => x > 12).length, darker, label }
+    const n = land.length, stable = pts.map((_, i) => colourDiff(off1[i], off2[i]) <= 3)
+    const landDiff = land.map((_, i) => (stable[i] ? colourDiff(onL[i], off1[i]) : 0)), seaIdx = sea.map((_, i) => n + i).filter((i) => stable[i])
+    const seaDiff = seaIdx.map((i) => colourDiff(onL[i], off1[i]))
+    const darker = seaIdx.filter((i) => colourDiff(onL[i], off1[i]) > 12 && lum(onL[i]) < lum(off1[i]) && onL[i][2] >= onL[i][0]).length
+    return { z, land: stable.slice(0, n).filter(Boolean).length, sea: seaIdx.length, landMax: Math.max(0, ...landDiff), landChanged: landDiff.filter((x) => x > 8).length, seaChanged: seaDiff.filter((x) => x > 12).length, darker, label, tiles, keyed }
   }
   const startReq = requests.length
-  const wide9 = await compare(9.6, 'sea basin')
-  console.log(`      (${t(`seafloor at zoom 9.6: ${wide9.land} inland places, largest change ${wide9.landMax} of 255 (${wide9.landChanged} above 8); ${wide9.sea} places on the basemap's water, ${wide9.seaChanged} coloured`)})`)
-  report(wide9.land > 40 && wide9.landChanged === 0 && wide9.sea > 40 && wide9.seaChanged > 0.4 * wide9.sea && wide9.darker >= 0.98 * wide9.seaChanged, t('seafloor: ticking it colours the sea blue (darker and bluer, at 98% or more of the places it changes) at zoom 9.6 and leaves every inland place as it was (no change above 8 of 255, where the same place looks the same in two pictures with the layer off)'), JSON.stringify(wide9))
-  const mid = await compare(11.6, 'bays')
-  const street = await compare(13.6, 'street', [-123.3544, 48.3995]) // Clover Point, land to the north and water to the south
+  const wide9 = await compare(9.6, 'sea basin', undefined, { key: 100 })
+  console.log(`      (${t(`seafloor at zoom 9.6: ${wide9.land} inland places, largest change ${wide9.landMax} of 255 (${wide9.landChanged} above 8); ${wide9.sea} places on the basemap's water, ${wide9.seaChanged} coloured, ${wide9.tiles.length} tiles from the Canadian Hydrographic Service`)})`)
+  report(wide9.land > 40 && wide9.landChanged === 0 && wide9.sea > 40 && wide9.seaChanged > 0.4 * wide9.sea && wide9.darker >= 0.98 * wide9.seaChanged, t('seafloor: ticking it colours the sea blue (darker and bluer, at 98% or more of the places it changes) at zoom 9.6 and leaves every inland place as it was (no change above 8 of 255, where the same place looks the same in two pictures with the layer off)'), JSON.stringify({ ...wide9, tiles: wide9.tiles.length }))
+  const mid = await compare(11.6, 'bays', undefined, { key: 10 })
+  const street = await compare(13.6, 'street', [-123.3544, 48.3995], { key: 10 }) // Clover Point, land to the north and water to the south
   console.log(`      (${t(`seafloor at zoom 11.6: ${mid.landChanged} of ${mid.land} inland places changed, ${mid.seaChanged} of ${mid.sea} water places coloured. At zoom 13.6 (a shore): ${street.landChanged} of ${street.land} changed, ${street.seaChanged} of ${street.sea} coloured`)})`)
-  report(mid.land > 20 && mid.landChanged === 0 && mid.sea > 100 && mid.seaChanged > 0.2 * mid.sea && street.land > 20 && street.sea > 100 && street.landChanged === 0, t('seafloor: at zoom 11.6 the sea is still coloured, and at 11.6 and street zoom (13.6, at a shore) the land is still left alone'), JSON.stringify({ mid, street }))
+  report(mid.land > 20 && mid.landChanged === 0 && mid.sea > 100 && mid.seaChanged > 0.2 * mid.sea && street.land > 20 && street.sea > 100 && street.landChanged === 0, t('seafloor: at zoom 11.6 the sea is still coloured, and at 11.6 and street zoom (13.6, at a shore) the land is still left alone'), JSON.stringify({ mid: { ...mid, tiles: mid.tiles.length }, street: { ...street, tiles: street.tiles.length } }))
+  // The US side: the service has no tiles there, so the ETOPO1 colours under the Canadian ones are what shows
+  const us = await compare(9.6, 'US waters', [-123.0, 48.15])
+  console.log(`      (${t(`seafloor in U.S. waters at zoom 9.6: ${us.landChanged} of ${us.land} inland places changed, ${us.seaChanged} of ${us.sea} water places coloured`)})`)
+  report(us.sea > 40 && us.seaChanged > 0.4 * us.sea && us.landChanged === 0 && us.darker >= 0.98 * us.seaChanged, t('seafloor: in U.S. waters, where the Canadian Hydrographic Service has no data, the ETOPO1 colours show (darker and bluer than the sea, at 98% or more of the places they change) and the land is left alone'), JSON.stringify({ ...us, tiles: us.tiles.length }))
+  for (const [label, r, res] of [['zoom 9.6', wide9, 100], ['zoom 11.6', mid, 10], ['zoom 13.6', street, 10]]) {
+    const k = r.keyed
+    console.log(`      (${t(`seafloor against the service's own depth grid at ${label}: ${k.within} of ${k.n} places (of ${k.asked} tried, with depths ${k.depths} m) within 30 of 255 of the key's colour, median difference ${k.median}, largest ${k.max}`)})`)
+    report(k.n >= 6 && k.within >= 0.85 * k.n && k.median <= 14, t(`seafloor: at ${label} the colour of the sea in the page is the colour of the key for the depth that the service's own depth grid gives there (at least 6 places, 85% within 30 of 255 per channel, median within 14)`), JSON.stringify(k))
+  }
+  // Which tiles are asked for: only the service's tile addresses, the 100 m layer below map zoom 11 and the 10 m layer from there, a few tiles for a view, and nothing for the US side
+  const addr = (r) => r.tiles.map((u) => NONNA_URL.exec(u))
+  report(wide9.tiles.length > 0 && wide9.tiles.length <= 60 && addr(wide9).every((m) => m && m[1] === '100' && Number(m[2]) <= 11) && mid.tiles.length > 0 && mid.tiles.length <= 100 && addr(mid).every((m) => m && m[1] === '10' && Number(m[2]) >= 12 && Number(m[2]) <= 14) && street.tiles.length > 0 && street.tiles.length <= 60 && addr(street).every((m) => m && m[1] === '10' && Number(m[2]) >= 12 && Number(m[2]) <= 14), t('seafloor: only tile addresses of the Canadian Hydrographic Service WMTS are asked for, the 100 m layer at map zoom 9.6 (tile zoom 11 at most) and the 10 m layer at 11.6 and 13.6 (tile zoom 12 to 14), a screenful of tiles each time (60, 100 and 60 at most)'), JSON.stringify([wide9.tiles.length, mid.tiles.length, street.tiles.length, addr(wide9).filter((m) => !m).length]))
+  const allNonna = requests.slice(startReq).filter((u) => new URL(u).host === NONNA_HOST)
+  report(allNonna.length > 0 && allNonna.every((u) => NONNA_URL.test(u)), t('seafloor: nothing but tiles is asked of the Canadian Hydrographic Service (no capabilities, legend, feature info or depth requests from the page)'), String(allNonna.filter((u) => !NONNA_URL.test(u)).slice(0, 2)))
   const zs = tileZooms(startReq)
   report(zs.length > 0 && zs.every((z) => z <= 8), t('seafloor: with the elevation layers off, the only elevation tiles asked for are at zoom 8 or less, wherever the map is zoomed to'), JSON.stringify([...new Set(zs)].sort()))
-  report(requests.slice(startReq).filter((u) => new URL(u).host !== 's3.amazonaws.com' && !/openfreemap|127\.0\.0\.1/.test(new URL(u).host)).length === 0, t('seafloor: it contacts no outside host of its own'))
+  report(requests.slice(startReq).filter((u) => !['s3.amazonaws.com', NONNA_HOST].includes(new URL(u).host) && !/openfreemap|127\.0\.0\.1/.test(new URL(u).host)).length === 0, t('seafloor: it contacts no outside host but the elevation tiles and the Canadian Hydrographic Service tile server'))
 
-  // The key and the credit
+  // The key, the notice and the credits
   await page.evaluate(() => window.__map.jumpTo({ center: [-123.40, 48.40], zoom: 9.6 }))
   await panel(true)
   await setBox(page, 'input[data-overlay=seafloor]', true)
   await waitStatus(page, 'seafloor').catch(() => {})
   await page.waitForTimeout(1500)
-  const k = await page.evaluate(() => ({ key: !document.getElementById('seafloor-key').hidden, note: !document.getElementById('seafloor-note').hidden, status: document.getElementById('status-seafloor').textContent, gradient: getComputedStyle(document.getElementById('seafloor-bar')).backgroundImage.startsWith('linear-gradient'), ticks: [...document.querySelectorAll('#seafloor-ticks span')].map((x) => x.textContent).join(' '), title: document.querySelector('#seafloor-key .scale-title').textContent, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent, fit: (() => { const p = document.getElementById('panel').getBoundingClientRect(), n = document.getElementById('seafloor-note').getBoundingClientRect(), q = document.getElementById('seafloor-key').getBoundingClientRect(); return n.right <= p.right + 1 && q.right <= p.right + 1 && document.documentElement.scrollWidth <= innerWidth })() }))
-  report(k.key && k.note && k.gradient && k.ticks === '50 100 200 300' && k.title === 'Depth below the sea, metres' && /^Depth in metres from NOAA’s ETOPO1 grid, in the elevation tiles\. Its cells are 1 arc-minute, about 1\.2 by 1\.85 km here, so only broad shapes show\. Not for navigation\.$/.test(k.status) && k.attrib.includes('Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)') && k.fit, t('seafloor: the key is a gradient in metres (50 to 300), the status line gives the source, the coarseness and not for navigation, the map carries the credit, and everything fits the panel'), JSON.stringify({ ...k, attrib: k.attrib.slice(0, 120) }))
-  if (shot) { await page.evaluate(() => document.getElementById('seafloor-key').scrollIntoView({ block: 'center' })); await shot('seafloor-panel'); if (!wide) await panel(false); await shot('seafloor-2d'); await panel(true) }
+  const D = await page.evaluate(async () => { const m = await import('/js/overlays-data.js'); return { nonna: m.NONNA_NOTICE, gradient: m.nonnaGradient(0, 300) } })
+  const k = await page.evaluate(() => ({ key: !document.getElementById('seafloor-key').hidden, note: !document.getElementById('seafloor-note').hidden, status: document.getElementById('status-seafloor').textContent, state: document.getElementById('status-seafloor').dataset.state, gradient: getComputedStyle(document.getElementById('seafloor-bar')).backgroundImage, ticks: [...document.querySelectorAll('#seafloor-ticks span')].map((x) => x.textContent).join(' '), title: document.querySelector('#seafloor-key .scale-title').textContent, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent, notice: (() => { const n = document.getElementById('seafloor-chs-notice'); return { shown: !n.hidden, text: n.textContent, visible: n.getBoundingClientRect().height > 10 } })(), fit: (() => { const p = document.getElementById('panel').getBoundingClientRect(), n = document.getElementById('seafloor-note').getBoundingClientRect(), q = document.getElementById('seafloor-key').getBoundingClientRect(), c = document.getElementById('seafloor-chs-notice').getBoundingClientRect(); return n.right <= p.right + 1 && q.right <= p.right + 1 && c.right <= p.right + 1 && document.documentElement.scrollWidth <= innerWidth })() }))
+  const gradientOk = k.gradient.startsWith('linear-gradient') && D.gradient.match(/rgb\(\d+, \d+, \d+\)/g).every((c) => k.gradient.includes(c))
+  report(k.key && k.note && gradientOk && k.ticks === '10 50 100 200 300' && k.title === 'Depth below the sea, metres' && SEAFLOOR_STATUS.test(k.status) && k.state === 'ok' && k.attrib.includes('Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)') && k.attrib.includes('Seafloor depth in Canadian waters: Canadian Hydrographic Service (NONNA, not for navigation)') && k.fit, t('seafloor: the key is a gradient in metres (10 to 300, from the colours of the layer), the status line gives the sources and not for navigation, the map carries both credits, and everything fits the panel'), JSON.stringify({ ...k, attrib: k.attrib.slice(0, 120), gradient: k.gradient.slice(0, 80) }))
+  report(k.notice.shown && k.notice.visible && k.notice.text === D.nonna && /^This product was made by Darren Zal and contains intellectual property of the Canadian Hydrographic Service \(CHS\)/.test(k.notice.text) && k.notice.text.includes('This product does not meet the requirements of the Navigation Safety Regulations, 2020'), t('seafloor: while the box is ticked the panel shows the notice the Canadian Hydrographic Service licence requires, word for word, with the name filled in'), JSON.stringify(k.notice))
+  if (shot) { await page.evaluate(() => document.getElementById('seafloor-chs-notice').scrollIntoView({ block: 'end' })); await shot('seafloor-panel'); if (!wide) await panel(false); await shot('seafloor-2d'); await panel(true) }
 
   // With 3D terrain on, the colours are draped over the relief, and the land is still left alone
   await panel(false)
@@ -1244,14 +1369,14 @@ async function checkSeafloor(page, requests, t, name, shot) {
   await page.waitForTimeout(800)
   const d3 = await compare(9.6, '3d')
   console.log(`      (${t(`seafloor with 3D terrain: ${d3.landChanged} of ${d3.land} inland places changed, ${d3.seaChanged} of ${d3.sea} water places coloured`)})`)
-  report(d3.land > 40 && d3.landChanged === 0 && d3.sea > 40 && d3.seaChanged > 0.3 * d3.sea, t('seafloor: with 3D terrain on (pitch 60) the sea is coloured over the relief and the inland places are not'), JSON.stringify(d3))
+  report(d3.land > 40 && d3.landChanged === 0 && d3.sea > 40 && d3.seaChanged > 0.3 * d3.sea, t('seafloor: with 3D terrain on (pitch 60) the sea is coloured over the relief and the inland places are not'), JSON.stringify({ ...d3, tiles: d3.tiles.length }))
   if (shot) { await setBox(page, 'input[data-overlay=seafloor]', true); await waitStatus(page, 'seafloor').catch(() => {}); await page.waitForTimeout(3500); await shot('seafloor-3d'); await setBox(page, 'input[data-overlay=seafloor]', false) }
   await setBox(page, '#terrain3d', false)
   await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 90000 })
   await page.waitForTimeout(800)
-  // Unticking leaves no layer shown, no credit and no key
-  const off = await page.evaluate(() => ({ vis: window.__map.getLayoutProperty('seafloor', 'visibility'), key: !document.getElementById('seafloor-key').hidden, note: !document.getElementById('seafloor-note').hidden, status: !document.getElementById('status-seafloor').hidden, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
-  report(off.vis === 'none' && !off.key && !off.note && !off.status && !off.attrib.includes('ETOPO1'), t('seafloor: unticking hides the layer, key, note, status line and credit'), JSON.stringify({ ...off, attrib: undefined }))
+  // Unticking leaves no layer shown, no credit, no notice and no key
+  const off = await page.evaluate(() => ({ vis: ['seafloor', 'seafloor-nonna', 'seafloor-nonna-10'].map((id) => window.__map.getLayoutProperty(id, 'visibility')), key: !document.getElementById('seafloor-key').hidden, note: !document.getElementById('seafloor-note').hidden, notice: !document.getElementById('seafloor-chs-notice').hidden, status: !document.getElementById('status-seafloor').hidden, attrib: document.querySelector('.maplibregl-ctrl-attrib').textContent }))
+  report(off.vis.every((v) => v === 'none') && !off.key && !off.note && !off.notice && !off.status && !off.attrib.includes('ETOPO1') && !off.attrib.includes('Canadian Hydrographic Service'), t('seafloor: unticking hides the layers, key, note, notice, status line and credits'), JSON.stringify({ ...off, attrib: undefined }))
   await setBox(page, '#flow', true)
   await panel(panelWas)
 }
@@ -1604,7 +1729,9 @@ async function checkOverlays(page, requests, t, shot) {
   for (const [id, net] of Object.entries(OVERLAY_NET)) {
     const before = Object.fromEntries(LIVE_HOSTS.map((h) => [h, hostCount(requests, h)]))
     const fileBefore = requests.filter((u) => net.file && u.endsWith(net.file)).length
+    if (id === 'seafloor') { await page.evaluate(() => window.__map.jumpTo({ center: [-123.40, 48.40], zoom: 10.2 })); await page.waitForTimeout(1500) } // over the Strait, where the service has tiles
     await setBox(page, `input[data-overlay=${id}]`, true)
+    if (id === 'seafloor') await page.waitForTimeout(3000) // its tiles are asked for a moment after the box is ticked
     let st
     for (let attempt = 0; attempt < 2; attempt++) {
       await waitStatus(page, id).catch(() => {})
@@ -1623,7 +1750,8 @@ async function checkOverlays(page, requests, t, shot) {
     const vis = await layerStates(page, id)
     outcome[id] = st
     report(['ok', 'empty'].includes(st.state) && own && others && file && vis.length > 0 && vis.every((v) => v === 'visible') && attrib.includes(OVERLAY_ATTRIB[id]), t(`${id}: ticking it loads from its own service only, shows its layer, a status line (${st.state}) and its credit on the map`), JSON.stringify({ st, own, others, file, vis, hasCredit: attrib.includes(OVERLAY_ATTRIB[id]) }))
-    if (id === 'currents' || id === 'wind') await setBox(page, `input[data-overlay=${id}]`, false) // their loop is checked on its own, below
+    if (id === 'seafloor') await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {}) // so that none of its tiles is still arriving when the next box is ticked
+    if (id === 'currents' || id === 'wind' || id === 'seafloor') await setBox(page, `input[data-overlay=${id}]`, false) // their loops and tiles are checked on their own, below
   }
   report(outcome.ecoregions.text.includes('one ecoregion') && /18 sites/.test(outcome.industry.text), t('ecoregions and industry status lines describe what was loaded'), JSON.stringify([outcome.ecoregions.text, outcome.industry.text]))
 
@@ -1719,6 +1847,51 @@ async function checkOverlaysBlocked(browser, base) {
   await page.waitForFunction(() => /could not be loaded/.test(document.querySelector('.maplibregl-popup-content')?.textContent || ''), null, { timeout: 30000 }).catch(() => {})
   const failed = await page.evaluate(() => document.querySelector('.maplibregl-popup-content')?.innerText.replace(/\n+/g, ' | ') || null)
   report(!!failed && failed.includes('Race Rocks') && failed.includes('Predictions for this station could not be loaded just now. Try again later.') && failed.includes('not for navigation') && hostCount(requests, 'api.tidesandcurrents.noaa.gov') > noaaBefore && !failed.includes('Asking NOAA'), t('tides: a click on a station asks NOAA, and with NOAA blocked the popup says plainly that the predictions could not be loaded'), JSON.stringify(failed))
+  // The Victoria Harbour gauge with the Canadian Hydrographic Service blocked: its click asks, and the popup says plainly that the levels could not be loaded, and still carries the notice
+  const iwlsBefore = hostCount(requests, IWLS_HOST)
+  const notices = await page.evaluate(async () => { const m = await import('/js/overlays-data.js'); return { iwls: m.IWLS_NOTICE, nonna: m.NONNA_NOTICE } })
+  await page.evaluate(() => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: [-123.370828, 48.424363], zoom: 11 }) })
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForTimeout(2500)
+  const gaugeAt = await page.evaluate(() => { const q = window.__map.project([-123.370828, 48.424363]); return { x: Math.round(q.x), y: Math.round(q.y) } })
+  await page.waitForFunction(([x, y]) => window.__map.queryRenderedFeatures([[x - 8, y - 8], [x + 8, y + 8]], { layers: ['tides-dot'] }).length > 0, [gaugeAt.x, gaugeAt.y], { timeout: 20000 }).catch(() => {})
+  await page.mouse.click(gaugeAt.x, gaugeAt.y)
+  await page.waitForFunction(() => /could not be loaded/.test(document.querySelector('.maplibregl-popup-content')?.textContent || ''), null, { timeout: 30000 }).catch(() => {})
+  const failedGauge = await page.evaluate(() => document.querySelector('.maplibregl-popup-content')?.innerText.replace(/\s+/g, ' ') || null)
+  const gaugeReqs = hostCount(requests, IWLS_HOST) - iwlsBefore
+  report(!!failedGauge && failedGauge.includes('Victoria Harbour') && failedGauge.includes('The Canadian Hydrographic Service’s levels for this station could not be loaded just now. Try again later.') && failedGauge.includes('Not for navigation. Source: Canadian Hydrographic Service.') && failedGauge.includes(notices.iwls) && !failedGauge.includes('Asking') && gaugeReqs >= 1 && gaugeReqs <= 3, t('gauge: a click on Victoria Harbour asks the Canadian Hydrographic Service, and with it blocked the popup says plainly that the levels could not be loaded and still carries the licence notice and not for navigation'), JSON.stringify({ failedGauge: failedGauge?.slice(0, 160), gaugeReqs }))
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+  // Seafloor depth with the Canadian Hydrographic Service blocked: the ETOPO1 colours still show under it, and the status line says plainly what is missing.
+  // The tide stations are put away first: their labels are placed again among the basemap's whenever a layer is switched, which moves a few pixels of text.
+  await setBox(page, 'input[data-overlay=tides]', false)
+  await setBox(page, '#terrain3d', false)
+  await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 90000 })
+  await page.evaluate(() => { document.getElementById('panel-details').open = true; window.__map.jumpTo({ center: [-123.40, 48.40], zoom: 9.6, pitch: 0, bearing: 0 }) })
+  await page.waitForTimeout(3000)
+  await page.waitForFunction(() => window.__map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {})
+  await page.waitForTimeout(2500)
+  await page.evaluate(() => { document.getElementById('panel-details').open = false })
+  await page.waitForTimeout(500)
+  const floorSamples = await seaSamples(page), floorPts = [...floorSamples.land, ...floorSamples.sea]
+  const floorOff1 = await pagePixels(page, floorPts)
+  const nonnaBefore = hostCount(requests, NONNA_HOST)
+  await setBox(page, 'input[data-overlay=seafloor]', true)
+  await page.waitForFunction(() => document.getElementById('status-seafloor').dataset.state === 'fail', null, { timeout: 60000 }).catch(() => {})
+  await page.waitForTimeout(3000)
+  const floorStatus = await statusOf(page, 'seafloor')
+  const floorOn = await pagePixels(page, floorPts)
+  await page.waitForTimeout(1500)
+  const floorOn2 = await pagePixels(page, floorPts) // a place counts as changed only if it differs from the layer-off picture in both pictures taken with the layer on
+  const floorVis = await layerStates(page, 'seafloor')
+  await setBox(page, 'input[data-overlay=seafloor]', false)
+  await page.waitForTimeout(2500)
+  const floorOff2 = await pagePixels(page, floorPts)
+  const fn = floorSamples.land.length, fStable = floorPts.map((_, i) => colourDiff(floorOff1[i], floorOff2[i]) <= 3)
+  const fSea = floorSamples.sea.map((_, i) => fn + i).filter((i) => fStable[i]), fLand = floorSamples.land.map((_, i) => i).filter((i) => fStable[i])
+  const fChanged = fSea.filter((i) => colourDiff(floorOn[i], floorOff1[i]) > 12 && lum(floorOn[i]) < lum(floorOff1[i]) && floorOn[i][2] >= floorOn[i][0]).length
+  const fLandBad = fLand.filter((i) => colourDiff(floorOn[i], floorOff1[i]) > 8 && colourDiff(floorOn2[i], floorOff1[i]) > 8), fLandChanged = fLandBad.length
+  console.log(`      (${t(`seafloor: ${fChanged} of ${fSea.length} water places coloured by ETOPO1 alone, ${fLandChanged} of ${fLand.length} inland places changed, ${hostCount(requests, NONNA_HOST) - nonnaBefore} tile requests refused`)})`)
+  report(floorStatus.state === 'fail' && !floorStatus.hidden && floorStatus.text === 'The Canadian Hydrographic Service’s depths could not be loaded just now, so the coarser ETOPO1 depths from NOAA are shown. Try again later.' && hostCount(requests, NONNA_HOST) > nonnaBefore && floorVis.every((v) => v === 'visible') && fSea.length > 40 && fChanged > 0.4 * fSea.length && fLand.length > 40 && fLandChanged === 0, t('seafloor: with the Canadian Hydrographic Service blocked, its tiles are asked for, the status line says plainly that its depths could not be loaded and that the coarser ETOPO1 depths are shown, and the sea is still coloured by ETOPO1 (darker and bluer) with the land left alone'), JSON.stringify({ floorStatus, fChanged, sea: fSea.length, fLandChanged, land: fLand.length, places: fLandBad.slice(0, 6).map((i) => [floorPts[i], floorOff1[i], floorOn[i]]) }))
   report(errors.length === 0, t('no page errors from the failed requests'), errors.join(' | '))
   // an alert is passed on exactly as the service issued it
   const text = 'WIND WARNING IN EFFECT\n\nSouthwest winds 70 km/h gusting to 90.\n\nThis is a test text. It must not be reworded.'

@@ -29,7 +29,9 @@ const PIN_STATUS = ['draft', 'approved']
 // s3.amazonaws.com (elevation tiles for Terrain shading and 3D terrain), api.weather.gc.ca and
 // geo.weather.gc.ca (Environment and Climate Change Canada: radar, sea currents, wind, sea temperature, sea saltiness,
 // alerts, air quality, conditions, river gauges), earthquake.usgs.gov (earthquakes), api.gbif.org (life observations)
-// and api.tidesandcurrents.noaa.gov (tides and tidal currents, after a station is clicked).
+// and api.tidesandcurrents.noaa.gov (tides and tidal currents, after a station is clicked). The Canadian Hydrographic Service is
+// asked for two things only, live from the visitor's browser: nonna-geoserver.data.chs-shc.ca (seafloor depth, while its box is
+// ticked) and api-iwls.dfo-mpo.gc.ca (the Victoria Harbour gauge, after its dot is clicked).
 const ALLOWED_HOSTS = [
   'tiles.openfreemap.org', 'openfreemap.org', 'www2.gov.bc.ca', 'www.openstreetmap.org',
   'www.openmaptiles.org', 'crd.ca', 'www.crd.ca', 'catalogue.data.gov.bc.ca',
@@ -42,9 +44,18 @@ const ALLOWED_HOSTS = [
   'api.tidesandcurrents.noaa.gov', 'tidesandcurrents.noaa.gov', // NOAA: predictions (fetched after a station is clicked) and its disclaimer and station pages (links)
   'www.w3.org', // the SVG namespace of a tide curve. It is an identifier, not fetched
   'tc.canada.ca', 'laws-lois.justice.gc.ca', // Transport Canada's Ship Safety Bulletin and the Marine Mammal Regulations: links in the vessel rules, never fetched
+  'nonna-geoserver.data.chs-shc.ca', 'api-iwls.dfo-mpo.gc.ca', // the Canadian Hydrographic Service: seafloor depth tiles and the Victoria Harbour gauge, fetched live
+  'tides.gc.ca', 'api-proxy.edh-cde.dfo-mpo.gc.ca', // its licence agreement and station page, and the NONNA licence PDF: links, never fetched
 ]
 // Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
-const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov']
+const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov', 'nonna-geoserver.data.chs-shc.ca', 'api-iwls.dfo-mpo.gc.ca']
+// The two Canadian Hydrographic Service notices, word for word from the licences (the IWLS licence at https://tides.gc.ca/en/licence-agreement,
+// dated 2023-08-14, and the NONNA licence PDF), with the place for the user's name filled in. Read on 2026-10-22. The IWLS notice has no
+// full stop at its end in the licence. They are kept here apart from js/overlays-data.js so that a change to either shows as a failure.
+const IWLS_NOTICE_TEXT = 'This product is not to be used for navigation. This product was made by or for the User Darren Zal and contains intellectual property (Data) of the Canadian Hydrographic Service of the Department of Fisheries and Oceans. The copyrights in the Data are and remain the property of His Majesty the King in Right of Canada and shall not be sold, licensed, leased, assigned or given to a third party. The incorporation of the Data in this product does not constitute an endorsement or an approval of this product by the Canadian Hydrographic Service, the Department of Fisheries and Oceans or His Majesty the King in Right of Canada'
+const NONNA_NOTICE_TEXT = 'This product was made by Darren Zal and contains intellectual property of the Canadian Hydrographic Service (CHS) of the Department of Fisheries and Oceans. This product does not meet the requirements of the Navigation Safety Regulations, 2020 under the Canada Shipping Act, 2001. Charts and publications issued by or on the authority of CHS must be used to meet the requirements of those regulations. The copyright in the data are and remain the property of His Majesty the King in Right of Canada and shall not be sold, licensed, leased, assigned or given to a third party. The incorporation of CHS data in this product does not constitute an endorsement or an approval of this product by the Canadian Hydrographic Service, the Department of Fisheries and Oceans or His Majesty the King in Right of Canada.'
+const IWLS_LICENCE_URL = 'https://tides.gc.ca/en/licence-agreement'
+const NONNA_LICENCE_URL = 'https://api-proxy.edh-cde.dfo-mpo.gc.ca/catalogue/records/d3881c4c-650d-4070-bf9b-1e00aabf0a1d/attachments/CHS_NONNA_LICENCE-LICENCE_NONNA_DU_SHC.pdf'
 const OVERLAY_IDS = ['radar', 'currents', 'wind', 'temperature', 'salinity', 'tides', 'seafloor', 'alerts', 'aqhi', 'conditions', 'water', 'quakes', 'life', 'ecoregions', 'industry', 'protected', 'srkw', 'cetaceans', 'kelp', 'eelgrass', 'herring', 'seabirds']
 const LIVE_SENTENCE = 'These load from outside services when ticked. Nothing loads until you tick one.'
 // Credit text the new layers must carry, word for word, in the credits panel.
@@ -284,8 +295,9 @@ function ruleTidesCredit(html, js) {
   return out
 }
 
-// Seafloor depth says where its depths come from, how coarse they are and that they are not for navigation, and is
-// drawn as a colour relief from an elevation source of its own on the existing tile address.
+// Seafloor depth says where its depths come from (the Canadian Hydrographic Service's NONNA in Canadian waters, ETOPO1 elsewhere), how
+// coarse the ETOPO1 grid is and that they are not for navigation. ETOPO1 is drawn as a colour relief from an elevation source of its
+// own on the existing tile address, and NONNA as raster tiles asked for by a protocol of the page, over it.
 function ruleSeafloorCredit(html, js) {
   const out = []
   const para = html.split(/<\/p>|<\/li>/).filter((p) => p.includes('<strong>Seafloor depth</strong>')).map(textOf)[0]
@@ -294,15 +306,60 @@ function ruleSeafloorCredit(html, js) {
     if (!/ETOPO1/.test(para)) out.push('the seafloor credit does not name ETOPO1')
     if (!/1 arc-minute/.test(para)) out.push('the seafloor credit does not say how coarse the grid is')
     if (!/not for navigation/i.test(para)) out.push('the seafloor credit does not say it is not for navigation')
+    if (!/Canadian Hydrographic Service/.test(para) || !/NONNA/.test(para)) out.push('the seafloor credit does not name the Canadian Hydrographic Service and NONNA')
   }
   if (!/const SEAFLOOR_ATTRIB = [^\n]*ETOPO1[^\n]*not for navigation/.test(js)) out.push('the on-map seafloor credit does not name ETOPO1 and say not for navigation')
+  if (!/const NONNA_ATTRIB = [^\n]*Canadian Hydrographic Service[^\n]*not for navigation/.test(js)) out.push('the on-map NONNA credit does not name the Canadian Hydrographic Service and say not for navigation')
   if (!/type: 'color-relief'/.test(js) || !/maxzoom: SEAFLOOR_MAX_ZOOM/.test(js)) out.push('the seafloor layer is not a colour relief on a source with a maximum zoom')
+  if (!/type: 'raster'[^\n]*tiles: \[`nonna:\/\//.test(js) || !/addProtocol\?*\.?\('nonna'/.test(js)) out.push('the NONNA tiles are not raster tiles asked for by the nonna protocol')
   return out
 }
 
-// Held ocean data stays out of the code and the page: Canadian Hydrographic Service tides, bathymetry and currents (their
-// licences are not accepted), DFO conservation areas and shellfish closures, seal haulouts, whale sighting feeds and AIS.
-const HELD_OCEAN = /iwls|nonna|chs-shc|dfo-mpo|rockfish|shellfish|haulout|acartia|obis\.org|inaturalist|aisstream|whalemuseum|orcanetwork/i
+// The Canadian Hydrographic Service (CHS) licences ask for a notice "in a prominent location" on a product made from their data. The
+// two notices are in the credits and the README word for word, in the panel under the layer while it is on, and in the gauge popup,
+// the credits and the notes say this is a non-commercial demo (the IWLS licence bars derivative products made for commercial purposes),
+// and the licences are recorded with their addresses and the date they were read.
+function ruleChsNotices({ html, js, readme, sources }) {
+  const out = []
+  const flat = (t) => t.replace(/\s+/g, ' ')
+  const credits = flat(textOf(html.slice(html.indexOf('id="credits"'))))
+  for (const [name, text] of [['IWLS', IWLS_NOTICE_TEXT], ['NONNA', NONNA_NOTICE_TEXT]]) {
+    if (!credits.includes(text)) out.push(`the credits do not carry the ${name} notice word for word`)
+    if (!flat(readme).includes(text)) out.push(`the README does not carry the ${name} notice word for word`)
+  }
+  for (const id of ['seafloor-chs-notice', 'tides-chs-notice']) {
+    const m = html.match(new RegExp(`<p[^>]*id="${id}"[^>]*>`))
+    if (!m) out.push(`the panel has no ${id} paragraph`)
+    else if (!/\bhidden\b/.test(m[0])) out.push(`${id} is not hidden until its layer is on`)
+    if (!new RegExp(`ui: \\[[^\\]]*'${id}'`).test(js)) out.push(`${id} is not shown and hidden with its layer`)
+  }
+  if (!/\$\('seafloor-chs-notice'\)\.textContent = NONNA_NOTICE/.test(js)) out.push('the NONNA notice is not written into the panel')
+  if (!/\$\('tides-chs-notice'\)\.textContent = IWLS_NOTICE/.test(js)) out.push('the IWLS notice is not written into the panel')
+  if (!js.includes("line(IWLS_NOTICE, 'src notice')") || !js.includes("el('p', IWLS_NOTICE, 'src notice')")) out.push('the gauge popup does not carry the IWLS notice, both when its levels load and when they do not')
+  if (!/non-commercial demo/.test(credits)) out.push('the credits do not say this is a non-commercial demo')
+  if (!/non-commercial demo/.test(sources)) out.push('data/SOURCES.md does not say this is a non-commercial demo')
+  for (const url of [IWLS_LICENCE_URL, NONNA_LICENCE_URL]) {
+    if (!html.includes(url)) out.push(`the credits do not link the licence ${url.slice(0, 50)}`)
+    if (!sources.includes(url)) out.push(`data/SOURCES.md does not record the licence ${url.slice(0, 50)}`)
+  }
+  if (!/read 2026-10-22/.test(sources) || !/not for navigation/i.test(sources)) out.push('data/SOURCES.md does not say when the licences were read and that the data is not for navigation')
+  return out
+}
+// No copy of any CHS data is kept: nothing about it in data/ or raw/ (the notes in data/SOURCES.md apart), and the fetch script
+// does not ask either service for anything.
+function ruleChsNotStored(files) {
+  const out = []
+  for (const f of files) {
+    if (/^(data|raw)\//.test(f.path) && f.path !== 'data/SOURCES.md' && /nonna|iwls|chs|hydrograph|bathym|\.tiff?$/i.test(f.path)) out.push(`a file that may hold Canadian Hydrographic Service data: ${f.path}`)
+    if (f.path === 'scripts/fetch-layers.sh' && f.text != null && /nonna-geoserver|api-iwls/.test(f.text)) out.push('the fetch script asks a Canadian Hydrographic Service server for data')
+  }
+  return out
+}
+
+// Held ocean data stays out of the code and the page: DFO conservation areas and shellfish closures, seal haulouts, whale sighting
+// feeds and AIS. Canadian Hydrographic Service data was held until 2026-10-22, when its owner accepted its licences for two uses, which
+// ruleChsNotices and ruleChsNotStored keep to.
+const HELD_OCEAN = /rockfish|shellfish|haulout|acartia|obis\.org|inaturalist|aisstream|whalemuseum|orcanetwork/i
 function ruleHeldOcean(files) {
   return files.filter((f) => f.text != null && HELD_OCEAN.test(f.text)).map((f) => `held ocean data named in ${f.path}: ${f.text.match(HELD_OCEAN)[0]}`)
 }
@@ -508,7 +565,7 @@ function ruleMarinePlain(texts) {
   return texts.filter((t) => /[—;]/.test(t)).map((t) => `an em dash or semicolon in: ${t.slice(0, 70)}`)
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain }
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleChsNotices, ruleChsNotStored, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -532,8 +589,15 @@ function selftest() {
   const scalarJs = "src('ov-temperature-credit', ECCC_ATTRIB); src('ov-salinity-credit', ECCC_ATTRIB)\nconst scalarMessage = (kind, time) => `Modelled for ${time}, Environment Canada’s CIOPS Salish Sea model (experimental, not for navigation).`\nconst z = 1"
   const tidesHtml = '<p><strong>Tides and tidal currents</strong> (off until you switch it on). From NOAA/NOS/CO-OPS, whose disclaimer says its information is &ldquo;in the public domain&rdquo;. The curves are not official NOAA material. Predictions are not for navigation.</p>'
   const tidesJs = "const TIDES_ATTRIB = 'Tides: <a href=\"x\">NOAA/NOS/CO-OPS</a> predictions'\nsrc('ov-tides', TIDES_ATTRIB)\nline(`Predictions, not for navigation. Source: NOAA/NOS/CO-OPS, station 1. Not official NOAA material.`)"
-  const floorHtml = '<p><strong>Seafloor depth</strong> (off until you switch it on). From the ETOPO1 grid. Its cells are 1 arc-minute. It is not for navigation.</p>'
-  const floorJs = "const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'\nmap.addSource('seafloor', { maxzoom: SEAFLOOR_MAX_ZOOM }); map.addLayer({ id: 'seafloor', type: 'color-relief' })"
+  const floorHtml = '<p><strong>Seafloor depth</strong> (off until you switch it on). From the Canadian Hydrographic Service (NONNA) in Canadian waters and from the ETOPO1 grid elsewhere. Its cells are 1 arc-minute. It is not for navigation.</p>'
+  const floorJs = "const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'\nconst NONNA_ATTRIB = `Seafloor depth in Canadian waters: Canadian Hydrographic Service (NONNA, not for navigation)`\nmap.addSource('seafloor', { maxzoom: SEAFLOOR_MAX_ZOOM }); map.addLayer({ id: 'seafloor', type: 'color-relief' })\nmap.addSource(`nonna-${res}`, { type: 'raster', tiles: [`nonna://${res}/{z}/{x}/{y}`] })\naddProtocol?.('nonna', loadNonnaTile)"
+  // Canadian Hydrographic Service fixtures
+  const chsHtml = `<p id="seafloor-chs-notice" hidden></p><p id="tides-chs-notice" hidden></p><section id="credits"><p>This is a non-commercial demo. ${IWLS_NOTICE_TEXT}</p><p>${NONNA_NOTICE_TEXT}</p><p><a href="${IWLS_LICENCE_URL}">IWLS licence</a> <a href="${NONNA_LICENCE_URL}">NONNA licence</a></p></section>`
+  const chsJs = "ui: ['seafloor-chs-notice']\nui: ['tides-chs-notice']\n$('seafloor-chs-notice').textContent = NONNA_NOTICE\n$('tides-chs-notice').textContent = IWLS_NOTICE\nline(IWLS_NOTICE, 'src notice')\nel('p', IWLS_NOTICE, 'src notice')"
+  const chsReadme = `The notices: ${IWLS_NOTICE_TEXT} and ${NONNA_NOTICE_TEXT}`
+  const chsSources = `Both read 2026-10-22, not for navigation. This is a non-commercial demo. ${IWLS_LICENCE_URL} ${NONNA_LICENCE_URL}`
+  const chsRule = (files) => ruleChsNotices({ html: files[0].text, js: files[1].text, readme: files[2].text, sources: files[3].text })
+  const chsFiles = (over = {}) => [f('x.html', over.html ?? chsHtml), f('x.js', over.js ?? chsJs), f('README.md', over.readme ?? chsReadme), f('SOURCES.md', over.sources ?? chsSources)]
   // Marine life and protection fixtures
   const fc = (features) => JSON.stringify({ type: 'FeatureCollection', features })
   const sq = (b = [-123.5, 48.3, -123.4, 48.4]) => ({ type: 'Polygon', coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[1]]]] })
@@ -592,7 +656,28 @@ function selftest() {
     ['ruleTidesCredit (popup lines)', (files) => ruleTidesCredit(files[0].text, files[1].text), [f('x.html', tidesHtml), f('x.js', tidesJs.replace('Not official NOAA material.', 'Thanks.'))], [f('x.html', tidesHtml), f('x.js', tidesJs)]],
     ['ruleSeafloorCredit (no grid, coarseness or navigation line)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', '<p><strong>Seafloor depth</strong> (off until you switch it on). Depth.</p>'), f('x.js', floorJs)], [f('x.html', floorHtml), f('x.js', floorJs)]],
     ['ruleSeafloorCredit (layer type)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', floorHtml), f('x.js', floorJs.replace("type: 'color-relief'", "type: 'raster'"))], [f('x.html', floorHtml), f('x.js', floorJs)]],
-    ['ruleHeldOcean', ruleHeldOcean, [f('js/a.js', "const u = 'api-iwls.dfo-mpo.gc.ca'")], [f('js/a.js', "const u = 'api.tidesandcurrents.noaa.gov'")]],
+    ['ruleSeafloorCredit (no Canadian Hydrographic Service credit)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', floorHtml.replace('From the Canadian Hydrographic Service (NONNA) in Canadian waters and from', 'From')), f('x.js', floorJs)], [f('x.html', floorHtml), f('x.js', floorJs)]],
+    ['ruleSeafloorCredit (on-map NONNA credit)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', floorHtml), f('x.js', floorJs.replace('Canadian Hydrographic Service (NONNA, not for navigation)', 'NONNA'))], [f('x.html', floorHtml), f('x.js', floorJs)]],
+    ['ruleSeafloorCredit (NONNA layer)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', floorHtml), f('x.js', floorJs.replace('tiles: [`nonna://', 'tiles: [`https://'))], [f('x.html', floorHtml), f('x.js', floorJs)]],
+    ['ruleSeafloorCredit (NONNA protocol)', (files) => ruleSeafloorCredit(files[0].text, files[1].text), [f('x.html', floorHtml), f('x.js', floorJs.replace("addProtocol?.('nonna', loadNonnaTile)", ''))], [f('x.html', floorHtml), f('x.js', floorJs)]],
+    ['ruleChsNotices (IWLS notice in the credits)', chsRule, chsFiles({ html: chsHtml.replace('is not to be used for navigation', 'is to be used for navigation') }), chsFiles()],
+    ['ruleChsNotices (NONNA notice in the README)', chsRule, chsFiles({ readme: chsReadme.replace('Darren Zal and contains intellectual property of the Canadian', 'someone and contains intellectual property of the Canadian') }), chsFiles()],
+    ['ruleChsNotices (panel notice not hidden)', chsRule, chsFiles({ html: chsHtml.replace('<p id="tides-chs-notice" hidden>', '<p id="tides-chs-notice">') }), chsFiles()],
+    ['ruleChsNotices (panel notice missing)', chsRule, chsFiles({ html: chsHtml.replace('<p id="seafloor-chs-notice" hidden></p>', '') }), chsFiles()],
+    ['ruleChsNotices (panel notice not written)', chsRule, chsFiles({ js: chsJs.replace("$('seafloor-chs-notice').textContent = NONNA_NOTICE", '') }), chsFiles()],
+    ['ruleChsNotices (panel notice not tied to its layer)', chsRule, chsFiles({ js: chsJs.replace("ui: ['tides-chs-notice']", '') }), chsFiles()],
+    ['ruleChsNotices (popup notice)', chsRule, chsFiles({ js: chsJs.replace("line(IWLS_NOTICE, 'src notice')", '') }), chsFiles()],
+    ['ruleChsNotices (failed popup notice)', chsRule, chsFiles({ js: chsJs.replace("el('p', IWLS_NOTICE, 'src notice')", '') }), chsFiles()],
+    ['ruleChsNotices (non-commercial, credits)', chsRule, chsFiles({ html: chsHtml.replace('non-commercial demo', 'demo') }), chsFiles()],
+    ['ruleChsNotices (non-commercial, sources)', chsRule, chsFiles({ sources: chsSources.replace('non-commercial demo', 'demo') }), chsFiles()],
+    ['ruleChsNotices (licence in the sources)', chsRule, chsFiles({ sources: chsSources.replace(NONNA_LICENCE_URL, '') }), chsFiles()],
+    ['ruleChsNotices (licence in the credits)', chsRule, chsFiles({ html: chsHtml.replace(IWLS_LICENCE_URL, 'https://tides.gc.ca/en/') }), chsFiles()],
+    ['ruleChsNotices (date read)', chsRule, chsFiles({ sources: chsSources.replace('read 2026-10-22', 'read') }), chsFiles()],
+    ['ruleChsNotStored (data file)', ruleChsNotStored, [f('data/nonna-100.geojson', '{}')], [f('data/streams.geojson', '{}'), f('data/SOURCES.md', 'NONNA')]],
+    ['ruleChsNotStored (raster)', ruleChsNotStored, [f('data/seabed.tif', '')], [f('data/streams.geojson', '{}')]],
+    ['ruleChsNotStored (fetch script)', ruleChsNotStored, [f('scripts/fetch-layers.sh', 'curl https://nonna-geoserver.data.chs-shc.ca/x')], [f('scripts/fetch-layers.sh', 'curl https://openmaps.gov.bc.ca/x')]],
+    ['ruleHeldOcean', ruleHeldOcean, [f('js/a.js', "const u = 'rockfish'")], [f('js/a.js', "const u = 'api-iwls.dfo-mpo.gc.ca'")]],
+    ['ruleHeldOcean (tides)', ruleHeldOcean, [f('js/a.js', "const u = 'acartia.io'")], [f('js/a.js', "const u = 'api.tidesandcurrents.noaa.gov'")]],
     ['ruleHeldOcean (whale feed)', ruleHeldOcean, [f('index.html', '<p>Sightings from Acartia.</p>')], [f('index.html', '<p>Modelled density only.</p>')]],
     ['rulePrivacyHosts', (files) => rulePrivacyHosts(files[0].text), [f('x.html', '<strong>Privacy.</strong> tiles.openfreemap.org <strong>Software.</strong>')], [f('x.html', `<strong>Privacy.</strong> ${FETCH_HOSTS.join(' ')} <strong>Software.</strong>`)]],
     ['ruleOverlayBoxes (on by default)', (files) => ruleOverlayBoxes(files[0].text), [f('x.html', boxes(true))], [f('x.html', boxes(false))]],
@@ -773,8 +858,9 @@ function checkTree() {
   report(...pair(ruleWindCredit(html, overlaysJs), 'wind carries the Environment and Climate Change Canada credit on the map, says it is a forecast and not for navigation, and is named in the privacy note'))
   report(...pair(ruleScalarCredit(html, overlaysJs), 'sea temperature and sea saltiness carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
   report(...pair(ruleTidesCredit(html, overlaysJs), 'tides and tidal currents carry the NOAA/NOS/CO-OPS attribution, say predictions are not for navigation and that the curves are not official NOAA material'))
-  report(...pair(ruleSeafloorCredit(html, overlaysJs), 'seafloor depth says it comes from ETOPO1, how coarse that is and that it is not for navigation, and is a colour relief on its own capped source'))
-  report(...pair(ruleHeldOcean(scanned.filter((f) => /^(index\.html$|js\/|css\/)/.test(f.path))), 'no held ocean data in the code or the page (Canadian Hydrographic Service data, conservation areas, shellfish closures, haulouts, whale sighting feeds, ship tracking)'))
+  report(...pair(ruleSeafloorCredit(html, overlaysJs), 'seafloor depth says it comes from the Canadian Hydrographic Service (NONNA) in Canadian waters and from ETOPO1 elsewhere, how coarse ETOPO1 is and that it is not for navigation, and is a colour relief on its own capped source under raster tiles asked for by a protocol of the page'))
+  report(...pair(ruleHeldOcean(scanned.filter((f) => /^(index\.html$|js\/|css\/)/.test(f.path))), 'no held ocean data in the code or the page (conservation areas, shellfish closures, haulouts, whale sighting feeds, ship tracking)'))
+  report(...pair(ruleChsNotStored(files), 'no copy of Canadian Hydrographic Service data in data/ or raw/, and the fetch script does not ask its servers for any'))
   report(flowJs.includes('motionQuery') && flowJs.includes('visibilitychange') && flowJs.includes('cancelAnimationFrame') && flowJs.includes("'movestart'"), 'the particle loop of sea currents and wind honours reduced motion, stops when the tab is hidden and while the map moves')
   report(!byPath['js/currents.js'] && /createFlow/.test(overlaysJs) && (overlaysJs.match(/createFlow\(/g) || []).length === 1 && !/new Path2D/.test(overlaysJs), 'sea currents and wind use one particle engine (js/flow.js), made once, with no second copy of it in overlays.js')
   report(overlaysJs.includes('Contains information licenced under the <a href="${ECCC_LICENCE}" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada.') && overlaysJs.includes("const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'"), 'on-map attribution carries the Environment and Climate Change Canada licence statement and a link to the licence')
@@ -787,6 +873,7 @@ function checkTree() {
   report(licence.startsWith('MIT License') && licence.includes('Copyright (c) 2026 Darren Zal') && licence.includes('Permission is hereby granted, free of charge'), 'LICENSE is the MIT licence with the Darren Zal copyright line')
   const readme = byPath['README.md']?.text || ''
   report(/MIT[^.]*covers the code only/.test(readme) && readme.includes('data/SOURCES.md'), 'README says the MIT licence covers the code only and points to data/SOURCES.md for the data')
+  report(...pair(ruleChsNotices({ html, js: overlaysJs, readme, sources }), 'Canadian Hydrographic Service: both licence notices are in the credits and the README word for word, under their layer in the panel while it is on and in the gauge popup, the credits and the notes say this is a non-commercial demo, and both licences are recorded with their addresses and the date they were read'))
   report(!!byPath['.nojekyll'], '.nojekyll present')
   report(!!byPath['vendor/MAPLIBRE-LICENSE.txt'], 'MapLibre licence text is shipped with the vendored library')
 
@@ -1025,11 +1112,11 @@ async function checkOverlayData() {
 
     // tides and tidal currents (NOAA CO-OPS predictions)
     const tNowMs = Date.parse('2026-10-22T12:00:00Z')
-    report(D.TIDE_STATIONS.map((x) => x.id).join(',') === '9444090,9449880,PUG1640,PUG1636,PUG1718,PCT1391,PCT1416' && new Set(D.TIDE_STATIONS.map((x) => x.id)).size === 7 && D.TIDE_STATIONS.filter((x) => x.kind === 'level').length === 2 && D.TIDE_STATIONS.every((x) => D.REGION[0] <= x.coords[0] && x.coords[0] <= D.REGION[2] && D.REGION[1] <= x.coords[1] && x.coords[1] <= D.REGION[3] && x.name && x.short) && D.tideFeatures().features.length === 7 && D.tideFeatures().features.every((f) => f.geometry.type === 'Point' && f.properties.id && f.properties.short) && D.tideStation('PCT1416').series === false && D.tideStation('PCT1391').series === false && D.tideStation('PUG1718').series === true && D.tideStation('nope') === null, 'tides: two water level stations (Port Angeles, Friday Harbor) and five current stations (Race Rocks, Discovery Island, Haro Strait, Trial Island, Cattle Point), each with a name and a place inside the map; the two that give only slack and maximum times have no series')
+    report(D.TIDE_STATIONS.map((x) => x.id).join(',') === '9444090,9449880,PUG1640,PUG1636,PUG1718,PCT1391,PCT1416,07120' && new Set(D.TIDE_STATIONS.map((x) => x.id)).size === 8 && D.TIDE_STATIONS.filter((x) => x.kind === 'level').length === 3 && D.TIDE_STATIONS.filter((x) => x.source === 'chs').map((x) => x.id).join() === '07120' && D.TIDE_STATIONS.every((x) => D.REGION[0] <= x.coords[0] && x.coords[0] <= D.REGION[2] && D.REGION[1] <= x.coords[1] && x.coords[1] <= D.REGION[3] && x.name && x.short) && D.tideFeatures().features.length === 8 && D.tideFeatures().features.every((f) => f.geometry.type === 'Point' && f.properties.id && f.properties.short) && D.tideStation('PCT1416').series === false && D.tideStation('PCT1391').series === false && D.tideStation('PUG1718').series === true && D.tideStation('nope') === null, 'tides: three water level stations (Port Angeles and Friday Harbor from NOAA, Victoria Harbour from the Canadian Hydrographic Service) and five current stations (Race Rocks, Discovery Island, Haro Strait, Trial Island, Cattle Point), each with a name and a place inside the map; the two that give only slack and maximum times have no series')
     const lvl = D.tideStation('9444090'), cur = D.tideStation('PUG1640'), sub = D.tideStation('PCT1416')
     const lu = D.tideUrls(lvl, tNowMs), cu2 = D.tideUrls(cur, tNowMs), su2 = D.tideUrls(sub, tNowMs)
     const all = [lu.events, lu.series, cu2.events, cu2.series, su2.events]
-    report(all.every((u) => u.startsWith('https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?') && u.includes('application=greater-victoria-map') && u.includes('format=json') && u.includes('time_zone=gmt') && u.includes('begin_date=20261022+04%3A00') && u.includes('end_date=20261023+18%3A00')) && lu.events.includes('product=predictions') && lu.events.includes('interval=hilo') && lu.events.includes('datum=MLLW') && lu.events.includes('units=metric') && lu.events.includes('station=9444090') && lu.series.includes('interval=30') && cu2.events.includes('product=currents_predictions') && cu2.events.includes('interval=MAX_SLACK') && cu2.events.includes('units=english') && cu2.series.includes('interval=30') && su2.series === null && threw(() => D.tideUrls({ id: 'PUG1640; drop', kind: 'current' })) && threw(() => D.tideUrls(null)), 'tides: a request names NOAA, the application, UTC times from 8 hours before now to 30 hours after, the highs and lows or the slacks and maximums and, where NOAA gives one, a series every 30 minutes (none for a station that gives only events), and refuses an unknown station')
+    report(all.every((u) => u.startsWith('https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?') && u.includes('application=greater-victoria-map') && u.includes('format=json') && u.includes('time_zone=gmt') && u.includes('begin_date=20261022+04%3A00') && u.includes('end_date=20261023+18%3A00')) && lu.events.includes('product=predictions') && lu.events.includes('interval=hilo') && lu.events.includes('datum=MLLW') && lu.events.includes('units=metric') && lu.events.includes('station=9444090') && lu.series.includes('interval=30') && cu2.events.includes('product=currents_predictions') && cu2.events.includes('interval=MAX_SLACK') && cu2.events.includes('units=english') && cu2.series.includes('interval=30') && su2.series === null && threw(() => D.tideUrls({ id: 'PUG1640; drop', kind: 'current' })) && threw(() => D.tideUrls(null)) && threw(() => D.tideUrls(D.tideStation('07120'))), 'tides: a request names NOAA, the application, UTC times from 8 hours before now to 30 hours after, the highs and lows or the slacks and maximums and, where NOAA gives one, a series every 30 minutes (none for a station that gives only events), and refuses an unknown station and the Canadian Hydrographic Service one')
     const levelEvents = { predictions: [{ t: '2026-10-22 20:10', v: '2.029', type: 'H' }, { t: '2026-10-22 13:21', v: '0.606', type: 'L' }, { t: '2026-10-22 06:55', v: '1.512', type: 'H' }, { t: '2026-10-22 02:14', v: '1.223', type: 'L' }, { t: '2026-10-23 02:37', v: '0.912', type: 'L' }, { t: 'bad', v: '1', type: 'H' }, { t: '2026-10-23 08:05', v: 'x', type: 'H' }] }
     const wave = (n, f) => Array.from({ length: n }, (_, i) => f(i, Date.UTC(2026, 9, 22, 4, 0) + i * 1800e3))
     const stamp = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
@@ -1065,7 +1152,66 @@ async function checkOverlayData() {
     const alpha = (c) => Number(c.match(/,([\d.]+)\)$/)[1])
     report(dx[0] === 'interpolate' && dx[2][0] === 'elevation' && elev.every((v, i) => i === 0 || v > elev[i - 1]) && elev[0] === -300 && elev.at(-1) === 0 && alpha(cols.at(-1)) === 0 && alpha(cols.at(-2)) === 0 && elev.at(-2) === -D.DEPTH_FADE_FROM && cols.slice(0, -2).every((c) => alpha(c) === 1) && cols.every((c) => /^rgba\(\d+,\d+,\d+,[\d.]+\)$/.test(c)), 'seafloor: the colour ramp runs by elevation from the deepest colour up, and is transparent at the waterline and above and down to 10 m, then fades in to the first colour')
     const dsLum = D.DEPTH_STOPS.map((p) => lum(p[1]))
-    report(D.DEPTH_STOPS.every((p, i) => i === 0 || p[0] > D.DEPTH_STOPS[i - 1][0]) && dsLum.every((l, i) => i === 0 || l < dsLum[i - 1]) && D.DEPTH_STOPS[0][0] > D.DEPTH_FADE_FROM && D.DEPTH_TICKS.every((t) => D.DEPTH_STOPS.some((p) => p[0] === t)) && D.depthGradient().startsWith('linear-gradient(to right, rgba(150, 202, 222, 0) 0%') && D.depthGradient().endsWith('rgb(32, 66, 128) 100%)'), 'seafloor: the colours get darker with depth, the ticks of the key are depths that have a colour, and the key fades in from nothing')
+    report(D.DEPTH_STOPS.every((p, i) => i === 0 || p[0] > D.DEPTH_STOPS[i - 1][0]) && dsLum.every((l, i) => i === 0 || l < dsLum[i - 1]) && D.DEPTH_STOPS[0][0] > D.DEPTH_FADE_FROM, 'seafloor: the ETOPO1 colours get darker with depth and begin below the depth where they fade in')
+
+    // Canadian Hydrographic Service (CHS): the notices, the seafloor tiles (NONNA) and the Victoria Harbour gauge (IWLS)
+    {
+    report(D.IWLS_NOTICE === IWLS_NOTICE_TEXT && D.NONNA_NOTICE === NONNA_NOTICE_TEXT && D.CHS_USER === 'Darren Zal' && !/\[|insert/i.test(D.IWLS_NOTICE + D.NONNA_NOTICE) && D.IWLS_LICENCE_URL === IWLS_LICENCE_URL && D.NONNA_LICENCE_URL === NONNA_LICENCE_URL, 'CHS notices: both are the licences’ own words with the place for the name filled in as Darren Zal, with no placeholder left, and the licence addresses are the ones recorded')
+    const ramp = (d) => D.scaleColour(D.NONNA_RAMP, d)
+    const measured = [[0.25, [195, 5, 0]], [5.5, [195, 100, 0]], [9.5, [194, 182, 0]], [12.5, [94, 195, 0]], [14.5, [25, 195, 0]], [16.5, [0, 185, 19]], [21, [3, 158, 76]], [29, [9, 103, 190]], [45, [8, 94, 187]], [87.5, [1, 64, 156]]] // the median colour of the service's picture for depths in a bin around each number (its own depth grid said so), 2026-10-22
+    const dec = measured.map(([d, c]) => [d, D.nonnaDepth(...c)])
+    report(dec.every(([d, got]) => (d < 1 ? got != null && got < 1.2 : got != null && Math.abs(got - d) <= (d < 25 ? 0.5 : 3.5))), 'seafloor (CHS): a colour of the service’s picture is read back to metres, to half a metre down to 25 m and to 3.5 m to 90 m, at the places where its own depth grid and picture were compared', JSON.stringify(dec))
+    const trip = [1.5, 3, 7, 12, 18, 25, 40, 75, 150, 250].map((d) => [d, D.nonnaDepth(...ramp(d))])
+    report(trip.every(([d, got]) => got != null && Math.abs(got - d) <= (d <= 30 ? 0.3 : d <= 100 ? 1.5 : 20)) && D.nonnaDepth(...ramp(0)) < 0.5 && D.nonnaDepth(...ramp(1000)) > 950, 'seafloor (CHS): the ramp read back gives the depth it was made from (the colours are whole numbers, so the deep end is only good to about 20 m: one step of colour there is 16 to 21 m)', JSON.stringify(trip))
+    const landColours = [[148, 83, 0], [160, 50, 0], [173, 32, 0], [186, 23, 0]]
+    report(landColours.every((c) => D.nonnaDepth(...c) === null) && D.nonnaDepth(255, 255, 255) === null && D.nonnaDepth(0, 0, 0) === null && D.nonnaDepth(128, 128, 128) === null && D.nonnaDepth(200, 0, 200) === null, 'seafloor (CHS): the browns the service draws for land and heights above chart datum, and white, black, grey and purple, are not a depth')
+    const ns = D.NONNA_STOPS
+    report(ns.every((p, i) => i === 0 || p[0] > ns[i - 1][0]) && ns.map((p) => lum(p[1])).every((l, i, a) => i === 0 || l < a[i - 1]) && ns[0][0] === D.NONNA_MIN_DEPTH && ns.slice(2).every((p, i) => p[0] === D.DEPTH_STOPS[i][0] && sameValues(p[1], D.DEPTH_STOPS[i][1])) && sameValues(D.nonnaColour(25), D.DEPTH_STOPS[0][1]) && sameValues(D.nonnaColour(300), D.DEPTH_STOPS.at(-1)[1]) && sameValues(D.nonnaColour(1000), D.DEPTH_STOPS.at(-1)[1]) && sameValues(D.nonnaColour(0.5), ns[0][1]), 'seafloor (CHS): the key has the same colours as the ETOPO1 colours from 25 m down, two pale stops above them (1 m and 10 m), and gets darker with depth, so the two sources read as one layer with one key')
+    const sea = [194, 200, 202], seaLum = lum(sea)
+    report(ns.every((p) => lum(D.nonnaColour(p[0]).map((v, k) => Math.round(v * 0.75 + sea[k] * 0.25))) < seaLum) && ns.every((p) => { const c = D.nonnaColour(p[0]).map((v, k) => Math.round(v * 0.75 + sea[k] * 0.25)); return Math.max(...c.map((v, k) => Math.abs(v - sea[k]))) > 12 && c[2] >= c[0] }), 'seafloor (CHS): at the layer’s opacity every colour of the key is darker and bluer than the basemap’s sea, by more than 12 of 255 in some channel, so a coloured place never reads as lighter than an uncoloured one')
+    report(sameValues(D.nonnaGradient(0, 300).match(/rgb\(\d+, \d+, \d+\) [\d.]+%/g).map((x) => x.replace(/^rgb\([^)]*\) /, '')), ['0%', '0.3%', '3.3%', '8.3%', '16.7%', '33.3%', '66.7%', '100%']) && D.NONNA_TICKS.join() === '10,50,100,200,300' && D.NONNA_TICKS.every((t) => D.NONNA_STOPS.some((p) => p[0] === t)), 'seafloor (CHS): the key runs from 0 to 300 m with a stop at each colour, and the numbers under it are depths that have a colour')
+    const px = (...cs) => new Uint8ClampedArray(cs.flatMap(([r, g, b, a = 255]) => [r, g, b, a]))
+    const tile = px([195, 97, 0], [195, 0, 0], [194, 194, 0, 254], [0, 56, 149], [148, 83, 0], [195, 97, 0, 0], [9, 102, 195], [255, 255, 255])
+    const cache = new Map(), n = D.nonnaPaint(tile, sea, 0.75, cache, 4)
+    const want = (d) => D.nonnaColour(d).map((v, k) => Math.round(v * 0.75 + sea[k] * 0.25))
+    const at = (i) => [...tile.slice(i * 4, i * 4 + 4)]
+    report(n === 4 && sameValues(at(0).slice(0, 3), want(D.nonnaDepth(195, 97, 0))) && at(0)[3] === 255 && at(1)[3] === 0 && sameValues(at(2).slice(0, 3), want(D.nonnaDepth(194, 194, 0))) && at(2)[3] === 255 && sameValues(at(3).slice(0, 3), want(D.nonnaDepth(0, 56, 149))) && at(4)[3] === 0 && at(5)[3] === 0 && at(6)[3] === 255 && at(7)[3] === 0 && cache.size === 7 && threw(() => D.nonnaPaint(new Uint8ClampedArray(7), sea, 0.75)) && threw(() => D.nonnaPaint(tile, [1, 2], 0.75, new Map(), 4)) && threw(() => D.nonnaPaint(tile, sea, 0, new Map(), 4)) && threw(() => D.nonnaPaint(tile, sea, 1.5, new Map(), 4)), 'seafloor (CHS): a tile is painted again in place: a depth becomes the key’s colour mixed with the sea at the opacity and made opaque, 0 m, land, an empty pixel and white become clear, a pixel at alpha 254 counts as drawn, and a bad tile, sea colour or opacity is refused')
+    // The hairline where two of the service's 0.1 degree sheets meet (a column or row with no data) is filled, and wider gaps are not
+    const D1 = [0, 0, 150], row = (gaps) => px(...Array.from({ length: 12 }, (_, x) => (gaps.includes(x) ? [0, 0, 0, 0] : [10 + x, 60, 150])))
+    const gap1 = row([5]), gap2 = row([5, 6]), gap3 = row([5, 6, 7]), f1 = D.nonnaFill(gap1, 12), f2 = D.nonnaFill(gap2, 12), f3 = D.nonnaFill(gap3, 12)
+    const pr = (a, x) => [...a.slice(x * 4, x * 4 + 4)]
+    report(f1 === 1 && sameValues(pr(gap1, 5), [14, 60, 150, 255]) && f2 === 2 && sameValues(pr(gap2, 6), [14, 60, 150, 255]) && f3 === 0 && pr(gap3, 6)[3] === 0, 'seafloor (CHS): a column of no data one or two pixels wide between two drawn pixels is filled from the one before it, and a gap of three is left', JSON.stringify([f1, f2, f3]))
+    const col = px(...Array.from({ length: 12 }, (_, i) => (i >= 3 && i <= 5 ? [0, 0, 0, 0] : [10, 60 + i, 150])))
+    const f5 = D.nonnaFill(col, 3) // 3 pixels across, 4 rows: row 1 is empty and has data above and below
+    report(f5 === 3 && pr(col, 3).join() === '10,60,150,255' && pr(col, 4).join() === '10,61,150,255' && pr(col, 5).join() === '10,62,150,255' && threw(() => D.nonnaFill(col, 5)) && threw(() => D.nonnaFill(new Uint8ClampedArray(7), 1)) && threw(() => D.nonnaFill(col, 0)), 'seafloor (CHS): a row with no data between two rows that have it is filled too, and a width that does not fit the tile is refused')
+    // A hairline on the very edge of a tile (its other side is in the next tile) is filled from the line inside it, if the whole line is empty
+    const wide = (w, h, fn) => px(...Array.from({ length: w * h }, (_, i) => fn(i % w, Math.floor(i / w))))
+    const topGap = wide(6, 6, (x, y) => (y === 0 ? [0, 0, 0, 0] : [20, 60 + y, 150])), top2 = wide(6, 6, (x, y) => (y < 2 ? [0, 0, 0, 0] : [20, 60 + y, 150])), top3 = wide(6, 6, (x, y) => (y < 3 ? [0, 0, 0, 0] : [20, 60 + y, 150]))
+    const leftGap = wide(6, 6, (x, y) => (x === 0 ? [0, 0, 0, 0] : [20 + x, 60, 150])), rightGap = wide(6, 6, (x, y) => (x === 5 ? [0, 0, 0, 0] : [20 + x, 60, 150])), bottomGap = wide(6, 6, (x, y) => (y === 5 ? [0, 0, 0, 0] : [20, 60 + y, 150]))
+    const halfGap = wide(6, 6, (x, y) => (y === 0 || (y === 1 && x < 4) ? [0, 0, 0, 0] : [20, 60 + y, 150])), landTop = wide(6, 6, (x, y) => (y < 4 ? [0, 0, 0, 0] : [20, 60, 150]))
+    const e = [topGap, top2, top3, leftGap, rightGap, bottomGap, halfGap, landTop].map((t) => D.nonnaFill(t, 6))
+    const at6 = (t, x, y) => [...t.slice((y * 6 + x) * 4, (y * 6 + x) * 4 + 4)].join()
+    report(e[0] === 6 && at6(topGap, 3, 0) === '20,61,150,255' && e[1] === 12 && at6(top2, 3, 0) === '20,62,150,255' && at6(top2, 3, 1) === '20,62,150,255' && e[2] === 0 && at6(top3, 3, 0) === '0,0,0,0' && e[3] === 6 && at6(leftGap, 0, 3) === '21,60,150,255' && e[4] === 6 && at6(rightGap, 5, 2) === '24,60,150,255' && e[5] === 6 && at6(bottomGap, 2, 5) === '20,64,150,255' && e[6] === 0 && at6(halfGap, 5, 0) === '0,0,0,0' && e[7] === 0 && at6(landTop, 2, 3) === '0,0,0,0', 'seafloor (CHS): a hairline of one or two lines along the edge of a tile is filled from the line inside it, but three lines are left, and so are an edge with data in it, a row whose line inside it is mostly empty and the land at the top of a tile', JSON.stringify(e))
+    report(D.nonnaTileUrl(100, 11, 707, 321) === 'https://nonna-geoserver.data.chs-shc.ca/geoserver/gwc/service/wmts/rest/nonna:NONNA%20100/raster/EPSG:900913/EPSG:900913:11/321/707?format=image/png' && D.nonnaTileUrl(10, 14, 2, 3).includes('nonna:NONNA%2010/raster/EPSG:900913/EPSG:900913:14/3/2?') && threw(() => D.nonnaTileUrl(50, 1, 1, 1)) && threw(() => D.nonnaTileUrl(100, -1, 0, 0)) && threw(() => D.nonnaTileUrl(100, 1.5, 0, 0)) && threw(() => D.nonnaTileUrl(100, 1, '1/../2', 0)) && D.NONNA_CLOSE_ZOOM === 11 && D.NONNA_MAX_ZOOM[100] === 11 && D.NONNA_MAX_ZOOM[10] === 14, 'seafloor (CHS): a tile address names the service’s standard Web Mercator grid with the row before the column, asks for the 100 m layer up to tile zoom 11 and the 10 m layer to 14, and refuses a layer, zoom, row or column it does not know')
+    // The Victoria Harbour gauge
+    const gauge = D.tideStation('07120'), iNow = Date.parse('2026-10-22T18:10:00Z')
+    const iu = D.iwlsUrls(gauge, iNow)
+    const decoded = (u) => new URL(u).searchParams
+    report(Object.values(iu).every((u) => u.startsWith('https://api-iwls.dfo-mpo.gc.ca/api/v1/stations/5cebf1df3d0f4a073c4bbd1e/data?')) && decoded(iu.hilo).get('time-series-code') === 'wlp-hilo' && decoded(iu.hilo).get('from') === '2026-10-22T18:10:00Z' && decoded(iu.hilo).get('to') === '2026-10-24T00:10:00Z' && !decoded(iu.hilo).has('resolution') && decoded(iu.observed).get('time-series-code') === 'wlo' && decoded(iu.observed).get('from') === '2026-10-22T15:10:00Z' && decoded(iu.observed).get('to') === '2026-10-22T18:10:00Z' && decoded(iu.observed).get('resolution') === 'FIVE_MINUTES' && decoded(iu.predicted).get('time-series-code') === 'wlp' && decoded(iu.predicted).get('from') === '2026-10-22T15:10:00Z' && decoded(iu.predicted).get('to') === '2026-10-23T15:10:00Z' && decoded(iu.predicted).get('resolution') === 'FIFTEEN_MINUTES' && Object.keys(iu).length === 3 && D.IWLS_SPACING_MS === 400 && threw(() => D.iwlsUrls(D.tideStation('9444090'), iNow)) && threw(() => D.iwlsUrls({ ...gauge, chsId: 'x; drop' }, iNow)) && threw(() => D.iwlsUrls(null)), 'gauge (CHS): a popup makes three requests, the highs and lows for the next 30 hours, the observed levels for the last 3 hours every 5 minutes and the predicted ones from 3 hours before to 21 after every 15 minutes, in UTC, spaced 400 ms apart, and only for this station')
+    const row5 = (t, v, extra = {}) => ({ eventDate: t, qcFlagCode: '1', reviewed: false, timeSeriesId: 'x', value: v, ...extra })
+    const iHilo = [row5('2026-10-22T20:38:00Z', 2.428), row5('2026-10-23T02:53:00Z', 1.594), row5('2026-10-23T08:28:00Z', 2.033), row5('2026-10-23T14:27:00Z', 1.483), row5('2026-10-23T20:44:00Z', 2.47)]
+    const iPred = Array.from({ length: 96 }, (_, i) => row5(new Date(iNow - 3 * 3600e3 + i * 900e3).toISOString().slice(0, 19) + 'Z', 2 + 0.5 * Math.sin(i / 8), { qcFlagCode: '2' }))
+    const iObs = Array.from({ length: 36 }, (_, i) => row5(new Date(iNow - 3 * 3600e3 + i * 300e3).toISOString().slice(0, 19) + 'Z', 1.6 + i * 0.02))
+    const ng = D.normaliseIwls(gauge, iHilo, iPred, iObs)
+    report(ng.kind === 'level' && ng.source === 'chs' && ng.events.map((e) => e.type).join() === 'high,low,high,low,high' && ng.events.every((e, i) => i === 0 || e.ms > ng.events[i - 1].ms) && near(ng.events[0].value, 2.428) && ng.events[0].ms === Date.UTC(2026, 9, 22, 20, 38) && ng.series.length === 96 && ng.observed.length === 36 && near(ng.latest.v, 1.6 + 35 * 0.02) && ng.latest.ms === iNow - 3 * 3600e3 + 35 * 300e3 && ng.latest.reviewed === false && D.tideNext(ng, iNow).high.ms === Date.UTC(2026, 9, 22, 20, 38) && D.tideNext(ng, iNow).low.ms === Date.UTC(2026, 9, 23, 2, 53), 'gauge (CHS): the replies are read to highs and lows told apart by their neighbours (a high stands above the one after it), a series of predicted levels, the observed levels and the newest of them with its time, all in metres above chart datum')
+    const iOdd = [row5('2026-10-23T02:53:00Z', 1.594), row5('2026-10-22T20:38:00Z', 2.428), row5('2026-10-23T08:28:00Z', 2.033), row5('bad', 1), row5('2026-10-23T09:00:00Z', 99), row5('2026-10-23T10:00:00Z', 'x'), row5('2026-10-23T11:00:00Z', 1.2, { qcFlagCode: '3' })]
+    const od = D.normaliseIwls(gauge, iOdd, null, null)
+    const iObs2 = [...iObs.slice(0, 35), row5('2026-10-22T18:10:00Z', 5.5, { qcFlagCode: '3' })]
+    report(od.events.map((e) => e.type).join() === 'high,low,high' && od.events.length === 3 && od.series === null && od.observed.length === 0 && od.latest === null && D.normaliseIwls(gauge, iHilo, iPred.slice(0, 10), null).series === null && D.normaliseIwls(gauge, iHilo, 'no', {}).latest === null && D.normaliseIwls(gauge, iHilo, null, iObs2).latest.v === iObs[34].value && D.normaliseIwls(gauge, iHilo, null, iObs2).observed.length === 35 && threw(() => D.normaliseIwls(gauge, [])) && threw(() => D.normaliseIwls(gauge, null)) && threw(() => D.normaliseIwls(gauge, { error: 'x' })) && threw(() => D.normaliseIwls(gauge, [row5('2026-10-22T20:38:00Z', 2.4)])) && threw(() => D.normaliseIwls(D.tideStation('9444090'), iHilo)), 'gauge (CHS): replies in any order are put in time order, a reading with a bad time, no number, an impossible height or the questionable flag is dropped (so the newest reading shown is never a questionable one), predicted and observed levels are optional, and a reply with no highs and lows, with one only or for another station is refused')
+    const gp = D.tideCurve(ng, iNow - 3 * 3600e3, iNow + 21 * 3600e3).points, ob = ng.observed.map((p) => ({ ms: p.ms, v: p.v + 3 }))
+    const g1 = D.curveGeometry(gp, 'level', { from: iNow - 3 * 3600e3, to: iNow + 21 * 3600e3, now: iNow }), g2 = D.curveGeometry(gp, 'level', { from: iNow - 3 * 3600e3, to: iNow + 21 * 3600e3, now: iNow, scaleWith: ob })
+    report(g2.max >= Math.max(...ob.map((p) => p.v)) && g2.max > g1.max && g2.min === g1.min && g1.d === D.curvePath(gp, g1) && D.curvePath(ob, g2).startsWith('M') && (D.curvePath(ob, g2).match(/L/g) || []).length === ob.length - 1 && g2.y(g2.max) < g2.y(g2.min) && !/NaN|undefined/.test(D.curvePath(ob, g2)), 'gauge (CHS): the observed levels are drawn on the same scale as the predicted ones (the scale takes in both), as a path of their own')
+    }
 
     // marine life and protection
     report(D.tidyName('RACE ROCKS ECOLOGICAL RESERVE') === 'Race Rocks Ecological Reserve' && D.tidyName('SAYSUTSHUN (NEWCASTLE ISLAND MARINE) PARK') === 'Saysutshun (Newcastle Island Marine) Park' && D.tidyName('BAY OF FUNDY') === 'Bay of Fundy' && D.tidyName('Gulf Islands National Park Reserve Of Canada') === 'Gulf Islands National Park Reserve Of Canada' && D.tidyName('SANDHEADS (8 Dolphs)') === 'SANDHEADS (8 Dolphs)' && D.tidyName('  ') === null && D.tidyName(null) === null, 'marine layers: a name published in capitals is shown in capitals and small letters, a name with small letters already is left as published, and a blank name is none')

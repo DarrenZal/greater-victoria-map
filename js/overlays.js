@@ -2,8 +2,9 @@
 //
 // Twelve live layers load from outside services straight from the visitor's browser, and ten
 // static layers (ecoregions, industry and waste sites, seafloor depth and seven marine life and protection
-// layers) draw from files and tiles this site already has. Every one is off by default and makes no request
-// until its box is ticked. Each shows a plain status line,
+// layers) draw from files and tiles this site already has, except that seafloor depth also asks the Canadian
+// Hydrographic Service for tiles, and tides and tidal currents ask it for one gauge. Every one is off by default
+// and makes no request until its box is ticked, or, for a tide station, its dot is clicked. Each shows a plain status line,
 // and a plain failure line if its request fails. Parsing and filtering live in
 // js/overlays-data.js, which has no DOM code so the checks can run it in Node.
 import {
@@ -15,8 +16,10 @@ import {
   PLAY_HOURS, hourWindow, currentsCapabilitiesUrl, currentsTimes, currentsUrl, currentsGrid, windCapabilitiesUrl, windTimes, windUrl, windGrid,
   readGeoTiff, pacificHour, seaVelocity, currentReadout, compassWord,
   SCALARS, SCALES, SCALE_TICKS, scalarCapabilitiesUrl, scalarTimes, scalarHour, nearestHour, scalarImageUrl, scalarInfoUrl, scalarReading, scalarText, scaleGradient,
-  tideStation, tideFeatures, tideUrls, normaliseTide, tideNext, tideCurve, curveGeometry, curveTicks, tideClock, TIDE_STATIONS,
-  DEPTH_TICKS, DEPTH_FADE_FROM, depthExpression, depthGradient,
+  tideStation, tideFeatures, tideUrls, normaliseTide, tideNext, tideCurve, curveGeometry, curvePath, curveTicks, tideClock, TIDE_STATIONS,
+  IWLS_SPACING_MS, iwlsUrls, normaliseIwls,
+  depthExpression,
+  NONNA_MAX_ZOOM, NONNA_CLOSE_ZOOM, NONNA_TICKS, nonnaTileUrl, nonnaGradient, NONNA_NOTICE, IWLS_NOTICE, NONNA_LICENCE_URL, IWLS_LICENCE_URL,
   MARINE_FILES, WHALE_RULES, WHALE_RULE_LINKS, OGL_CANADA_LINE, CETACEANS, cetaceanCells, densityBreaks, densityExpression, DENSITY_COLOURS, stepGradient, fmt2,
   protectedInfo, srkwInfo, cetaceanInfo, kelpInfo, eelgrassInfo, herringInfo, seabirdInfo, marineMessage,
 } from './overlays-data.js'
@@ -29,8 +32,9 @@ export const ECCC_ATTRIB = `Contains information licenced under the <a href="${E
 const USGS_ATTRIB = 'Earthquakes: <a href="https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits" target="_blank" rel="noopener">U.S. Geological Survey</a>'
 const GBIF_ATTRIB = 'Observations: <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a>, CC0 or CC BY 4.0 per record'
 const ECO_ATTRIB = 'Ecoregions 2017 &copy; <a href="https://ecoregions.appspot.com/" target="_blank" rel="noopener">Resolve</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>'
-const TIDES_ATTRIB = 'Tides and tidal currents: <a href="https://tidesandcurrents.noaa.gov/disclaimers.html" target="_blank" rel="noopener">NOAA/NOS/CO-OPS</a> predictions'
+const TIDES_ATTRIB = `Tides and tidal currents: <a href="https://tidesandcurrents.noaa.gov/disclaimers.html" target="_blank" rel="noopener">NOAA/NOS/CO-OPS</a> predictions, and the <a href="${IWLS_LICENCE_URL}" target="_blank" rel="noopener">Canadian Hydrographic Service</a> for Victoria Harbour`
 const SEAFLOOR_ATTRIB = 'Seafloor depth: ETOPO1, NOAA (coarse, not for navigation)'
+const NONNA_ATTRIB = `Seafloor depth in Canadian waters: <a href="${NONNA_LICENCE_URL}" target="_blank" rel="noopener">Canadian Hydrographic Service</a> (NONNA, not for navigation)`
 const OGL_CANADA_LINK = '<a href="https://open.canada.ca/en/open-government-licence-canada" target="_blank" rel="noopener">OGL &ndash; Canada</a>'
 const OGL_BC_LINK = '<a href="https://www2.gov.bc.ca/gov/content?id=A519A56BC2BF44E4A008B33FCF527F61" target="_blank" rel="noopener">OGL &ndash; British Columbia</a>'
 const PROTECTED_ATTRIB = `Protected areas: <a href="https://open.canada.ca/data/en/dataset/6c343726-1e92-451a-876a-76e17d398a1c" target="_blank" rel="noopener">CPCAD</a> (${OGL_CANADA_LINK})`
@@ -55,8 +59,16 @@ const text = async (url, signal) => { const r = await fetch(url, { signal }); if
 const json = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
 const km = (n) => `${Math.round(n)} km`
+// "rgb(194, 200, 202)" or "#c2c8ca" as [194, 200, 202], or null for anything else (an expression, a name).
+const rgbOf = (c) => {
+  const m = typeof c === 'string' && (/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/.exec(c) || /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c))
+  if (!m) return null
+  const hex = c.startsWith('#')
+  const out = [m[1], m[2], m[3]].map((v) => (hex ? parseInt(v, 16) : Number(v)))
+  return out.every((v) => v >= 0 && v <= 255) ? out : null
+}
 
-export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
+export function createOverlays({ map, $, el, link, basemap, motionQuery, addProtocol }) {
   const geo = radarGeometry()
   let ready
   const whenReady = new Promise((resolve) => { ready = resolve })
@@ -82,8 +94,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     // Sea temperature and saltiness share one picture (one layer, drawn from one canvas), so only one can be on.
     temperature: { label: 'Sea temperature', ids: ['sea-scalar', 'temperature-credit'], ui: ['temperature-key', 'temperature-note'], ttl: 30 * 60e3, load: (s) => loadScalar('temperature', s) },
     salinity: { label: 'Sea saltiness', ids: ['sea-scalar', 'salinity-credit'], ui: ['salinity-key', 'salinity-note'], ttl: 30 * 60e3, load: (s) => loadScalar('salinity', s) },
-    tides: { label: 'Tides and tidal currents', ids: ['tides-dot', 'tides-label'], ui: ['tides-note'], source: 'ov-tides', ttl: Infinity, load: loadTides },
-    seafloor: { label: 'Seafloor depth', ids: ['seafloor'], ui: ['seafloor-key', 'seafloor-note'], ttl: Infinity, load: loadSeafloor },
+    tides: { label: 'Tides and tidal currents', ids: ['tides-dot', 'tides-label'], ui: ['tides-note', 'tides-chs-notice'], source: 'ov-tides', ttl: Infinity, load: loadTides },
+    seafloor: { label: 'Seafloor depth', ids: ['seafloor', 'seafloor-nonna', 'seafloor-nonna-10'], ui: ['seafloor-key', 'seafloor-note', 'seafloor-chs-notice'], ttl: Infinity, load: loadSeafloor },
     // Marine life and protection: a file of this site each, fetched when the box is first ticked.
     protected: { label: 'Protected marine areas', ids: ['protected-fill', 'protected-line'], ui: ['protected-note'], source: 'ov-protected', ttl: Infinity, load: (s) => loadMarine(s, 'protected') },
     srkw: { label: 'Killer whale critical habitat', ids: ['srkw-fill', 'srkw-line'], ui: ['srkw-note'], source: 'ov-srkw', ttl: Infinity, load: (s) => loadMarine(s, 'srkw') },
@@ -157,6 +169,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       if (!activeScalar()) scalar.blobs.clear()
     }
     if (id === 'tides') { tideCache.clear(); st.loadedAt = 0 }
+    if (id === 'seafloor') { nonna.ok = 0; nonna.failed = 0 }
     if (id === 'radar') {
       // Drop the frames (about 2 MB each in memory) and start fresh next time.
       $('radar-controls').hidden = true
@@ -608,45 +621,110 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     const t = SCALE_TICKS[kind], from = t[0], to = t.at(-1)
     buildKey(kind, scaleGradient(SCALES[kind], from, to), t, from, to)
   }
-  buildKey('seafloor', depthGradient(), DEPTH_TICKS, DEPTH_FADE_FROM, DEPTH_TICKS.at(-1))
+  buildKey('seafloor', nonnaGradient(0, NONNA_TICKS.at(-1)), NONNA_TICKS, 0, NONNA_TICKS.at(-1))
+  $('seafloor-chs-notice').textContent = NONNA_NOTICE
+  $('tides-chs-notice').textContent = IWLS_NOTICE
 
-  // ---- seafloor depth: no request of its own. The colour is drawn in the browser from the elevation tiles.
+  // ---- seafloor depth. NOAA's ETOPO1 colours are drawn in the browser from the elevation tiles, with no request of their own.
+  // Over them, in Canadian waters, go the tiles of the Canadian Hydrographic Service (CHS), asked for live from CHS by the visitor's
+  // browser only while the box is ticked, painted again in the same colours by a worker (js/seafloor-worker.js) and never kept.
+  // The tiles are opaque where they have depths, so the coarser colours below do not show through them.
+  const SEAFLOOR_MESSAGE = 'Depth in metres, from the Canadian Hydrographic Service in Canadian waters (cells of 100 m, and 10 m close up) and from NOAA’s ETOPO1 grid elsewhere. Not for navigation.'
+  const SEAFLOOR_FAILURE = 'The Canadian Hydrographic Service’s depths could not be loaded just now, so the coarser ETOPO1 depths from NOAA are shown. Try again later.'
+  const nonna = { worker: null, jobs: new Map(), id: 0, ok: 0, failed: 0, sea: [194, 200, 202] } // sea: the colour of the basemap's water, mixed into the tiles
+  function nonnaWorker() {
+    if (nonna.worker) return nonna.worker
+    const w = new Worker(new URL('./seafloor-worker.js', import.meta.url), { type: 'module' })
+    w.onmessage = ({ data }) => { const job = nonna.jobs.get(data.id); nonna.jobs.delete(data.id); if (job) (data.error ? job.reject(new Error(data.error)) : job.resolve(data.buffer)) }
+    w.onerror = () => { for (const job of nonna.jobs.values()) job.reject(new Error('the painting worker failed')); nonna.jobs.clear(); nonna.worker = null }
+    return (nonna.worker = w)
+  }
+  const paintNonna = (buffer) => new Promise((resolve, reject) => { const id = ++nonna.id; nonna.jobs.set(id, { resolve, reject }); nonnaWorker().postMessage({ id, buffer, sea: nonna.sea, opacity: SEAFLOOR_OPACITY }, [buffer]) })
+  // A tile that fails is not counted if the map gave up on it itself. The plain failure line is shown only while no tile has come at all.
+  async function loadNonnaTile({ url }, abort) {
+    const m = /^nonna:\/\/(\d+)\/(\d+)\/(\d+)\/(\d+)$/.exec(url)
+    if (!m) throw new Error('not a seafloor tile')
+    try {
+      const reply = await fetch(nonnaTileUrl(+m[1], +m[2], +m[3], +m[4]), { signal: abort.signal })
+      if (!reply.ok) throw new Error(`HTTP ${reply.status}`)
+      const data = await paintNonna(await reply.arrayBuffer())
+      nonna.ok++
+      if (state.seafloor.on && lastStatus.seafloor?.state === 'fail') setStatus('seafloor', 'ok', SEAFLOOR_MESSAGE)
+      return { data }
+    } catch (e) {
+      if (!abort.signal.aborted) {
+        nonna.failed++
+        if (state.seafloor.on && !nonna.ok) setStatus('seafloor', 'fail', SEAFLOOR_FAILURE)
+      }
+      throw e
+    }
+  }
+  addProtocol?.('nonna', loadNonnaTile)
   async function loadSeafloor() {
-    return { data: null, message: 'Depth in metres from NOAA’s ETOPO1 grid, in the elevation tiles. Its cells are 1 arc-minute, about 1.2 by 1.85 km here, so only broad shapes show. Not for navigation.' }
+    return { data: null, message: nonna.failed && !nonna.ok ? SEAFLOOR_FAILURE : SEAFLOOR_MESSAGE, state: nonna.failed && !nonna.ok ? 'fail' : 'ok' }
   }
 
   // ---- tides and tidal currents: markers from a list of stations, and NOAA's predictions fetched when one is opened
   const tideCache = new Map() // station id -> { at, tide }
   const TIDE_STALE_MS = 6 * 3600e3 // a station opened again after this long is asked for afresh, so "next" stays ahead of now
+  const GAUGE_STALE_MS = 15 * 60e3 // the same for the gauge, whose popup also says what it has measured, so it is asked afresh sooner
   async function loadTides() {
     const levels = TIDE_STATIONS.filter((s) => s.kind === 'level').length, currents = TIDE_STATIONS.length - levels
-    return { data: tideFeatures(), message: `${plural(levels, 'water level station', 'water level stations')} and ${plural(currents, 'tidal current station', 'tidal current stations')}. Click one to ask NOAA for its predictions. Predictions, not for navigation.` }
+    return { data: tideFeatures(), message: `${plural(levels, 'water level station', 'water level stations')} and ${plural(currents, 'tidal current station', 'tidal current stations')}. Click one to ask NOAA, or the Canadian Hydrographic Service for Victoria Harbour. Not for navigation.` }
+  }
+  // A wait that the signal can cut short.
+  const pause = (ms, signal) => new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(new Error('cancelled')); return }
+    const t = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => { clearTimeout(t); reject(new Error('cancelled')) }, { once: true })
+  })
+  // The gauge's three requests start IWLS_SPACING_MS apart, each wait begun when the request before it has been sent, so that a busy page
+  // cannot bunch them and no second holds more than the three the service allows. Only the highs and lows are needed: without the
+  // other two the curve is drawn between them, and no observed level is said.
+  async function gaugeFor(station, now, signal) {
+    const urls = iwlsUrls(station, now)
+    const hilo = json(urls.hilo, signal)
+    const rest = (async () => {
+      await pause(IWLS_SPACING_MS, signal)
+      const observed = json(urls.observed, signal).catch(() => null)
+      await pause(IWLS_SPACING_MS, signal)
+      return [await observed, await json(urls.predicted, signal).catch(() => null)]
+    })().catch(() => [null, null])
+    const [highsAndLows, [observed, predicted]] = await Promise.all([hilo, rest])
+    return normaliseIwls(station, highsAndLows, predicted, observed)
   }
   async function tideFor(station) {
     const kept = tideCache.get(station.id)
-    if (kept && Date.now() - kept.at < TIDE_STALE_MS) return kept.tide
+    if (kept && Date.now() - kept.at < (station.source === 'chs' ? GAUGE_STALE_MS : TIDE_STALE_MS)) return kept.tide
     // Own timeout, and the tick's own signal, so unticking the box cancels it.
     const ac = new AbortController(), parent = state.tides.abort?.signal
     const timer = setTimeout(() => ac.abort(), 25000)
     parent?.addEventListener('abort', () => ac.abort(), { once: true })
     try {
-      const now = Date.now(), urls = tideUrls(station, now)
-      const [events, series] = await Promise.all([json(urls.events, ac.signal), urls.series ? json(urls.series, ac.signal).catch(() => null) : null]) // no series is not a failure: the curve is then drawn between the events
-      const tide = normaliseTide(station, events, series)
+      const now = Date.now()
+      let tide
+      if (station.source === 'chs') tide = await gaugeFor(station, now, ac.signal)
+      else {
+        const urls = tideUrls(station, now)
+        const [events, series] = await Promise.all([json(urls.events, ac.signal), urls.series ? json(urls.series, ac.signal).catch(() => null) : null]) // no series is not a failure: the curve is then drawn between the events
+        tide = normaliseTide(station, events, series)
+      }
       if (state.tides.on) tideCache.set(station.id, { at: now, tide })
       return tide
-    } finally { clearTimeout(timer) }
+    } catch (e) { ac.abort(); throw e } finally { clearTimeout(timer) }
   }
   const SVG = 'http://www.w3.org/2000/svg'
   const svgEl = (name, attrs = {}, text) => { const n = document.createElementNS(SVG, name); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v)); if (text != null) n.textContent = text; return n }
   const clock = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', hour: 'numeric' })
-  // The 24 hours of a curve from three hours ago, with "now" marked.
+  // The 24 hours of a curve from three hours ago, with "now" marked. For the gauge the observed levels are drawn over the predicted
+  // ones up to now, and a small key below says which line is which.
   function tideSvg(station, tide, now) {
     const from = now - 3 * 3600e3, to = now + 21 * 3600e3, { points, drawn } = tideCurve(tide, from, to)
     if (points.length < 2) return { svg: null, drawn }
-    const level = station.kind === 'level', g = curveGeometry(points, station.kind, { from, to, now })
-    const svg = svgEl('svg', { viewBox: '0 0 260 92', width: '100%', role: 'img', class: 'tide-curve' })
-    svg.setAttribute('aria-label', level ? `Predicted tide height for the 24 hours around now, from ${g.min.toFixed(1)} to ${g.max.toFixed(1)} metres. A red line marks now.` : `Predicted current speed for the 24 hours around now, flood above the line and ebb below it, up to ${Math.max(Math.abs(g.min), Math.abs(g.max)).toFixed(1)} knots. A red line marks now.`)
+    const level = station.kind === 'level', seen = tide.observed?.filter((p) => p.ms >= from && p.ms <= now) || [], gauge = seen.length > 1
+    const g = curveGeometry(points, station.kind, { from, to, now, scaleWith: seen })
+    const svg = svgEl('svg', { viewBox: `0 0 260 ${gauge ? 106 : 92}`, width: '100%', role: 'img', class: 'tide-curve' })
+    svg.setAttribute('aria-label', level ? `Predicted tide height for the 24 hours around now, from ${g.min.toFixed(1)} to ${g.max.toFixed(1)} metres.${gauge ? ' The observed height is drawn over it up to now.' : ''} A red line marks now.` : `Predicted current speed for the 24 hours around now, flood above the line and ebb below it, up to ${Math.max(Math.abs(g.min), Math.abs(g.max)).toFixed(1)} knots. A red line marks now.`)
     svg.append(svgEl('rect', { x: g.left, y: g.top, width: g.right - g.left, height: g.bottom - g.top, fill: '#f3f6f4' }))
     if (g.zeroY != null) svg.append(svgEl('line', { x1: g.left, x2: g.right, y1: g.zeroY, y2: g.zeroY, stroke: '#8a948e', 'stroke-width': 1, 'stroke-dasharray': '3 3' }))
     for (const t of curveTicks(from, to)) {
@@ -654,7 +732,8 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       svg.append(svgEl('line', { x1: x, x2: x, y1: g.top, y2: g.bottom + 3, stroke: '#c9d0cb', 'stroke-width': 1 }))
       svg.append(svgEl('text', { x, y: g.bottom + 13, 'text-anchor': 'middle', 'font-size': 10, fill: '#4a554f' }, clock.format(t.ms)))
     }
-    svg.append(svgEl('path', { d: g.d, fill: 'none', stroke: '#1d5f86', 'stroke-width': 2, 'stroke-linejoin': 'round' }))
+    svg.append(svgEl('path', { d: g.d, fill: 'none', stroke: '#1d5f86', 'stroke-width': 2, 'stroke-linejoin': 'round', class: 'predicted' }))
+    if (gauge) svg.append(svgEl('path', { d: curvePath(seen, g), fill: 'none', stroke: '#1b1b1b', 'stroke-width': 2, 'stroke-linejoin': 'round', class: 'observed' }))
     if (g.nowY != null) {
       svg.append(svgEl('line', { x1: g.nowX, x2: g.nowX, y1: g.top, y2: g.bottom, stroke: '#b3261e', 'stroke-width': 1.5 }))
       svg.append(svgEl('circle', { cx: g.nowX, cy: g.nowY, r: 3.5, fill: '#b3261e', stroke: '#ffffff', 'stroke-width': 1 }))
@@ -669,12 +748,18 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
       svg.append(svgEl('text', { ...small, y: g.top + 20 }, 'flood'))
       svg.append(svgEl('text', { ...small, y: g.bottom - 4 }, 'ebb'))
     }
+    if (gauge) {
+      for (const [x, colour, word] of [[g.left + 3, '#1d5f86', 'predicted'], [g.left + 73, '#1b1b1b', 'observed']]) {
+        svg.append(svgEl('line', { x1: x, x2: x + 14, y1: 99, y2: 99, stroke: colour, 'stroke-width': 2 }))
+        svg.append(svgEl('text', { x: x + 18, y: 102.5, 'font-size': 10, fill: '#4a554f' }, word))
+      }
+    }
     return { svg, drawn, nowValue: g.nowValue }
   }
   // The text and the curve of a popup for one station: a small table of the next events, soonest first, the curve and
   // its notes. Times are Pacific, said once in the notes.
   function tideNodes(station, tide, now = Date.now()) {
-    const nodes = [], next = tideNext(tide, now), level = station.kind === 'level'
+    const nodes = [], next = tideNext(tide, now), level = station.kind === 'level', gauge = station.source === 'chs'
     const speed = (v) => `${Math.abs(v).toFixed(1)} knots`
     const rows = level
       ? [['High tide', next.high, (e) => `${e.value.toFixed(2)} m`], ['Low tide', next.low, (e) => `${e.value.toFixed(2)} m`]]
@@ -684,29 +769,40 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     const table = el('table', null, 'tide-events'), body = el('tbody')
     const row = (label, time, value) => { const tr = el('tr'); tr.append(el('th', label), el('td', time), el('td', value)); body.append(tr) }
     for (const [label, e, say] of rows) row(label, e ? tideClock(e.ms, now) : 'none in 30 h', e ? say(e) : '')
-    if (nowValue != null) row('Right now', '', level ? `${nowValue.toFixed(2)} m` : Math.abs(nowValue) < 0.05 ? 'slack' : `${speed(nowValue)} ${nowValue > 0 ? 'flood' : 'ebb'}`)
+    if (gauge) row('Observed', tide.latest ? tideClock(tide.latest.ms, now) : 'none just now', tide.latest ? `${tide.latest.v.toFixed(2)} m` : '')
+    else if (nowValue != null) row('Right now', '', level ? `${nowValue.toFixed(2)} m` : Math.abs(nowValue) < 0.05 ? 'slack' : `${speed(nowValue)} ${nowValue > 0 ? 'flood' : 'ebb'}`)
     table.append(body); nodes.push(table)
     if (svg) { const wrap = el('div', null, 'tide-curve-box'); wrap.append(svg); nodes.push(wrap) }
     const toward = (deg) => compassWord(deg)
-    const notes = ['Predicted, in Pacific time.']
-    if (level) notes.push('Heights are metres above chart datum (MLLW).')
+    const notes = [gauge ? 'Predicted and observed, in Pacific time.' : 'Predicted, in Pacific time.']
+    if (gauge) notes.push('Heights are metres above chart datum.')
+    else if (level) notes.push('Heights are metres above chart datum (MLLW).')
     else {
       if (tide.floodDir != null && tide.ebbDir != null) notes.push(`Flood flows toward the ${toward(tide.floodDir)}, ebb toward the ${toward(tide.ebbDir)}.`)
       if (tide.feet != null) notes.push(`About ${Math.round(tide.feet * 0.3048)} m (${tide.feet} ft) below the surface.`)
     }
-    if (drawn) notes.push('NOAA gives only the times and speeds of slack water and the strongest current here, so the curve is drawn between them.')
+    if (gauge && !tide.latest) notes.push('The observed levels could not be loaded just now.')
+    else if (gauge && tide.latest.reviewed === false) notes.push('Observed levels are real-time readings that have not been reviewed.')
+    if (gauge && !tide.series) notes.push('The predicted levels could not be loaded just now, so the curve is drawn between the highs and lows.')
+    else if (drawn) notes.push('NOAA gives only the times and speeds of slack water and the strongest current here, so the curve is drawn between them.')
     const line = (t, cls) => nodes.push(el('p', t, cls))
     line(notes.join(' '), 'src')
-    line(`Predictions, not for navigation. Source: NOAA/NOS/CO-OPS, station ${station.id}, drawn here from NOAA’s numbers. Not official NOAA material.`, 'src')
-    const href = level ? `https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=${encodeURIComponent(station.id)}` : (tide.bin ? `https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=${encodeURIComponent(`${station.id}_${tide.bin}`)}` : null)
-    const a = href ? link(href, 'This station on NOAA’s site') : null
+    if (gauge) {
+      line(`Not for navigation. Source: Canadian Hydrographic Service, station ${station.id}, drawn here from its numbers.`, 'src')
+      line(IWLS_NOTICE, 'src notice')
+    } else line(`Predictions, not for navigation. Source: NOAA/NOS/CO-OPS, station ${station.id}, drawn here from NOAA’s numbers. Not official NOAA material.`, 'src')
+    const href = gauge ? `https://tides.gc.ca/en/stations/${encodeURIComponent(station.id)}` : level ? `https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=${encodeURIComponent(station.id)}` : (tide.bin ? `https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=${encodeURIComponent(`${station.id}_${tide.bin}`)}` : null)
+    const a = href ? link(href, gauge ? 'This station on the Canadian Hydrographic Service site' : 'This station on NOAA’s site') : null
     if (a) { const d = el('p'); d.append(a); nodes.push(d) }
     return nodes
   }
   // Ask for the station's predictions and put them in the popup when they arrive. The popup is told, so it can resize.
   function fillTide(station, body, box) {
     const done = (nodes) => { body.replaceChildren(...nodes); box.dispatchEvent(new Event('filled')) }
-    tideFor(station).then((tide) => done(tideNodes(station, tide)), () => done([el('p', 'Predictions for this station could not be loaded just now. Try again later.'), el('p', 'Predictions, not for navigation. Source: NOAA/NOS/CO-OPS.', 'src')]))
+    const gauge = station.source === 'chs'
+    tideFor(station).then((tide) => done(tideNodes(station, tide)), () => done(gauge
+      ? [el('p', 'The Canadian Hydrographic Service’s levels for this station could not be loaded just now. Try again later.'), el('p', 'Not for navigation. Source: Canadian Hydrographic Service.', 'src'), el('p', IWLS_NOTICE, 'src notice')]
+      : [el('p', 'Predictions for this station could not be loaded just now. Try again later.'), el('p', 'Predictions, not for navigation. Source: NOAA/NOS/CO-OPS.', 'src')]))
   }
 
   // ---- the readout for a click on the sea: the modelled current of the hour shown, from the grid already loaded,
@@ -767,6 +863,14 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     scalar.before = ecoBefore
     map.addSource('seafloor', { type: 'raster-dem', tiles: [demTiles], encoding: 'terrarium', tileSize: 256, maxzoom: SEAFLOOR_MAX_ZOOM, attribution: SEAFLOOR_ATTRIB })
     map.addLayer({ id: 'seafloor', type: 'color-relief', source: 'seafloor', layout: hidden, paint: { 'color-relief-color': depthExpression(), 'color-relief-opacity': SEAFLOOR_OPACITY } }, ecoBefore)
+    // The Canadian Hydrographic Service tiles over it: 100 m cells below map zoom 11 and 10 m cells from there. Tiles are asked for
+    // by the "nonna" protocol (loadNonnaTile), and only while their layer is shown, which is while the box is ticked. The tile
+    // already carries the layer's opacity, mixed with the colour of the water under it, so the layer itself is opaque.
+    nonna.sea = rgbOf(water?.paint?.['fill-color']) || (basemap ? [194, 200, 202] : [238, 240, 234])
+    for (const res of [100, 10]) map.addSource(`nonna-${res}`, { type: 'raster', tiles: [`nonna://${res}/{z}/{x}/{y}`], tileSize: 256, maxzoom: NONNA_MAX_ZOOM[res], attribution: NONNA_ATTRIB })
+    const nonnaStyle = { 'raster-opacity': 1, 'raster-fade-duration': 0 }
+    map.addLayer({ id: 'seafloor-nonna', type: 'raster', source: 'nonna-100', maxzoom: NONNA_CLOSE_ZOOM, layout: hidden, paint: nonnaStyle }, ecoBefore)
+    map.addLayer({ id: 'seafloor-nonna-10', type: 'raster', source: 'nonna-10', minzoom: NONNA_CLOSE_ZOOM, layout: hidden, paint: nonnaStyle }, ecoBefore)
 
     src('ov-ecoregions', ECO_ATTRIB)
     map.addLayer({ id: 'ecoregions-fill', type: 'fill', source: 'ov-ecoregions', layout: hidden, paint: { 'fill-color': '#4f8a5b', 'fill-opacity': 0.22 } }, ecoBefore)
@@ -926,9 +1030,9 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery }) {
     } else if (layer === 'tides-dot') {
       const station = tideStation(p.id)
       if (!station) return null
-      add(station.name, station.kind === 'level' ? 'tide predictions' : 'tidal current predictions', [], null)
+      add(station.name, station.source === 'chs' ? 'tide gauge' : station.kind === 'level' ? 'tide predictions' : 'tidal current predictions', [], null)
       const body = el('div', null, 'tide-body')
-      body.append(el('p', 'Asking NOAA for this station’s predictions…'))
+      body.append(el('p', station.source === 'chs' ? 'Asking the Canadian Hydrographic Service for this station’s levels…' : 'Asking NOAA for this station’s predictions…'))
       box.append(body)
       fillTide(station, body, box)
     } else if (layer === 'seabirds-dot') {
