@@ -1950,8 +1950,9 @@ async function checkOverlaysBlocked(browser, base) {
   await waitStatus(page, 'tides', 30000).catch(() => {})
   const stT = await statusOf(page, 'tides')
   report(stT.state === 'ok' && hostCount(requests, 'api.tidesandcurrents.noaa.gov') === noaaBefore, t('tides: ticking the box shows the stations and asks NOAA nothing, even when NOAA cannot be reached'), JSON.stringify(stT))
+  // 3D terrain is on here, and one frame of the map can take many seconds on a busy machine (load 110 on 23 October), so the move gets two minutes to end.
   await page.evaluate(() => { document.getElementById('panel-details').open = false; window.__map.jumpTo({ center: [-123.5323, 48.2232], zoom: 10.5 }) })
-  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+  await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 120000 })
   await page.waitForTimeout(2500)
   await page.mouse.click(640, 400)
   await page.waitForFunction(() => /could not be loaded/.test(document.querySelector('.maplibregl-popup-content')?.textContent || ''), null, { timeout: 30000 }).catch(() => {})
