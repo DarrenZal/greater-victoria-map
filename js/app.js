@@ -2,6 +2,7 @@
 // page works from any GitHub Pages project path (https://<org>.github.io/<repo>/).
 import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWorkerUrl, addProtocol } from '../vendor/maplibre-gl.mjs'
 import { createOverlays } from './overlays.js'
+import { createTimeLayers } from './time-layers.js'
 import { createNight } from './night.js'
 import { flowRestMs } from './overlays-data.js'
 
@@ -144,6 +145,9 @@ map.addControl(new AttributionControl({ compact: innerWidth < 700 }), 'bottom-ri
 let nav = new NavigationControl({ showCompass: false })
 map.addControl(nav, 'top-right')
 map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left')
+// The time slider sits above the attribution, which grows when ticked layers add their credits.
+const attribCorner = document.querySelector('.maplibregl-ctrl-bottom-right')
+new ResizeObserver(() => document.documentElement.style.setProperty('--attrib-h', `${attribCorner.offsetHeight}px`)).observe(attribCorner)
 
 let basemapNoted = false
 function noteBasemapDown() {
@@ -155,6 +159,8 @@ if (!basemap) noteBasemapDown()
 map.on('error', (e) => { if (basemap && e.sourceId === 'openmaptiles') noteBasemapDown() })
 
 const overlays = createOverlays({ map, $, el, link, basemap, motionQuery, addProtocol })
+// Layers that change over time, and the one time slider they share.
+const time = createTimeLayers({ map, $, el, link, motionQuery, MapClass: Map, demTiles: TERRAIN_TILES, exaggeration: TERRAIN_EXAGGERATION })
 
 // group -> layer ids, for the toggles
 const GROUPS = {
@@ -167,7 +173,7 @@ const GROUPS = {
   muni: ['muni-fill', 'muni-line', 'muni-label'],
 }
 // Popup priority, first match wins.
-const QUERY_ORDER = ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams', 'lakes', 'wetlands', 'bec-fill', 'ecoregions-fill', 'muni-fill']
+const QUERY_ORDER = ['pins', ...overlays.queryLayers, ...time.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams', 'lakes', 'wetlands', 'bec-fill', 'ecoregions-fill', 'muni-fill']
 
 function applyToggles() {
   for (const box of document.querySelectorAll('input[data-group]')) {
@@ -331,6 +337,8 @@ map.once('load', () => {
   // Optional overlays: ecoregions, industry and waste sites, and the live layers. All start hidden
   // and none requests anything until its box is ticked.
   overlays.addLayers({ before: under, ecoBefore: 'watersheds-fill', water, demTiles: TERRAIN_TILES })
+  // Air photos and land cover go low, just over the basemap. Ecosystems and forest loss go under the creeks, and herring spawn with the other dots.
+  time.addLayers({ before: under, low: 'bec-fill', mid: 'streams' })
 
   map.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: {
     'circle-radius': 9, 'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff',
@@ -400,6 +408,7 @@ const hectares = (n) => `${Number(n).toLocaleString('en-CA', { maximumFractionDi
 
 function popupFor(f, layer, group = [f], hits = []) {
   if (overlays.popupLayers.includes(layer)) return overlays.popupFor(f, layer, group, hits)
+  if (time.queryLayers.includes(layer)) return time.popupFor(f, layer)
   const p = f.properties, box = el('div')
   const add = (title, tag, lines, src) => {
     box.append(el('h3', title))
@@ -494,7 +503,8 @@ function keepInView(popup) {
   box.style.maxHeight = '' // its own size, in case an earlier call made it shorter
   const space = () => {
     const m = map.getContainer().getBoundingClientRect(), attrib = document.querySelector('.maplibregl-ctrl-attrib')?.getBoundingClientRect()
-    return { top: banner.getBoundingClientRect().bottom + 8, bottom: Math.min(m.bottom - 8, attrib && attrib.height > 0 ? attrib.top - 8 : Infinity), left: m.left + 8, right: m.right - 8 }
+    const bar = $('timebar').hidden ? null : $('timebar').getBoundingClientRect() // the time slider, while it is shown
+    return { top: banner.getBoundingClientRect().bottom + 8, bottom: Math.min(m.bottom - 8, attrib && attrib.height > 0 ? attrib.top - 8 : Infinity, bar ? bar.top - 8 : Infinity), left: m.left + 8, right: m.right - 8 }
   }
   const { top, bottom, left, right } = space(), r = box.getBoundingClientRect()
   let dy = 0, dx = 0
@@ -514,7 +524,7 @@ function keepInView(popup) {
   }
   if (dx || dy) { map.once('moveend', fit); setTimeout(fit, 2000) } else fit()
 }
-for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
+for (const id of ['pins', ...overlays.queryLayers, ...time.queryLayers, 'parks-bc', 'parks-local', 'watersheds-fill', 'streams']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
   map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
 }
@@ -523,6 +533,7 @@ for (const id of ['pins', ...overlays.queryLayers, 'parks-bc', 'parks-local', 'w
 if (new URLSearchParams(location.search).has('test')) {
   window.__map = map
   window.__overlays = overlays
+  window.__time = time
   // `step` is the position of the layer that is shown, read from the map, `layers` are the 14 layers and `log` is what flowLog holds.
   window.__flow = { sequence: FLOW_SEQUENCE, minZoom: FLOW_MIN_ZOOM, layers: FLOW_LAYERS, log: flowLog, running: () => flowFrameId !== 0, step: () => FLOW_LAYERS.findIndex((id) => map.getPaintProperty(id, 'line-opacity') > 0) }
   // map.loaded() and the 'idle' event never settle while the flow dashes animate,
