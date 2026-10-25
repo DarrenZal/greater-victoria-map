@@ -186,7 +186,8 @@ export function seiInfo(p, vintage) {
   }
 }
 
-// ---- City of Victoria vegetation from LiDAR, 2013, 2019 and 2023, one picture each (made by scripts/fetch-time-rasters.sh)
+// ---- City of Victoria tree canopy from LiDAR, 2013, 2019 and 2023, one picture each (made by scripts/fetch-time-rasters.sh). The City's files
+// hold a value where they found canopy and no value elsewhere, and do not say what the values are, so the pictures are one colour where there is a value.
 export const CANOPY_YEARS = [step(2013), step(2019), step(2023, '2023 (draft)')]
 export const CANOPY_FILES = { 2013: 'data/canopy-2013.png', 2019: 'data/canopy-2019.png', 2023: 'data/canopy-2023.png' }
 export const CANOPY_ITEMS = {
@@ -195,27 +196,58 @@ export const CANOPY_ITEMS = {
   2023: 'https://www.arcgis.com/home/item.html?id=2f6665924f5747b69c07f103930ba77d',
 }
 // The corners of the three pictures, which share one grid in Web Mercator: top left, top right, bottom right, bottom left.
-export const CANOPY_CORNERS = [[-123.3945, 48.45], [-123.3222, 48.45], [-123.3222, 48.403], [-123.3945, 48.403]]
+export const CANOPY_CORNERS = [[-123.394492, 48.450584], [-123.322213, 48.450584], [-123.322213, 48.402741], [-123.394492, 48.402741]]
 
-// ---- Hansen Global Forest Change, loss year 2001 to 2025 (University of Maryland), polygons with the year of loss
-export const LOSS_FILE = 'data/forest-loss.geojson'
+// ---- Hansen Global Forest Change, loss year 2001 to 2025 (University of Maryland)
+// One picture of the demo box in Web Mercator (made by scripts/fetch-time-rasters.sh from the 30 m loss-year grid, nearest neighbour), in which
+// a pixel's red value is ten times its loss year after 2000 (10 for 2001 to 250 for 2025) and a pixel with no loss is clear. The page reads the
+// years from it once and paints the loss up to the year of the slider itself, so no file per year is needed.
+export const LOSS_FILE = 'data/forest-loss.png'
 export const LOSS_YEARS = Array.from({ length: 25 }, (_, i) => step(2001 + i))
-export const LOSS_PAGE = 'https://storage.googleapis.com/earthenginepartners-hansen/GFC-2025-v1.13/download.html'
-// Older loss is pale and recent loss is dark, so the newest years stand out as the slider moves.
-export const lossColour = () => ['interpolate', ['linear'], ['get', 'year'], 2001, '#f6d55c', 2013, '#e8833a', 2025, '#7a1010']
+export const LOSS_PAGE = 'https://glad.earthengine.app/view/global-forest-change'
+export const LOSS_DOWNLOAD = 'https://storage.googleapis.com/earthenginepartners-hansen/GFC-2025-v1.13/download.html'
+// The picture covers the demo box exactly: west -123.75, south 48.28, east -123.20, north 48.70, in the order top left, top right, bottom right, bottom left.
+export const LOSS_CORNERS = [[-123.75, 48.7], [-123.2, 48.7], [-123.2, 48.28], [-123.75, 48.28]]
+// The year of a pixel from its red value and its alpha, or 0 for none.
+export function lossYearOf(r, a) {
+  if (a < 128) return 0
+  const i = Math.round(r / 10)
+  return i >= 1 && i <= 25 ? 2000 + i : 0
+}
+// The pixel of the picture under a place, or null outside it. The rows of a Web Mercator picture are even in Mercator y, not in latitude.
+const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360))
+export function lossPixel(lng, lat, width, height) {
+  const [[w, n], , [e, s]] = LOSS_CORNERS
+  if (!(lng >= w && lng < e && lat > s && lat <= n)) return null
+  return [Math.min(width - 1, Math.floor((lng - w) / (e - w) * width)), Math.min(height - 1, Math.floor((mercY(n) - mercY(lat)) / (mercY(n) - mercY(s)) * height))]
+}
+// Older loss is pale and recent loss is dark, so the newest years stand out as the slider moves: pale yellow in 2001, orange in 2013, dark red in 2025.
+const LOSS_STOPS = [[2001, [246, 213, 92]], [2013, [232, 131, 58]], [2025, [122, 16, 16]]]
+export function lossRgb(year) {
+  const y = Math.min(2025, Math.max(2001, year))
+  for (let i = 1; i < LOSS_STOPS.length; i++) {
+    const [y1, c1] = LOSS_STOPS[i]
+    if (y <= y1) {
+      const [y0, c0] = LOSS_STOPS[i - 1], f = (y - y0) / (y1 - y0)
+      return c0.map((v, k) => Math.round(v + (c1[k] - v) * f))
+    }
+  }
+  return LOSS_STOPS.at(-1)[1]
+}
+export const lossGradient = () => `linear-gradient(to right, ${LOSS_STOPS.map(([y, c]) => `rgb(${c.join(', ')}) ${Math.round((y - 2001) / 24 * 100)}%`).join(', ')})`
 export function lossLine(t) {
   if (t < 2001) return 'Forest loss: the satellite record begins in 2001.'
   return `Forest loss seen by satellite: 2001 to ${Math.min(t, 2025)}${t > 2025 ? ', the latest year in the data' : ''}. Darker is more recent.`
 }
-export function lossInfo(p) {
-  const year = Number.isInteger(p.year) && p.year >= 2001 && p.year <= 2025 ? p.year : null
+export function lossInfo(year) {
+  const y = Number.isInteger(year) && year >= 2001 && year <= 2025 ? year : null
   return {
-    title: year ? `Forest loss in ${year}` : 'Forest loss',
+    title: y ? `Forest loss in ${y}` : 'Forest loss',
     tag: 'seen by satellite, 30 m',
     lines: [
       'Landsat images show a stand of trees removed here in that year, by logging, clearing for building, fire or another cause. The data does not say which.',
-      'It sees stands, not single street trees.',
+      'It sees stands, not single street trees. Its makers say the years before 2011 were processed differently, so compare years with care.',
     ],
-    source: 'Source: Hansen/UMD/Google/USGS/NASA, Global Forest Change 2000 to 2025, version 1.13. Licensed CC BY 4.0.',
+    source: 'Source: Hansen/UMD/Google/USGS/NASA, Global Forest Change 2000 to 2025, version 1.13, clipped to the demo box. Licensed CC BY 4.0.',
   }
 }

@@ -11,7 +11,7 @@ import {
   LANDCOVER_RECORD, LANDCOVER_YEARS, landcoverTileUrl, LANDCOVER_CLASSES,
   SEI_RECORD, SEI_FILES, SEI_YEARS, SEI_KEY, SEI_CLASSES, seiColour, seiInfo,
   CANOPY_YEARS, CANOPY_FILES, CANOPY_CORNERS, CANOPY_ITEMS,
-  LOSS_FILE, LOSS_YEARS, LOSS_PAGE, lossColour, lossLine, lossInfo,
+  LOSS_FILE, LOSS_YEARS, LOSS_PAGE, LOSS_CORNERS, lossYearOf, lossPixel, lossRgb, lossGradient, lossLine, lossInfo,
 } from './time-data.js'
 import { createTimeline } from './timeline.js'
 import { createSwipe } from './swipe.js'
@@ -23,7 +23,7 @@ const HERRING_YEARS_ATTRIB = `Herring spawn by year: <a href="${HERRING_RECORD}"
 const AERIAL_ATTRIB = `Air photos 1932 and 1950: <a href="${AERIAL_RECORD}" target="_blank" rel="noopener">National Air Photo Library, Natural Resources Canada</a> (${OGL_CANADA_LINK})`
 const LANDCOVER_ATTRIB = `Land cover: <a href="${LANDCOVER_RECORD}" target="_blank" rel="noopener">Natural Resources Canada</a> (${OGL_CANADA_LINK})`
 const SEI_ATTRIB = `Sensitive ecosystems: <a href="${SEI_RECORD}" target="_blank" rel="noopener">Province of British Columbia</a> (${OGL_BC_LINK})`
-const CANOPY_ATTRIB = `Vegetation from LiDAR: <a href="${CANOPY_ITEMS[2019]}" target="_blank" rel="noopener">City of Victoria</a> (${OGL_VICTORIA_LINK})`
+const CANOPY_ATTRIB = `Tree canopy from LiDAR: <a href="${CANOPY_ITEMS[2019]}" target="_blank" rel="noopener">City of Victoria</a> (${OGL_VICTORIA_LINK})`
 const LOSS_ATTRIB = `Forest loss: <a href="${LOSS_PAGE}" target="_blank" rel="noopener">Hansen/UMD/Google/USGS/NASA</a> (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>)`
 
 const EMPTY = { type: 'FeatureCollection', features: [] }
@@ -65,8 +65,8 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     sei: { label: 'Sensitive ecosystems', ids: ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-line'], ui: ['sei-key', 'sei-note'], kind: 'snapshot', steps: SEI_YEARS, load: loadSei },
     sei2014: { label: 'Garry oak ecosystems mapped in 2014', ids: ['sei2014-fill', 'sei2014-line'], ui: ['sei2014-note'], load: loadSei2014 },
     landcover: { label: 'Land cover', ids: LANDCOVER_YEARS.map((s) => `landcover-${s.t}`), ui: ['landcover-key', 'landcover-note'], kind: 'snapshot', steps: LANDCOVER_YEARS, load: async () => ({ message: 'Land cover of Canada from satellite images, 30 m cells, from Natural Resources Canada.' }) },
-    canopy: { label: 'Vegetation from LiDAR', ids: [...CANOPY_YEARS.map((s) => `canopy-${s.t}`), 'canopy-credit'], ui: ['canopy-note'], kind: 'snapshot', steps: CANOPY_YEARS, load: loadCanopy },
-    forestloss: { label: 'Forest loss', ids: ['forestloss-fill'], ui: ['forestloss-note'], kind: 'cumulative', steps: LOSS_YEARS, load: loadLoss },
+    canopy: { label: 'Tree canopy', ids: [...CANOPY_YEARS.map((s) => `canopy-${s.t}`), 'canopy-credit'], ui: ['canopy-note'], kind: 'snapshot', steps: CANOPY_YEARS, load: loadCanopy },
+    forestloss: { label: 'Forest loss', ids: ['forestloss', 'forestloss-credit'], ui: ['forestloss-key', 'forestloss-note'], kind: 'cumulative', steps: LOSS_YEARS, load: loadLoss },
   }
   const state = Object.fromEntries(Object.keys(DEFS).map((id) => [id, { on: false, loaded: false, loading: null }]))
 
@@ -97,10 +97,10 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     },
     canopy: {
       show: (frame) => { for (const s of CANOPY_YEARS) show(`canopy-${s.t}`, s.t === frame?.t) },
-      line: (frame, t) => snapshotLine('Vegetation from LiDAR, City of Victoria', CANOPY_YEARS, frame, t),
+      line: (frame, t) => snapshotLine('Tree canopy, City of Victoria', CANOPY_YEARS, frame, t),
     },
     forestloss: {
-      show: (frame, t) => { map.setFilter('forestloss-fill', ['<=', ['get', 'year'], t]) },
+      show: (frame, t) => paintLoss(t),
       line: (frame, t) => lossLine(t),
     },
   }
@@ -213,27 +213,91 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
       map.addSource(`canopy-${s.t}`, { type: 'image', url: CANOPY_FILES[s.t], coordinates: CANOPY_CORNERS })
       map.addLayer({ id: `canopy-${s.t}`, type: 'raster', source: `canopy-${s.t}`, layout: { visibility: 'none' }, paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 0 } }, pos.low)
     }
-    await Promise.all(CANOPY_YEARS.map((s) => new Promise((resolve, reject) => {
-      const until = performance.now() + 30000
-      const check = () => { if (map.isSourceLoaded(`canopy-${s.t}`)) resolve(); else if (performance.now() > until) reject(new Error('the picture did not load')); else setTimeout(check, 150) }
-      check()
-    })))
+    // A picture that cannot be had makes the map send an error for its source, and the box then says so.
+    const failed = new Set()
+    const onError = (e) => { if (/^canopy-\d{4}$/.test(e.sourceId || '')) failed.add(e.sourceId) }
+    map.on('error', onError)
+    try {
+      await Promise.all(CANOPY_YEARS.map((s) => new Promise((resolve, reject) => {
+        const id = `canopy-${s.t}`, until = performance.now() + 30000
+        const check = () => {
+          if (failed.has(id)) reject(new Error('the picture did not load'))
+          else if (map.isSourceLoaded(id)) resolve()
+          else if (performance.now() > until) reject(new Error('the picture did not load in time'))
+          else setTimeout(check, 150)
+        }
+        setTimeout(check, 150)
+      })))
+    } catch (e) {
+      for (const s of CANOPY_YEARS) { if (map.getLayer(`canopy-${s.t}`)) map.removeLayer(`canopy-${s.t}`); if (map.getSource(`canopy-${s.t}`)) map.removeSource(`canopy-${s.t}`) }
+      throw e
+    } finally { map.off('error', onError) }
     return { message: 'City of Victoria only, from the City’s LiDAR surveys.' }
   }
+  // Forest loss: one picture in which each pixel's red value gives its loss year (lossYearOf). It is read once into a list of the loss pixels in
+  // order of year, so the picture for a year is the first so many of them, and a step paints or clears only the pixels between two years.
+  const loss = { width: 0, height: 0, years: null, order: null, upTo: null, image: null, canvas: null, shown: 0 }
   async function loadLoss() {
-    const d = await json(LOSS_FILE)
-    if (!d.features?.length) throw new Error('not a feature collection')
-    map.getSource('tl-forestloss').setData(d)
-    return { message: 'Stands of trees removed from 2001 to 2025, as seen by the Landsat satellites, in the demo box.' }
+    const reply = await fetch(LOSS_FILE)
+    if (!reply.ok) throw new Error(`HTTP ${reply.status}`)
+    // No colour management and no premultiplying, so the pixels are the ones in the file (as for the seafloor tiles).
+    const bitmap = await createImageBitmap(await reply.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width; canvas.height = bitmap.height
+    const g = canvas.getContext('2d', { willReadFrequently: true })
+    g.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    const image = g.getImageData(0, 0, canvas.width, canvas.height), px = image.data, n = canvas.width * canvas.height
+    const years = new Uint8Array(n), count = new Uint32Array(26)
+    for (let k = 0; k < n; k++) { const y = lossYearOf(px[k * 4], px[k * 4 + 3]); if (y) { years[k] = y - 2000; count[y - 2000]++ } }
+    const upTo = new Uint32Array(26)
+    for (let i = 1; i < 26; i++) upTo[i] = upTo[i - 1] + count[i]
+    if (!upTo[25]) throw new Error('no loss in the picture')
+    const order = new Uint32Array(upTo[25]), next = upTo.slice(0, 25)
+    for (let k = 0; k < n; k++) if (years[k]) order[next[years[k] - 1]++] = k
+    px.fill(0)
+    Object.assign(loss, { width: canvas.width, height: canvas.height, years, order, upTo, image, canvas, shown: 0 })
+    if (!map.getSource('forestloss')) {
+      map.addSource('forestloss', { type: 'image', coordinates: LOSS_CORNERS })
+      map.addLayer({ id: 'forestloss', type: 'raster', source: 'forestloss', layout: { visibility: 'none' }, paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0, 'raster-resampling': 'nearest' } }, pos.mid)
+    }
+    return { message: 'Stands of trees removed from 2001 to 2025 in the demo box, as seen by the Landsat satellites.' }
+  }
+  const LOSS_RGB = Array.from({ length: 26 }, (_, i) => (i ? lossRgb(2000 + i) : [0, 0, 0]))
+  function paintLoss(t) {
+    if (!loss.image) return
+    const want = loss.upTo[Math.max(0, Math.min(25, t - 2000))], px = loss.image.data
+    for (let i = loss.shown; i < want; i++) { const k = loss.order[i], c = LOSS_RGB[loss.years[k]]; px[k * 4] = c[0]; px[k * 4 + 1] = c[1]; px[k * 4 + 2] = c[2]; px[k * 4 + 3] = 255 }
+    for (let i = want; i < loss.shown; i++) px[loss.order[i] * 4 + 3] = 0
+    loss.shown = want
+    loss.canvas.getContext('2d').putImageData(loss.image, 0, 0)
+    map.getSource('forestloss')?.updateImage({ image: loss.canvas, coordinates: LOSS_CORNERS })
+    map.triggerRepaint()
+  }
+  // The loss year under a click, if it is shown: the pixel itself, or the nearest one around it that is shown (the cells are 28 m).
+  function lossAt(lngLat) {
+    const t = timeline.time()
+    if (!state.forestloss.on || !loss.years || t == null) return null
+    const p = lossPixel(lngLat.lng, lngLat.lat, loss.width, loss.height)
+    if (!p) return null
+    let best = 0, d = Infinity
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = p[0] + dx, y = p[1] + dy
+      if (x < 0 || y < 0 || x >= loss.width || y >= loss.height) continue
+      const v = loss.years[y * loss.width + x]
+      if (v && 2000 + v <= t && dx * dx + dy * dy < d) { best = 2000 + v; d = dx * dx + dy * dy }
+    }
+    return best || null
   }
 
   // ---- the keys under the boxes
   const swatchRow = (colour, text) => { const r = el('div', null, 'swatch-row'); const s = el('span', null, 'swatch'); s.style.background = colour; r.append(s, el('span', text)); return r }
   $('sei-key').replaceChildren(...SEI_KEY.map(([k, text]) => swatchRow(SEI_CLASSES[k].colour, text)))
   $('landcover-key').replaceChildren(...LANDCOVER_CLASSES.map(([c, text]) => swatchRow(c, text)))
+  $('forestloss-bar').style.backgroundImage = lossGradient()
 
   // ---- map layers, added once when the basemap style is in. All start hidden.
-  const pos = { low: null }
+  const pos = { low: null, mid: null }
   function addLayers({ before, low, mid }) {
     const hidden = { visibility: 'none' }
     const geo = (id, attribution) => map.addSource(id, { type: 'geojson', data: EMPTY, attribution })
@@ -246,14 +310,16 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
       map.addSource(`aerial-${s.t}`, { type: 'raster', tiles: [aerialTileUrl(s.t)], tileSize: 256, bounds: AERIAL_BOUNDS[s.t], maxzoom: AERIAL_MAX_ZOOM[s.t], attribution: AERIAL_ATTRIB })
       map.addLayer({ id: `aerial-${s.t}`, type: 'raster', source: `aerial-${s.t}`, layout: hidden, paint: { 'raster-fade-duration': 0 } }, low)
     }
-    // Vegetation from LiDAR: the pictures are added on the first tick (loadCanopy), because an image source fetches its picture as soon as it
+    // Tree canopy from LiDAR: the pictures are added on the first tick (loadCanopy), because an image source fetches its picture as soon as it
     // is added, even while hidden. An image source cannot carry a credit, so an empty point source does.
     pos.low = low
     geo('tl-canopy-credit', CANOPY_ATTRIB)
     map.addLayer({ id: 'canopy-credit', type: 'circle', source: 'tl-canopy-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
 
-    geo('tl-forestloss', LOSS_ATTRIB)
-    map.addLayer({ id: 'forestloss-fill', type: 'fill', source: 'tl-forestloss', layout: hidden, paint: { 'fill-color': lossColour(), 'fill-opacity': 0.85 } }, mid)
+    // Forest loss: the picture is added on the first tick (loadLoss). Its credit rides on an empty point source, as for the tree canopy.
+    pos.mid = mid
+    geo('tl-forestloss-credit', LOSS_ATTRIB)
+    map.addLayer({ id: 'forestloss-credit', type: 'circle', source: 'tl-forestloss-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
     for (const v of [1994, 2002]) {
       geo(`tl-sei-${v}`, SEI_ATTRIB)
       map.addLayer({ id: `sei-${v}-fill`, type: 'fill', source: `tl-sei-${v}`, layout: hidden, paint: { 'fill-color': seiColour(), 'fill-opacity': ['match', ['get', 'class'], 'NS', 0.75, 0.5] } }, mid)
@@ -275,25 +341,27 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
 
   // ---- popups (DOM nodes and textContent only)
   function popupFor(f, layer) {
-    const p = f.properties, box = el('div')
+    const p = f?.properties, box = el('div')
     let i
-    if (layer === 'herringyears-dot') i = herringYearInfo(p)
+    if (layer === 'forestloss') i = lossInfo(f)
+    else if (layer === 'herringyears-dot') i = herringYearInfo(p)
     else if (layer === 'sei-1994-fill') i = seiInfo(p, 1994)
     else if (layer === 'sei-2002-fill') i = seiInfo(p, 2002)
     else if (layer === 'sei2014-fill') i = seiInfo(p, 2014)
-    else if (layer === 'forestloss-fill') i = lossInfo(p)
     else return null
     box.append(el('h3', i.title))
     if (i.tag) box.append(el('span', i.tag, 'tag'))
     for (const l of i.lines) box.append(el('p', l))
     box.append(el('p', i.source, 'src'))
-    const href = { 'herringyears-dot': HERRING_RECORD, 'forestloss-fill': LOSS_PAGE }[layer] || SEI_RECORD
-    const a = link(href, layer === 'herringyears-dot' ? 'The data on open.canada.ca' : layer === 'forestloss-fill' ? 'Global Forest Change data' : 'The inventory in the BC Data Catalogue')
+    const href = { 'herringyears-dot': HERRING_RECORD, forestloss: LOSS_PAGE }[layer] || SEI_RECORD
+    const a = link(href, layer === 'herringyears-dot' ? 'The data on open.canada.ca' : layer === 'forestloss' ? 'Global Forest Change' : 'The inventory in the BC Data Catalogue')
     if (a) { const d = el('p'); d.append(a); box.append(d) }
     return box
   }
-  // Points first, then the small areas, then the large ones.
-  const QUERY_LAYERS = ['herringyears-dot', 'forestloss-fill', 'sei-2002-fill', 'sei-1994-fill', 'sei2014-fill']
+  // Points first, then the small areas, then the large ones. Forest loss is a picture, so it is found by its pixel (pixelPopup), after these.
+  const QUERY_LAYERS = ['herringyears-dot', 'sei-2002-fill', 'sei-1994-fill', 'sei2014-fill']
+  // The popup of the forest loss under a click, or null.
+  const pixelPopup = (lngLat) => { const y = lossAt(lngLat); return y ? popupFor(y, 'forestloss') : null }
 
-  return { addLayers, popupFor, queryLayers: QUERY_LAYERS, defs: DEFS, state, timeline, swipe }
+  return { addLayers, popupFor, pixelPopup, queryLayers: QUERY_LAYERS, defs: DEFS, state, timeline, swipe, loss }
 }

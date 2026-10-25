@@ -466,6 +466,8 @@ map.on('click', (e) => {
   const hits = present.length ? map.queryRenderedFeatures(hitBox, { layers: present }) : []
   let content = null, from = null
   for (const id of QUERY_ORDER) {
+    // Forest loss is a picture, so its popup comes from the pixel under the click, in its place in the order.
+    if (id === 'parks-bc' && (content = time.pixelPopup(e.lngLat))) { from = 'forestloss'; break }
     let group = hits.filter((h) => h.layer.id === id)
     if (!group.length) continue
     // Watersheds nest, so show the smallest one under the click.

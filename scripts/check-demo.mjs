@@ -46,9 +46,11 @@ const ALLOWED_HOSTS = [
   'tc.canada.ca', 'laws-lois.justice.gc.ca', // Transport Canada's Ship Safety Bulletin and the Marine Mammal Regulations: links in the vessel rules, never fetched
   'nonna-geoserver.data.chs-shc.ca', 'api-iwls.dfo-mpo.gc.ca', // the Canadian Hydrographic Service: seafloor depth tiles and the Victoria Harbour gauge, fetched live
   'tides.gc.ca', 'api-proxy.edh-cde.dfo-mpo.gc.ca', // its licence agreement and station page, and the NONNA licence PDF: links, never fetched
+  'datacube.services.geo.ca', // Natural Resources Canada's datacube: the air photos and the land cover, fetched while their boxes are ticked
+  'www.arcgis.com', 'storage.googleapis.com', 'glad.earthengine.app', // the City of Victoria's tree canopy items and Global Forest Change's pages: links, never fetched
 ]
 // Third-party hosts the page fetches from once a box is ticked. Each must be named in the privacy note.
-const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov', 'nonna-geoserver.data.chs-shc.ca', 'api-iwls.dfo-mpo.gc.ca']
+const FETCH_HOSTS = ['s3.amazonaws.com', 'api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov', 'nonna-geoserver.data.chs-shc.ca', 'api-iwls.dfo-mpo.gc.ca', 'datacube.services.geo.ca']
 // The two Canadian Hydrographic Service notices, word for word from the licences (the IWLS licence at https://tides.gc.ca/en/licence-agreement,
 // dated 2023-08-14, and the NONNA licence PDF), with the place for the user's name filled in. Read on 2026-10-22. The IWLS notice has no
 // full stop at its end in the licence. They are kept here apart from js/overlays-data.js so that a change to either shows as a failure.
@@ -618,7 +620,108 @@ function ruleMarinePlain(texts) {
   return texts.filter((t) => /[—;]/.test(t)).map((t) => `an em dash or semicolon in: ${t.slice(0, 70)}`)
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleChsNotices, ruleChsNotStored, ruleChsUses, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleRkwArea, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain }
+
+// ---- change over time: seven boxes that share one time slider (js/timeline.js), their data files and their credits
+const TIME_IDS = ['herringyears', 'aerials', 'sei', 'sei2014', 'landcover', 'canopy', 'forestloss']
+const TIME_SENTENCE = 'Each box puts its years on one time slider at the bottom of the map, so the layers you tick move through time together. Nothing loads until you tick one.'
+// Each data file, the box it is checked against (the herring points are a sea layer, so the area the map reaches), the only properties it may
+// carry, and its kind of shape.
+const TIME_FILES = {
+  'herring-spawn-years': { box: SEA_REGION, props: ['year', 'name', 'spawns', 'index_t', 'no_index', 'length_m', 'method'], shapes: ['Point'] },
+  'sei-garry-oak-1994-95': { box: BBOX, props: ['class', 'sub', 'also'], shapes: ['Polygon', 'MultiPolygon'] },
+  'sei-garry-oak-2002': { box: BBOX, props: ['class', 'sub', 'also', 'dist'], shapes: ['Polygon', 'MultiPolygon'] },
+  'sei-garry-oak-2014': { box: BBOX, props: ['class', 'sub', 'also', 'tenths'], shapes: ['Polygon', 'MultiPolygon'] },
+}
+const TIME_PICTURES = ['canopy-2013.png', 'canopy-2019.png', 'canopy-2023.png', 'forest-loss.png']
+const PICTURE_LIMIT = 1024 * 1024
+// The map shows no First Nations content until Darren decides how (F6.4 of the round 3 data notes).
+const FIRST_NATION_NAME = /tsawwassen|tsawout|native friendship/i
+const OGL_VICTORIA_STATEMENT = 'Contains information licensed under the Open Government Licence – City of Victoria.'
+
+// Boxes: every layer that changes over time has a box, off at load, the Swipe box is off and hidden, and the time slider is hidden.
+function ruleTimeBoxes(html) {
+  const out = []
+  for (const id of TIME_IDS) {
+    const m = html.match(new RegExp(`<input[^>]*data-time="${id}"[^>]*>`))
+    if (!m) out.push(`no box for ${id}`)
+    else if (/\bchecked\b/.test(m[0])) out.push(`${id} is on by default`)
+  }
+  const swipe = html.match(/<label[^>]*id="aerials-controls"[^>]*>\s*<input[^>]*id="aerials-swipe"[^>]*>/)
+  if (!swipe) out.push('no Swipe box under the air photos')
+  else { if (/\bchecked\b/.test(swipe[0])) out.push('Swipe is on by default'); if (!/<label[^>]*\bhidden\b/.test(swipe[0])) out.push('the Swipe box shows before the air photos are ticked') }
+  if (!/<section id="timebar" hidden/.test(html)) out.push('the time slider is not hidden at load')
+  if (!/<p id="time-paused" hidden>/.test(html)) out.push('the reduced motion note of the time slider is not hidden at load')
+  if (!/<input type="range" id="time-slider"[^>]*aria-label="Year"/.test(html)) out.push('the time slider has no range input with a label')
+  if (!textOf(html).includes(TIME_SENTENCE)) out.push('the Change over time sentence is missing')
+  return out
+}
+// Data files: each a feature collection with shapes inside its box, only the properties the popups use, sensible years, and no place named
+// for a First Nation. The positive twins: the 2002 file has disturbed patches with their kind, and the 2014 mapping lies in the west only.
+function ruleTimeFiles(files) {
+  const out = []
+  for (const [name, spec] of Object.entries(TIME_FILES)) {
+    const { fc, error } = marineJson(files, name)
+    if (error) { out.push(error); continue }
+    if (!fc.features.length) { out.push(`${name}: no features`); continue }
+    const bad = { n: 0 }
+    for (const [i, x] of fc.features.entries()) {
+      if (!x.geometry) { out.push(`${name}: feature ${i} has no shape`); continue }
+      if (!spec.shapes.includes(x.geometry.type)) out.push(`${name}: feature ${i} is a ${x.geometry.type}`)
+      coordsIn(x.geometry.coordinates, bad, spec.box)
+      const p = x.properties || {}
+      const extra = Object.keys(p).filter((k) => !spec.props.includes(k))
+      if (extra.length) out.push(`${name}: feature ${i} carries ${extra.join(', ')}`)
+      if (FIRST_NATION_NAME.test(String(p.name ?? ''))) out.push(`${name}: feature ${i} is named for a First Nation`)
+      if (name === 'herring-spawn-years' && (!Number.isInteger(p.year) || p.year < 1951 || p.year > 2026 || !(p.index_t === null || p.index_t > 0))) out.push(`${name}: feature ${i} has year ${p.year} and index ${p.index_t}`)
+    }
+    if (bad.n) out.push(`${name}: ${bad.n} coordinates outside its box`)
+    if (name === 'sei-garry-oak-2002' && !fc.features.some((x) => x.properties?.class === 'NS' && x.properties.dist)) out.push('sei-garry-oak-2002: no disturbed patch with its kind of disturbance')
+    if (name === 'sei-garry-oak-2014') { const east = { n: 0 }; for (const x of fc.features) if (x.geometry) coordsIn(x.geometry.coordinates, east, [-180, -90, -123.515, 90]); if (east.n) out.push(`sei-garry-oak-2014: ${east.n} coordinates east of -123.515, where its notes say it has none`) }
+  }
+  for (const pic of TIME_PICTURES) {
+    const f = files.find((x) => x.path === `data/${pic}`)
+    if (!f) out.push(`data/${pic} is missing`)
+    else if (f.size > PICTURE_LIMIT) out.push(`data/${pic} is ${f.size} bytes, over 1 MB`)
+  }
+  return out
+}
+// Credits: each layer has a paragraph that says what it is and carries its licence statement word for word, and each source on the map carries
+// its credit with its licence.
+function ruleTimeCredits(html, js) {
+  const out = []
+  const paras = html.split(/<\/p>|<\/li>/).map(textOf)
+  const need = (name, tests) => {
+    const para = paras.find((p) => p.includes(name))
+    if (!para) { out.push(`the credits have no ${name} paragraph`); return }
+    for (const [t, what] of tests) if (!(typeof t === 'string' ? para.includes(t) : t.test(para))) out.push(`the ${name} credit does not say ${what}`)
+  }
+  need('Change over time (each box', [[/share one time slider/, 'that the layers share one slider'], [/readout under the slider says which year each layer is showing/, 'that the readout says the year of each layer']])
+  need('Herring spawn by year.', [[OGL_CANADA_STATEMENT, 'the Open Government Licence – Canada statement'], [/herring season, from July to June/, 'what a year is'], [/relative index of spawning biomass and a minimum estimate/, 'what the index is'], [/surveys changed/, 'that the surveys changed']])
+  need('Air photos, 1932 and 1950.', [[OGL_CANADA_STATEMENT, 'the Open Government Licence – Canada statement'], [/National Air Photo Library/, 'where the photos come from'], [/may not line up exactly/, 'that the years may not line up']])
+  need('Garry oak and other sensitive ecosystems.', [[OGL_BC_STATEMENT, 'the Open Government Licence – British Columbia statement'], [/no Garry oak class/, 'that the inventory has no Garry oak class'], [/1994 and 1995 from air photos of 1992/, 'when the first mapping was made']])
+  need('Land cover, 2010, 2015 and 2020.', [[OGL_CANADA_STATEMENT, 'the Open Government Licence – Canada statement'], [/30 m cells/, 'its cell size']])
+  need('Tree canopy from LiDAR, 2013, 2019 and 2023.', [[OGL_VICTORIA_STATEMENT, 'the Open Government Licence – City of Victoria statement'], [/draft/, 'that the 2023 file is a draft'], [/City of Victoria only/, 'that it covers the City of Victoria only'], [/unit is not stated/, 'that the values are not shown because their unit is not stated']])
+  need('Forest loss, 2001 to 2025.', [[/Hansen\/UMD\/Google\/USGS\/NASA/, 'the credit Global Forest Change asks for'], [/CC BY 4\.0/, 'its licence'], [/Changes made here/, 'the changes made, as CC BY 4.0 asks'], [/High-Resolution Global Maps of 21st-Century Forest Cover Change/, 'the citation its makers ask for'], [/not single street trees/, 'what it cannot see']])
+  const attribLine = (attr) => (js.match(new RegExp(`const ${attr} = [^\\n]*`)) || [''])[0]
+  const attribs = { HERRING_YEARS_ATTRIB: /Fisheries and Oceans Canada[\s\S]*OGL_CANADA_LINK/, AERIAL_ATTRIB: /National Air Photo Library[\s\S]*OGL_CANADA_LINK/, LANDCOVER_ATTRIB: /Natural Resources Canada[\s\S]*OGL_CANADA_LINK/, SEI_ATTRIB: /Province of British Columbia[\s\S]*OGL_BC_LINK/, CANOPY_ATTRIB: /City of Victoria[\s\S]*OGL_VICTORIA_LINK/, LOSS_ATTRIB: /Hansen\/UMD\/Google\/USGS\/NASA[\s\S]*CC BY 4\.0/ }
+  for (const [attr, re] of Object.entries(attribs)) if (!re.test(attribLine(attr))) out.push(`${attr} does not credit its data and name its licence`)
+  const sources = [["geo('tl-herringyears', HERRING_YEARS_ATTRIB)", 'herring'], ["geo(`tl-sei-${v}`, SEI_ATTRIB)", 'the 1994-95 and 2002 inventory'], ["geo('tl-sei-2014', SEI_ATTRIB)", 'the 2014 mapping'], ["geo('tl-forestloss-credit', LOSS_ATTRIB)", 'forest loss'], ["geo('tl-canopy-credit', CANOPY_ATTRIB)", 'the tree canopy'], ['attribution: AERIAL_ATTRIB', 'the air photos'], ['attribution: LANDCOVER_ATTRIB', 'land cover']]
+  for (const [code, what] of sources) if (!js.includes(code)) out.push(`the source of ${what} does not carry its credit`)
+  return out
+}
+// The time slider: Play is off under reduced motion and starts only when pressed, waits while the tab is hidden, and its readout is not read out while it plays.
+function ruleTimeControl(js) {
+  const out = []
+  if (!/let axis = \[\], at = -1, playing = false/.test(js)) out.push('Play is not off when the page opens')
+  if (!/playing = !!on && !motionQuery\.matches/.test(js)) out.push('Play can start under reduced motion')
+  if (!/play\.disabled = reduced/.test(js)) out.push('the Play button is not disabled under reduced motion')
+  if (!/document\.hidden\) return/.test(js) || !/addEventListener\('visibilitychange'/.test(js)) out.push('Play does not wait while the tab is hidden')
+  if (!/setAttribute\('aria-live', playing \? 'off' : 'polite'\)/.test(js)) out.push('the readout is read out while Play runs')
+  if (/setInterval/.test(js)) out.push('the time slider uses a timer that runs by itself')
+  return out
+}
+
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleChsNotices, ruleChsNotStored, ruleChsUses, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleRkwArea, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain, ruleTimeBoxes, ruleTimeFiles, ruleTimeCredits, ruleTimeControl }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -676,6 +779,21 @@ function selftest() {
   const whaleDataJs = 'export function srkwInfo(p) {\n  return { lines: [WHALE_RULES] }\n}\nexport function rkwInfo(p) {\n  return { lines: [WHALE_RULES] }\n}\nexport function cetaceanInfo(p, key) {\n  return { lines: [WHALE_RULES] }\n}\n'
   const marineHtml = `<p><strong>Marine life and protection</strong> (each box off until you switch it on). None shows where an animal is now. Not for navigation. Each loads one file from this site.</p><p><strong>Protected marine areas.</strong> From CPCAD. Only the marine zone of each area is shown. The no-take line is the Marine Resource Use field.</p><p><strong>Killer whale important area.</strong> Experts drew by hand an area, not a sighting. It does not show where the whales are now and carries no added management.</p><p><strong>Whale and porpoise density.</strong> A model of summer 2018, not where animals are now. Nhat is the model's number. Canadian waters only.</p><p><strong>Coastal habitat</strong> (kelp beds, eelgrass, herring spawn and seabird colonies). Contains information licensed under the Open Government Licence – British Columbia. CRIMS is a legacy dataset that began in 1979 and was only updated now and then, and the Province has no plans to update it.</p><p><strong>Federal data in the marine layers above</strong> (protected areas). ${OGL_CANADA_STATEMENT}</p><p>Nothing here shows where an animal is now. Not for navigation.</p><p>Coastal habitat comes from the Province's Coastal Resource Information Management System (CRIMS). It is a legacy survey that began in 1979 and was only updated now and then, so it is not a current record.</p>`
   const marineJs = "const PROTECTED_ATTRIB = `Protected areas: CPCAD (${OGL_CANADA_LINK})`\nconst SRKW_ATTRIB = `Killer whale critical habitat: DFO (${OGL_CANADA_LINK})`\nconst RKW_ATTRIB = `Killer whale important area: DFO (${OGL_CANADA_LINK})`\nconst CETACEANS_ATTRIB = `Whale and porpoise model: DFO (${OGL_CANADA_LINK})`\nconst CRIMS_ATTRIB = `Coastal habitat: CRIMS, a legacy survey from 1979 (${OGL_BC_LINK})`\nsrc('ov-protected', PROTECTED_ATTRIB)\nsrc('ov-srkw', SRKW_ATTRIB)\nsrc('ov-rkw', RKW_ATTRIB)\nsrc('ov-cetaceans', CETACEANS_ATTRIB)\nsrc('ov-kelp', CRIMS_ATTRIB)\nsrc('ov-eelgrass', CRIMS_ATTRIB)\nsrc('ov-herring', CRIMS_ATTRIB)\nsrc('ov-seabirds', CRIMS_ATTRIB)"
+  // Change over time fixtures
+  const timeHtml = (checked = false, over = {}) => TIME_IDS.map((id) => `<input type="checkbox" data-time="${id}"${checked ? ' checked' : ''}>`).join('') + (over.swipe ?? '<label class="sub" id="aerials-controls" hidden><input type="checkbox" id="aerials-swipe"> <span>Swipe</span></label>') + (over.bar ?? '<section id="timebar" hidden aria-label="Time slider"><input type="range" id="time-slider" min="0" max="0" step="1" value="0" aria-label="Year"><p id="time-paused" hidden>x</p></section>') + `<p>${over.sentence ?? TIME_SENTENCE}</p>`
+  const tf = (name, features) => f(`data/${name}.geojson`, fc(features))
+  const pointF = (props, c = [-123.4, 48.5]) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: props })
+  const polyF = (props, b) => ({ type: 'Feature', geometry: sq(b), properties: props })
+  const timeSet = (over = {}) => [
+    tf('herring-spawn-years', [pointF({ year: 1951, name: 'Boat Hrbr', spawns: 1, index_t: 11.1, no_index: 0, length_m: 91, method: 'Surface', ...over.herring })]),
+    tf('sei-garry-oak-1994-95', [polyF({ class: 'WD', sub: null, also: null })]),
+    tf('sei-garry-oak-2002', [polyF({ class: 'WD', sub: null, also: null, dist: null }), polyF({ class: over.ns ?? 'NS', sub: null, also: null, dist: 'Cleared/Logged' })]),
+    tf('sei-garry-oak-2014', [polyF({ class: 'WD', sub: 'co', also: null, tenths: 8 }, over.west ?? [-123.7, 48.3, -123.6, 48.4])]),
+    ...TIME_PICTURES.map((pic) => ({ path: `data/${pic}`, text: null, size: pic === over.bigPicture ? 2e6 : 3e5 })),
+  ]
+  const timeCreditsHtml = `<p><strong>Change over time</strong> (each box off until you switch it on). The layers in this section share one time slider. The readout under the slider says which year each layer is showing.</p><p><strong>Herring spawn by year.</strong> A year is DFO's herring season, from July to June. DFO describes it as a relative index of spawning biomass and a minimum estimate, and its surveys changed. ${OGL_CANADA_STATEMENT}</p><p><strong>Air photos, 1932 and 1950.</strong> National Air Photo Library. They may not line up exactly. ${OGL_CANADA_STATEMENT}</p><p><strong>Garry oak and other sensitive ecosystems.</strong> Surveyed in 1994 and 1995 from air photos of 1992. The inventory has no Garry oak class. ${OGL_BC_STATEMENT}</p><p><strong>Land cover, 2010, 2015 and 2020.</strong> 30 m cells. ${OGL_CANADA_STATEMENT}</p><p><strong>Tree canopy from LiDAR, 2013, 2019 and 2023.</strong> No values, because their unit is not stated. The 2023 file is a draft. City of Victoria only. ${OGL_VICTORIA_STATEMENT}</p><p><strong>Forest loss, 2001 to 2025.</strong> High-Resolution Global Maps of 21st-Century Forest Cover Change. Source: Hansen/UMD/Google/USGS/NASA. CC BY 4.0. Changes made here: clipped. It sees forest clearing, not single street trees.</p>`
+  const timeCreditsJs = "const HERRING_YEARS_ATTRIB = `Herring spawn by year: Fisheries and Oceans Canada (${OGL_CANADA_LINK})`\nconst AERIAL_ATTRIB = `Air photos: National Air Photo Library (${OGL_CANADA_LINK})`\nconst LANDCOVER_ATTRIB = `Land cover: Natural Resources Canada (${OGL_CANADA_LINK})`\nconst SEI_ATTRIB = `Sensitive ecosystems: Province of British Columbia (${OGL_BC_LINK})`\nconst CANOPY_ATTRIB = `Tree canopy: City of Victoria (${OGL_VICTORIA_LINK})`\nconst LOSS_ATTRIB = `Forest loss: Hansen/UMD/Google/USGS/NASA (CC BY 4.0)`\ngeo('tl-herringyears', HERRING_YEARS_ATTRIB)\ngeo(`tl-sei-${v}`, SEI_ATTRIB)\ngeo('tl-sei-2014', SEI_ATTRIB)\ngeo('tl-forestloss-credit', LOSS_ATTRIB)\ngeo('tl-canopy-credit', CANOPY_ATTRIB)\n{ attribution: AERIAL_ATTRIB }\n{ attribution: LANDCOVER_ATTRIB }"
+  const timeControlJs = "let axis = [], at = -1, playing = false, timer = 0\nplaying = !!on && !motionQuery.matches && axis.length > 1\nplay.disabled = reduced || axis.length < 2\nif (mine !== token || !playing || document.hidden) return\ndocument.addEventListener('visibilitychange', () => {})\nlines.setAttribute('aria-live', playing ? 'off' : 'polite')"
   const cases = [
     ['ruleForbiddenNames', ruleForbiddenNames, [f('data/native-land.geojson', '{}')], [f('data/streams.geojson', '{}')]],
     ['ruleForbiddenNames (rush)', ruleForbiddenNames, [f('data/rush-map.geojson', '{}')], [f('data/bec.geojson', '{}')]],
@@ -784,6 +902,23 @@ function selftest() {
     ['ruleMarineCredits (no model date in the density credit)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml.replace('A model of summer 2018, not where animals are now.', 'A model.')), f('x.js', marineJs)], [f('x.html', marineHtml), f('x.js', marineJs)]],
     ['ruleMarineCredits (a source without its credit)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml), f('x.js', marineJs.replace("src('ov-herring', CRIMS_ATTRIB)", "src('ov-herring', USGS_ATTRIB)"))], [f('x.html', marineHtml), f('x.js', marineJs)]],
     ['ruleMarineCredits (the credit does not name its licence)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml), f('x.js', marineJs.replace('(${OGL_CANADA_LINK})', ''))], [f('x.html', marineHtml), f('x.js', marineJs)]],
+    ['ruleTimeBoxes (on by default)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(true))], [f('x.html', timeHtml())]],
+    ['ruleTimeBoxes (Swipe shown at load)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { swipe: '<label class="sub" id="aerials-controls"><input type="checkbox" id="aerials-swipe"> <span>Swipe</span></label>' }))], [f('x.html', timeHtml())]],
+    ['ruleTimeBoxes (slider shown at load)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { bar: '<section id="timebar" aria-label="Time slider"><input type="range" id="time-slider" aria-label="Year"><p id="time-paused" hidden>x</p></section>' }))], [f('x.html', timeHtml())]],
+    ['ruleTimeBoxes (no sentence)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { sentence: 'Layers.' }))], [f('x.html', timeHtml())]],
+    ['ruleTimeFiles (a herring year out of range)', ruleTimeFiles, timeSet({ herring: { year: 1940 } }), timeSet()],
+    ['ruleTimeFiles (a place named for a First Nation)', ruleTimeFiles, timeSet({ herring: { name: 'Tsawwassen Causeway' } }), timeSet()],
+    ['ruleTimeFiles (a property the popups do not use)', ruleTimeFiles, timeSet({ herring: { contact: 'x' } }), timeSet()],
+    ['ruleTimeFiles (no disturbed patch in 2002)', ruleTimeFiles, timeSet({ ns: 'WD' }), timeSet()],
+    ['ruleTimeFiles (the 2014 mapping in the east)', ruleTimeFiles, timeSet({ west: [-123.4, 48.4, -123.3, 48.5] }), timeSet()],
+    ['ruleTimeFiles (a picture over 1 MB)', ruleTimeFiles, timeSet({ bigPicture: 'canopy-2019.png' }), timeSet()],
+    ['ruleTimeCredits (no Victoria statement)', (files) => ruleTimeCredits(files[0].text, files[1].text), [f('x.html', timeCreditsHtml.replace(OGL_VICTORIA_STATEMENT, 'Thanks.')), f('x.js', timeCreditsJs)], [f('x.html', timeCreditsHtml), f('x.js', timeCreditsJs)]],
+    ['ruleTimeCredits (no Hansen credit)', (files) => ruleTimeCredits(files[0].text, files[1].text), [f('x.html', timeCreditsHtml.replace('Hansen/UMD/Google/USGS/NASA', 'UMD')), f('x.js', timeCreditsJs)], [f('x.html', timeCreditsHtml), f('x.js', timeCreditsJs)]],
+    ['ruleTimeCredits (an on-map credit without its licence)', (files) => ruleTimeCredits(files[0].text, files[1].text), [f('x.html', timeCreditsHtml), f('x.js', timeCreditsJs.replace('Province of British Columbia (${OGL_BC_LINK})', 'Province of British Columbia'))], [f('x.html', timeCreditsHtml), f('x.js', timeCreditsJs)]],
+    ['ruleTimeCredits (a source without its credit)', (files) => ruleTimeCredits(files[0].text, files[1].text), [f('x.html', timeCreditsHtml), f('x.js', timeCreditsJs.replace('attribution: LANDCOVER_ATTRIB', 'attribution: null'))], [f('x.html', timeCreditsHtml), f('x.js', timeCreditsJs)]],
+    ['ruleTimeControl (Play under reduced motion)', (files) => ruleTimeControl(files[0].text), [f('x.js', timeControlJs.replace('!!on && !motionQuery.matches', '!!on'))], [f('x.js', timeControlJs)]],
+    ['ruleTimeControl (Play on at load)', (files) => ruleTimeControl(files[0].text), [f('x.js', timeControlJs.replace('playing = false', 'playing = true'))], [f('x.js', timeControlJs)]],
+    ['ruleTimeControl (a hidden tab keeps playing)', (files) => ruleTimeControl(files[0].text), [f('x.js', timeControlJs.replace(' || document.hidden', ''))], [f('x.js', timeControlJs)]],
     ['ruleMarinePlain (em dash)', (files) => ruleMarinePlain(files.map((x) => x.text)), [f('x', 'old data — not current')], [f('x', 'old data, not current')]],
     ['ruleMarinePlain (semicolon)', (files) => ruleMarinePlain(files.map((x) => x.text)), [f('x', 'old data; not current')], [f('x', 'old data, not current')]],
   ]
@@ -930,6 +1065,11 @@ function checkTree() {
   report(...pair(ruleWhaleRulesInCode(overlaysJs, dataJs), 'whales: the panel notes of the critical habitat and the density model, and their popups, carry the vessel distances'))
   report(...pair(ruleMarineCredits(html, overlaysJs), 'marine life and protection: the credits and the panel say what each layer is, how old it is and that it is not for navigation, and every source carries its credit on the map'))
   report(...pair(ruleCrimsVintage(files, textOf(credits)), 'coastal habitat: the survey years in the credits are the years in the data (herring spawn records, eelgrass mapping)'))
+  const timeLayersJs = byPath['js/time-layers.js']?.text || '', timelineJs = byPath['js/timeline.js']?.text || ''
+  report(...pair(ruleTimeBoxes(html), 'change over time: every layer has a box, all off by default, Swipe off and hidden, the time slider hidden at load, and the section sentence present'))
+  report(...pair(ruleTimeFiles(files), `change over time: ${Object.keys(TIME_FILES).length} data files inside their boxes with only the fields the popups use, sensible years, no place named for a First Nation, disturbed patches in 2002, the 2014 mapping in the west only, and ${TIME_PICTURES.length} pictures under 1 MB each`))
+  report(...pair(ruleTimeCredits(html, timeLayersJs), 'change over time: the credits say what each layer is and carry its licence statement word for word, and every source on the map carries its credit and licence'))
+  report(...pair(ruleTimeControl(timelineJs), 'change over time: Play is off at load and under reduced motion, waits while the tab is hidden, and its readout is not read out while it plays'))
   report(...pair(ruleCurrentsCredit(html, overlaysJs), 'sea currents carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
   report(...pair(ruleWindCredit(html, overlaysJs), 'wind carries the Environment and Climate Change Canada credit on the map, says it is a forecast and not for navigation, and is named in the privacy note'))
   report(...pair(ruleScalarCredit(html, overlaysJs), 'sea temperature and sea saltiness carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))
@@ -945,7 +1085,7 @@ function checkTree() {
   report(missingOverlay.length === 0, 'credits carry the Environment Canada, USGS, ecoregion and industry source statements word for word', missingOverlay.join(' | '))
 
   const sources = byPath['data/SOURCES.md']?.text || ''
-  report([...LAYER_FILES.filter((n) => n !== 'pins'), ...MARINE_FILES].every((n) => sources.includes(`${n}.geojson`)), 'data/SOURCES.md lists every data file')
+  report([...LAYER_FILES.filter((n) => n !== 'pins'), ...MARINE_FILES, ...Object.keys(TIME_FILES)].every((n) => sources.includes(`${n}.geojson`)) && TIME_PICTURES.every((n) => sources.includes(n)), 'data/SOURCES.md lists every data file')
   const licence = byPath['LICENSE']?.text || ''
   report(licence.startsWith('MIT License') && licence.includes('Copyright (c) 2026 Darren Zal') && licence.includes('Permission is hereby granted, free of charge'), 'LICENSE is the MIT licence with the Darren Zal copyright line')
   const readme = byPath['README.md']?.text || ''
@@ -1005,8 +1145,10 @@ async function checkOverlayData() {
     writeFileSync(join(dir, 'package.json'), '{"type":"module"}')
     copyFileSync(join(ROOT, 'js/overlays-data.js'), join(dir, 'overlays-data.js'))
     copyFileSync(join(ROOT, 'js/flow.js'), join(dir, 'flow.js'))
+    copyFileSync(join(ROOT, 'js/time-data.js'), join(dir, 'time-data.js'))
     const D = await import(pathToFileURL(join(dir, 'overlays-data.js')).href)
     const F = await import(pathToFileURL(join(dir, 'flow.js')).href)
+    const T = await import(pathToFileURL(join(dir, 'time-data.js')).href)
     const now = Date.parse('2026-10-21T20:00:00Z')
     const threw = (fn) => { try { fn(); return false } catch { return true } }
     const pt = (x, y) => ({ type: 'Point', coordinates: [x, y] })
@@ -1470,6 +1612,35 @@ async function checkOverlayData() {
     const plain = [D.WHALE_RULES, ...D.WHALE_RULE_LINKS.map((l) => l.label), ci, cd, ch, ki, kn, ei, hi, hn, si, rr, gs, srkwI, D.rkwInfo({ seasonal: 'June to October', score: 'H' })].flatMap((x) => (typeof x === 'string' ? [x] : [x.title, x.tag, x.source, ...(x.lines || [])].filter(Boolean)))
     report(ruleMarinePlain(plain).length === 0 && ruleMarinePlain([D.marineMessage('kelp', [{}]), D.marineMessage('herring', []), D.marineMessage('seabirds', []), D.marineMessage('protected', []), D.marineMessage('srkw', []), D.marineMessage('eelgrass', [])]).length === 0, 'marine layers: the text of every popup and status line has no em dash and no semicolon', ruleMarinePlain(plain).join(' | '))
 
+    {
+    // ---- change over time (js/time-data.js): the steps of the time line, which picture a year shows, and the text
+    const ts = T.step
+    const tAxis = T.timeAxis([[ts(1932), ts(1950)], [ts(1950), ts(1951), ts(1994, '1994-95')], [ts(1994)]])
+    const tOnly = T.timeAxis([[ts(1994, '1994-95'), ts(2002)]])
+    report(tAxis.map((s) => s.t).join() === '1932,1950,1951,1994' && tAxis.map((s) => s.label).join() === '1932,1950,1951,1994' && tOnly.map((s) => s.label).join() === '1994-95,2002' && T.timeAxis([]).length === 0 && threw(() => T.timeAxis([[{ t: 'x' }]])) && threw(() => T.step(NaN)), 'time line: the steps of every layer that is on, once each and in order of year, keep a layer’s own label ("1994-95") unless layers say the year differently, and a step without a year is refused')
+    report(T.axisIndex(tAxis, 1950) === 1 && T.axisIndex(tAxis, 1970) === 2 && T.axisIndex(tAxis, 1900) === 0 && T.axisIndex([], 1950) === -1, 'time line: a year finds its own step, or the last step before it, or the first')
+    const tEv = [ts(1951), ts(1953)], tSnap = [ts(1932), ts(1950)], tCum = [ts(2001), ts(2002), ts(2003)]
+    report(T.frameAt(tEv, 'event', 1951)?.t === 1951 && T.frameAt(tEv, 'event', 1952) === null && T.frameAt(tSnap, 'snapshot', 1949)?.t === 1932 && T.frameAt(tSnap, 'snapshot', 1990)?.t === 1950 && T.frameAt(tSnap, 'snapshot', 1920) === null && T.frameAt(tCum, 'cumulative', 2002)?.t === 2002 && T.frameAt(tCum, 'cumulative', 1990) === null && threw(() => T.frameAt(tEv, 'forecast', 1951)), 'time line: an event layer shows tOnly its own year, a snapshot the latest picture in or before the year and nothing before its first, a cumulative layer everything up to the year, and an unknown kind is refused')
+    report(T.snapshotLine('Air photo', tSnap, tSnap[1], 1950) === 'Air photo: 1950.' && T.snapshotLine('Air photo', tSnap, tSnap[1], 1967) === 'Air photo: 1950, the latest before 1967.' && T.snapshotLine('Air photo', tSnap, null, 1920) === 'Air photo: the first is from 1932.', 'time line: the readout says the year a layer shows, and says so when it is an earlier picture or when there is none yet')
+    report(T.herringSeason(1951) === '1950/1951' && threw(() => T.herringSeason(1951.5)) && T.herringLine(1940, 0, 1951) === 'Herring spawn: the records begin with the 1950/1951 season.' && T.herringLine(1998, 0, 1951) === 'Herring spawn, 1997/1998 season: none recorded in the area this map reaches.' && T.herringLine(1951, 11, 1951) === 'Herring spawn, 1950/1951 season: 11 places.' && T.herringLine(1960, 1, 1951) === 'Herring spawn, 1959/1960 season: 1 place.', 'herring by year: a year is said as DFO’s season (1951 is 1950/1951), and a season with no record says none were recorded')
+    report(T.herringSteps([{ properties: { year: 1953 } }, { properties: { year: 1951 } }, { properties: { year: 1953 } }, { properties: {} }]).map((s) => s.t).join() === '1951,1953', 'herring by year: the steps are the seasons found in the file, once each, in order')
+    const hy = T.herringYearInfo({ year: 1967, name: 'Boundary Bay', spawns: 3, index_t: 36200, no_index: 1, length_m: 6398, method: 'Mixed' }), hz = T.herringYearInfo({ year: 2020, name: 'Cordova Bay', spawns: 1, index_t: null, no_index: 1, length_m: null, method: 'Incomplete' })
+    report(hy.title === 'Boundary Bay' && hy.tag === 'herring spawn, 1966/1967 season' && hy.lines[0] === 'Spawn index: 36,200 tonnes, from 2 of 3 records (the others have none).' && hy.lines[1] === '3 spawn records this season, along about 6,398 m of shore.' && hy.lines.includes('Surveyed from the surface and by divers.') && hy.lines.includes(T.HERRING_CAVEAT) && hy.source.includes(OGL_CANADA_STATEMENT) && hz.lines[0] === 'No spawn index was recorded for this place and season.' && hz.lines.includes('The survey was incomplete.'), 'herring by year: the popup gives the place as DFO names it, the season, the index in tonnes and how many records it comes from, the shore length, the survey method, the caveats and the Open Government Licence – Canada statement', JSON.stringify(hy.lines))
+    const sNs = T.seiInfo({ class: 'NS', sub: null, also: null, dist: 'Cleared/Logged' }, 2002), sWd = T.seiInfo({ class: 'WD', sub: 'mx', also: 'HT+SG' }, 1994), s14 = T.seiInfo({ class: 'WD', sub: 'co', also: 'WD', tenths: 8 }, 2014), sDist = T.seiInfo({ class: 'WD', sub: null, also: null, dist: 'Urban Use' }, 2002)
+    report(sNs.title === 'Disturbed between 1992 and 2002' && sNs.lines[0] === 'Part of a sensitive ecosystem mapped in 1994-95 that the 2002 update found disturbed, by cleared/logged.' && sWd.title === 'Woodland, mixed' && sWd.lines.some((l) => /Garry oak, arbutus and Douglas-fir/.test(l)) && sWd.lines.includes('Also in this polygon: terrestrial herbaceous and older second growth forest.') && s14.tag === 'Garry oak ecosystems mapping, 2014' && s14.lines.includes('The main ecosystem covers about 80% of the polygon.') && s14.lines.some((l) => /does not measure change/.test(l)) && sDist.lines.includes('The 2002 update notes a disturbance here: urban use.') && [sNs, sWd, s14].every((i) => i.source.includes(OGL_BC_STATEMENT)) && T.seiSub('SV', 'sp') === 'spit' && T.seiSub('WN', 'sp') === 'swamp' && threw(() => T.seiInfo({ class: 'WD' }, 1999)), 'sensitive ecosystems: a disturbed patch of 2002 says so and by what, woodland says it includes Garry oak, arbutus and Douglas-fir, the 2014 mapping says it does not measure change, subclasses are read with their class, and each popup carries the Open Government Licence – British Columbia statement')
+    report(T.lossLine(2000) === 'Forest loss: the satellite record begins in 2001.' && T.lossLine(2016) === 'Forest loss seen by satellite: 2001 to 2016. Darker is more recent.' && T.lossLine(2026).startsWith('Forest loss seen by satellite: 2001 to 2025, the latest year in the data.') && T.lossInfo(2016).title === 'Forest loss in 2016' && T.lossInfo(2016).source.includes('Hansen/UMD/Google/USGS/NASA') && T.lossInfo(2016).source.includes('CC BY 4.0') && T.lossInfo(2016).lines.some((l) => /before 2011/.test(l)) && T.LOSS_YEARS.length === 25 && T.LOSS_YEARS[0].t === 2001 && T.LOSS_YEARS.at(-1).t === 2025, 'forest loss: the slider shows the loss from 2001 up to its year, says when the record begins and ends, and the popup says the early years were processed differently and carries the credit Global Forest Change asks for and its licence')
+    report(T.lossYearOf(10, 255) === 2001 && T.lossYearOf(250, 255) === 2025 && T.lossYearOf(121, 255) === 2012 && T.lossYearOf(120, 0) === 0 && T.lossYearOf(0, 255) === 0 && T.lossYearOf(255, 255) === 0, 'forest loss: a pixel’s year is its red value over ten, and a clear pixel or a value off the scale is no loss')
+    const [lw, ln] = T.LOSS_CORNERS[0], [le, ls] = T.LOSS_CORNERS[2]
+    report(lw === BBOX[0] && le === BBOX[2] && ls === BBOX[1] && ln === BBOX[3] && T.lossPixel(-123.75, 48.7, 2200, 2535).join() === '0,0' && T.lossPixel(-123.2001, 48.2801, 2200, 2535).join() === '2199,2534' && T.lossPixel(-123.475, 48.49, 2200, 2535)[0] === 1100 && Math.abs(T.lossPixel(-123.475, 48.49, 2200, 2535)[1] - 1270) <= 2 && T.lossPixel(-123.1, 48.5, 2200, 2535) === null, 'forest loss: the picture covers the demo box exactly, and a place finds its pixel with rows even in Web Mercator, not in latitude', JSON.stringify(T.lossPixel(-123.475, 48.49, 2200, 2535)))
+    report(T.lossRgb(2001).join() === '246,213,92' && T.lossRgb(2013).join() === '232,131,58' && T.lossRgb(2025).join() === '122,16,16' && T.lossRgb(2019).every((v, k) => v <= T.lossRgb(2013)[k]) && T.lossGradient().startsWith('linear-gradient(to right, rgb(246, 213, 92) 0%'), 'forest loss: the colours run from pale yellow in 2001 through orange in 2013 to dark red in 2025, and the key is the same ramp')
+    const au = T.aerialTileUrl(1932), lu = T.landcoverTileUrl(2015)
+    report(au.startsWith('https://datacube.services.geo.ca/ows/aerial?') && au.includes('layers=victoria') && au.includes('time=1932-07-01T12:00:00Z') && au.includes('bbox={bbox-epsg-3857}') && au.includes('crs=EPSG:3857') && au.includes('format=image/png&transparent=true') && threw(() => T.aerialTileUrl(1940)) && lu.includes('layers=landcover-2015') && lu.includes('styles=official') && lu.includes('bbox={bbox-epsg-3857}') && threw(() => T.landcoverTileUrl(2012)), 'air photos and land cover: each year asks the datacube for its own layer in Web Mercator, as transparent PNG, with the full time form the photo service needs, and a year it does not have is refused')
+    const [tl, tr, br, bl] = T.CANOPY_CORNERS
+    report(T.CANOPY_CORNERS.length === 4 && tl[1] === tr[1] && bl[1] === br[1] && tl[0] === bl[0] && tr[0] === br[0] && tl[0] < tr[0] && tl[1] > bl[1] && tl[0] > BBOX[0] && tr[0] < BBOX[2] && bl[1] > BBOX[1] && tl[1] < BBOX[3] && T.CANOPY_YEARS.map((s) => s.label).join() === '2013,2019,2023 (draft)' && Object.keys(T.CANOPY_FILES).join() === '2013,2019,2023', 'vegetation from LiDAR: one rectangle in the demo box for the three pictures, corners in the order top left, top right, bottom right, bottom left, and the 2023 step labelled a draft')
+    const timeTexts = [hy, hz, sNs, sWd, s14, sDist, T.lossInfo(2016)].flatMap((i) => [i.title, i.tag, i.source, ...i.lines]).concat([T.lossLine(2016), T.herringLine(1998, 0, 1951), T.snapshotLine('Air photo', tSnap, tSnap[1], 1967), ...Object.values(T.SEI_CLASSES).map((c) => c.note).filter(Boolean), ...T.SEI_KEY.map((k) => k[1])])
+    report(ruleMarinePlain(timeTexts).length === 0, 'change over time: the text of every popup and readout line has no em dash and no semicolon', ruleMarinePlain(timeTexts).join(' | '))
+
+    }
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
