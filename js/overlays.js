@@ -1,7 +1,7 @@
 // Optional overlays for the Greater Victoria demo map. Plain ES module, no build step.
 //
 // Twelve live layers load from outside services straight from the visitor's browser, and ten
-// static layers (ecoregions, industry and waste sites, seafloor depth and seven marine life and protection
+// static layers (ecoregions, industry and waste sites, seafloor depth and eight marine life and protection
 // layers) draw from files and tiles this site already has, except that seafloor depth also asks the Canadian
 // Hydrographic Service for tiles, and tides and tidal currents ask it for one gauge. Every one is off by default
 // and makes no request until its box is ticked, or, for a tide station, its dot is clicked. Each shows a plain status line,
