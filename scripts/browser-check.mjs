@@ -1833,7 +1833,8 @@ async function checkMarine(page, requests, t, name, shot) {
       report(tested >= 12 && good >= 0.9 * tested && classes.size >= 2, t(`marine cetaceans: for ${sp.name} the pixel at the middle of each full cell has the colour of its density class at 0.75 opacity over the sea (at least 90% of the cells in view, two or more classes in view)`), JSON.stringify({ tested, good, classes: [...classes] }))
     }
     report(mostClasses === 5, t('marine cetaceans: all five colours are seen on the screen for at least one species'), String(mostClasses))
-    if (shot) { await pick('harbour'); await settle(2200); await shot('marine-cetaceans-harbour'); await pick('dalls'); await settle(2200); await shot('marine-cetaceans-dalls'); await pick('humpback'); await settle(1800) }
+    if (shot) { await pick('harbour'); await settle(2200); await shot('marine-cetaceans-harbour'); await pick('dalls'); await settle(2200); await shot('marine-cetaceans-dalls') }
+    await pick('humpback'); await settle(1800)
     await tick('cetaceans', false)
 
     // 2. the areas leave the land alone (places with no basemap water within 6 px do not change)
