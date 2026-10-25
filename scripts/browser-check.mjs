@@ -2292,7 +2292,8 @@ async function checkTime(page, requests, t, name, shot) {
       const lng = w + (x + 0.5) / L.width * (e - w), lat = (360 / Math.PI) * Math.atan(Math.exp(merc(n) - (y + 0.5) / L.height * (merc(n) - merc(s)))) - 90
       if (!b.contains([lng, lat])) continue
       const p = m.project([lng, lat])
-      if (p.y > 150 && p.y < innerHeight - 260 && p.x > 330 && p.x < innerWidth - 60) return [p.x, p.y]
+      // Clear of the banner, the slider and, on a wide screen, the open layers panel.
+      if (p.y > 150 && p.y < innerHeight - 260 && p.x > (innerWidth > 700 ? 330 : 30) && p.x < innerWidth - 60) return [p.x, p.y]
     }
     return null
   }, year)
