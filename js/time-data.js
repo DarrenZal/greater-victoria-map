@@ -174,7 +174,8 @@ export function seiInfo(p, vintage) {
     title: disturbed ? 'Disturbed between 1992 and 2002' : c ? `${c.name}${sub ? `, ${sub}` : ''}` : 'Sensitive ecosystem',
     tag: vintage === 2014 ? 'Garry oak ecosystems mapping, 2014' : `sensitive ecosystems, ${vintage === 1994 ? '1994-95' : '2002'}`,
     lines: [
-      disturbed ? `Part of a sensitive ecosystem mapped in 1994-95 that the 2002 update found disturbed${dist ? `, by ${dist}` : ''}.` : null,
+      disturbed ? 'Part of a sensitive ecosystem mapped in 1994-95 that the 2002 update found disturbed.' : null,
+      disturbed && dist ? `Kind of disturbance, as the update records it: ${dist}.` : null,
       !disturbed && dist ? `The 2002 update notes a disturbance here: ${dist}.` : null,
       !disturbed && c?.note ? c.note : null,
       also.length ? `Also in this polygon: ${also.join(' and ')}.` : null,
