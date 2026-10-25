@@ -954,12 +954,12 @@ export function iwlsUrls(station, now = Date.now()) {
     predicted: url('wlp', now - IWLS_BEHIND_H * h, now + IWLS_AHEAD_H * h, 'FIFTEEN_MINUTES'), // the curve
   }
 }
-// The rows of a reply as [{ ms, v, reviewed }] in time order, or null if it is not a list. A reading flagged questionable (3), one
-// with no number or a height no harbour reaches, and one with no time are dropped.
-function iwlsRows(reply) {
+// The rows of a reply as [{ ms, v, reviewed, flag }] in time order, or null if it is not a list. One with no number or a height no
+// harbour reaches, and one with no time, are dropped. A reading flagged questionable (3) is dropped too, unless keepFlagged is set.
+function iwlsRows(reply, keepFlagged = false) {
   if (!Array.isArray(reply)) return null
   return reply.map((r) => ({ ms: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(r?.eventDate) ? Date.parse(r.eventDate) : NaN, v: num(r?.value), reviewed: r?.reviewed === true, flag: r?.qcFlagCode }))
-    .filter((r) => Number.isFinite(r.ms) && r.v != null && r.v > -5 && r.v < 15 && r.flag !== '3').sort((a, b) => a.ms - b.ms)
+    .filter((r) => Number.isFinite(r.ms) && r.v != null && r.v > -5 && r.v < 15 && (keepFlagged || r.flag !== '3')).sort((a, b) => a.ms - b.ms)
 }
 // The replies for the gauge as the same plain object NOAA's give: events [{ ms, type, value }] (the highs and lows, told apart by
 // their neighbours, because high and low come in turn), series [{ ms, v }] or null, and also observed [{ ms, v }] and latest
@@ -967,13 +967,17 @@ function iwlsRows(reply) {
 // Predicted levels and observed ones are optional: a station is still shown with the highs and lows alone.
 export function normaliseIwls(station, hiloReply, predictedReply = null, observedReply = null) {
   if (station?.source !== 'chs') throw new Error('not a CHS station')
-  const hilo = iwlsRows(hiloReply)
-  if (!hilo?.length) throw new Error('the reply held no highs and lows')
+  // Each event is told apart on the whole sequence, flagged readings included, and only then are the flagged ones taken out. The
+  // other way round, dropping one would change what stands next to its neighbours and could turn a later high into a low.
+  const all = iwlsRows(hiloReply, true)
+  if (!all?.length) throw new Error('the reply held no highs and lows')
   // The next one is high when it stands above the one after it, and the last is the opposite of the one before it.
-  const events = hilo.map((e, i) => {
-    const high = i < hilo.length - 1 ? e.v > hilo[i + 1].v : (hilo.length > 1 ? !(hilo[i - 1].v > e.v) : null)
-    return { ms: e.ms, type: high ? 'high' : 'low', value: e.v, known: high != null }
+  const labelled = all.map((e, i) => {
+    const high = i < all.length - 1 ? e.v > all[i + 1].v : (all.length > 1 ? !(all[i - 1].v > e.v) : null)
+    return { ms: e.ms, type: high ? 'high' : 'low', value: e.v, known: high != null, flag: e.flag }
   })
+  const events = labelled.filter((e) => e.flag !== '3')
+  if (!events.length) throw new Error('the reply held no highs and lows')
   if (events.some((e) => !e.known)) throw new Error('could not tell a high from a low in a reply of one')
   const out = { id: station.id, kind: 'level', source: 'chs', events: events.map(({ ms, type, value }) => ({ ms, type, value })), series: null, observed: [], latest: null, feet: null, floodDir: null, ebbDir: null, bin: null }
   const pred = iwlsRows(predictedReply)
