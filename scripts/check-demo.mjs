@@ -356,6 +356,39 @@ function ruleChsNotStored(files) {
   return out
 }
 
+// The Canadian Hydrographic Service (CHS) and Fisheries and Oceans (DFO) are used for the two things the owner accepted licences for, and
+// nothing else: the NONNA depth tiles (two layers, NONNA 100 and NONNA 10) and the one IWLS station (Victoria Harbour, three time series).
+// So in the code and the page, no URL on a CHS or DFO host except the two roots (each once, where it is defined), the three licence and
+// station links, which are links and never fetched. Each root is used once, to build the tile address or the station address. The layers,
+// the station and the time series are pinned to the ones accepted, so a third endpoint cannot arrive by editing a list.
+const CHS_HOST = /(^|\.)(chs-shc\.ca|dfo-mpo\.gc\.ca)$|^tides\.gc\.ca$/
+const CHS_ROOTS = { NONNA_HOST: 'https://nonna-geoserver.data.chs-shc.ca', IWLS_API: 'https://api-iwls.dfo-mpo.gc.ca/api/v1/stations' }
+const CHS_LINKS = ['https://tides.gc.ca/en/licence-agreement', 'https://tides.gc.ca/en/stations/', NONNA_LICENCE_URL]
+function ruleChsUses(files) {
+  const out = [], code = files.filter((f) => f.text != null && /^(index\.html$|js\/)/.test(f.path))
+  for (const f of code) {
+    for (const u of f.text.match(URL_RE) || []) {
+      let host
+      try { host = new URL(u).host } catch { continue }
+      if (!CHS_HOST.test(host)) continue
+      if (Object.values(CHS_ROOTS).includes(u) || CHS_LINKS.some((l) => u.startsWith(l))) continue
+      out.push(`${f.path} uses a Canadian Hydrographic Service or Fisheries and Oceans address that is neither the NONNA tiles nor the Victoria Harbour gauge: ${u.slice(0, 80)}`)
+    }
+  }
+  const all = code.map((f) => f.text).join('\n'), data = code.find((f) => f.path === 'js/overlays-data.js')?.text ?? ''
+  for (const [name, root] of Object.entries(CHS_ROOTS)) {
+    if (!data.includes(`export const ${name} = '${root}'`)) out.push(`${name} is not defined as ${root} in js/overlays-data.js`)
+    const uses = (all.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length
+    if (uses !== 2) out.push(`${name} is named ${uses} times in the code, expected 2 (its definition and the one address built from it)`)
+  }
+  if (!data.includes("export const NONNA_LAYERS = { 100: 'NONNA 100', 10: 'NONNA 10' }")) out.push('NONNA_LAYERS is not exactly the two accepted layers, NONNA 100 and NONNA 10')
+  const stations = data.match(/^\s*\{ id: '[^']*'[^\n]*source: 'chs'/gm) || [], ids = data.match(/chsId: '[0-9a-f]+'/g) || []
+  if (stations.length !== 1 || ids.length !== 1 || ids[0] !== "chsId: '5cebf1df3d0f4a073c4bbd1e'") out.push(`CHS stations in the list: expected only Victoria Harbour (5cebf1df3d0f4a073c4bbd1e), found ${ids.join(' ') || 'none'}`)
+  const iwls = data.slice(data.indexOf('export function iwlsUrls'), data.indexOf('function iwlsRows')), codes = [...iwls.matchAll(/\burl\('([\w-]+)'/g)].map((m) => m[1]).sort().join()
+  if (codes !== 'wlo,wlp,wlp-hilo') out.push(`IWLS time series asked for: expected wlo, wlp and wlp-hilo, found ${codes || 'none'}`)
+  return out
+}
+
 // Held ocean data stays out of the code and the page: DFO conservation areas and shellfish closures, seal haulouts, whale sighting
 // feeds and AIS. Canadian Hydrographic Service data was held until 2026-10-22, when its owner accepted its licences for two uses, which
 // ruleChsNotices and ruleChsNotStored keep to.
@@ -585,7 +618,7 @@ function ruleMarinePlain(texts) {
   return texts.filter((t) => /[—;]/.test(t)).map((t) => `an em dash or semicolon in: ${t.slice(0, 70)}`)
 }
 
-const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleChsNotices, ruleChsNotStored, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleRkwArea, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain }
+const RULES = { ruleForbiddenNames, rulePrivacy, ruleExternalRefs, rulePins, ruleSize, ruleDroppedProviders, ruleFlowDirection, ruleFlowCanals, ruleEcccLicence, ruleCurrentsCredit, ruleWindCredit, ruleScalarCredit, ruleTidesCredit, ruleSeafloorCredit, ruleChsNotices, ruleChsNotStored, ruleChsUses, ruleHeldOcean, rulePrivacyHosts, ruleOverlayBoxes, ruleIndustry, ruleMarineFiles, ruleProtectedAreas, ruleSeabirds, ruleDensityCells, ruleSrkwHabitat, ruleRkwArea, ruleCrimsVintage, ruleWhaleRules, ruleWhaleRulesInCode, ruleMarineCredits, ruleMarinePlain }
 
 // ---------------------------------------------------------------- self test
 function selftest() {
@@ -616,6 +649,9 @@ function selftest() {
   const chsJs = "ui: ['seafloor-chs-notice']\nui: ['tides-chs-notice']\n$('seafloor-chs-notice').textContent = NONNA_NOTICE\n$('tides-chs-notice').textContent = IWLS_NOTICE\nline(IWLS_NOTICE, 'src notice')\nel('p', IWLS_NOTICE, 'src notice')"
   const chsReadme = `The notices: ${IWLS_NOTICE_TEXT} and ${NONNA_NOTICE_TEXT}`
   const chsSources = `Both read 2026-10-22, not for navigation. This is a non-commercial demo. ${IWLS_LICENCE_URL} ${NONNA_LICENCE_URL}`
+  // The two accepted CHS uses as the code has them: the NONNA tiles (two layers) and the Victoria Harbour gauge (three time series)
+  const usesJs = "export const NONNA_HOST = 'https://nonna-geoserver.data.chs-shc.ca'\nexport const NONNA_LAYERS = { 100: 'NONNA 100', 10: 'NONNA 10' }\nexport const nonnaTileUrl = () => `${NONNA_HOST}/geoserver/x`\nexport const IWLS_API = 'https://api-iwls.dfo-mpo.gc.ca/api/v1/stations'\nconst TIDE_STATIONS = [\n  { id: '9444090', kind: 'level', source: 'noaa' },\n  { id: '07120', kind: 'level', source: 'chs', chsId: '5cebf1df3d0f4a073c4bbd1e' },\n]\nexport function iwlsUrls() { const url = () => `${IWLS_API}/x`; return { hilo: url('wlp-hilo'), observed: url('wlo'), predicted: url('wlp') } }\nfunction iwlsRows() {}\nconst LICENCE = 'https://tides.gc.ca/en/licence-agreement'"
+  const usesFiles = (js) => [f('index.html', '<a href="https://tides.gc.ca/en/licence-agreement">licence</a>'), f('js/overlays-data.js', js), f('js/overlays.js', 'const href = `https://tides.gc.ca/en/stations/${id}`')]
   const chsRule = (files) => ruleChsNotices({ html: files[0].text, js: files[1].text, readme: files[2].text, sources: files[3].text })
   const chsFiles = (over = {}) => [f('x.html', over.html ?? chsHtml), f('x.js', over.js ?? chsJs), f('README.md', over.readme ?? chsReadme), f('SOURCES.md', over.sources ?? chsSources)]
   // Marine life and protection fixtures
@@ -697,6 +733,15 @@ function selftest() {
     ['ruleChsNotStored (data file)', ruleChsNotStored, [f('data/nonna-100.geojson', '{}')], [f('data/streams.geojson', '{}'), f('data/SOURCES.md', 'NONNA')]],
     ['ruleChsNotStored (raster)', ruleChsNotStored, [f('data/seabed.tif', '')], [f('data/streams.geojson', '{}')]],
     ['ruleChsNotStored (fetch script)', ruleChsNotStored, [f('scripts/fetch-layers.sh', 'curl https://nonna-geoserver.data.chs-shc.ca/x')], [f('scripts/fetch-layers.sh', 'curl https://openmaps.gov.bc.ca/x')]],
+    ['ruleChsUses (third NONNA endpoint)', ruleChsUses, usesFiles(usesJs + "\nfetch('https://nonna-geoserver.data.chs-shc.ca/geoserver/wfs?request=GetFeature')"), usesFiles(usesJs)],
+    ['ruleChsUses (third IWLS endpoint)', ruleChsUses, usesFiles(usesJs + "\nfetch('https://api-iwls.dfo-mpo.gc.ca/api/v1/stations/5cebf1df3d0f4a073c4bbd1e/metadata')"), usesFiles(usesJs)],
+    ['ruleChsUses (another CHS or DFO host)', ruleChsUses, usesFiles(usesJs + "\nfetch('https://api.chs-shc.ca/charts')"), usesFiles(usesJs)],
+    ['ruleChsUses (a root used a third time)', ruleChsUses, usesFiles(usesJs + "\nfetch(`${IWLS_API}/other`)"), usesFiles(usesJs)],
+    ['ruleChsUses (NONNA root changed)', ruleChsUses, usesFiles(usesJs.replace("NONNA_HOST = 'https://nonna-geoserver.data.chs-shc.ca'", "NONNA_HOST = 'https://nonna-geoserver.data.chs-shc.ca/geoserver'")), usesFiles(usesJs)],
+    ['ruleChsUses (third NONNA layer)', ruleChsUses, usesFiles(usesJs.replace("10: 'NONNA 10' }", "10: 'NONNA 10', 1: 'NONNA 1' }")), usesFiles(usesJs)],
+    ['ruleChsUses (second CHS station)', ruleChsUses, usesFiles(usesJs.replace("\n]", "\n  { id: '07130', kind: 'level', source: 'chs', chsId: '5cebf1df3d0f4a073c4bbd20' },\n]")), usesFiles(usesJs)],
+    ['ruleChsUses (other station id)', ruleChsUses, usesFiles(usesJs.replace('5cebf1df3d0f4a073c4bbd1e', '5cebf1df3d0f4a073c4bbd20')), usesFiles(usesJs)],
+    ['ruleChsUses (fourth time series)', ruleChsUses, usesFiles(usesJs.replace("predicted: url('wlp') }", "predicted: url('wlp'), more: url('wlf') }")), usesFiles(usesJs)],
     ['ruleHeldOcean', ruleHeldOcean, [f('js/a.js', "const u = 'rockfish'")], [f('js/a.js', "const u = 'api-iwls.dfo-mpo.gc.ca'")]],
     ['ruleHeldOcean (tides)', ruleHeldOcean, [f('js/a.js', "const u = 'acartia.io'")], [f('js/a.js', "const u = 'api.tidesandcurrents.noaa.gov'")]],
     ['ruleHeldOcean (whale feed)', ruleHeldOcean, [f('index.html', '<p>Sightings from Acartia.</p>')], [f('index.html', '<p>Modelled density only.</p>')]],
@@ -892,6 +937,7 @@ function checkTree() {
   report(...pair(ruleSeafloorCredit(html, overlaysJs), 'seafloor depth says it comes from the Canadian Hydrographic Service (NONNA) in Canadian waters and from ETOPO1 elsewhere, how coarse ETOPO1 is and that it is not for navigation, and is a colour relief on its own capped source under raster tiles asked for by a protocol of the page'))
   report(...pair(ruleHeldOcean(scanned.filter((f) => /^(index\.html$|js\/|css\/)/.test(f.path))), 'no held ocean data in the code or the page (conservation areas, shellfish closures, haulouts, whale sighting feeds, ship tracking)'))
   report(...pair(ruleChsNotStored(files), 'no copy of Canadian Hydrographic Service data in data/ or raw/, and the fetch script does not ask its servers for any'))
+  report(...pair(ruleChsUses(scanned), 'the Canadian Hydrographic Service is used for the NONNA depth tiles (two layers) and the Victoria Harbour gauge (one station, three time series) and for nothing else'))
   report(flowJs.includes('motionQuery') && flowJs.includes('visibilitychange') && flowJs.includes('cancelAnimationFrame') && flowJs.includes("'movestart'"), 'the particle loop of sea currents and wind honours reduced motion, stops when the tab is hidden and while the map moves')
   report(!byPath['js/currents.js'] && /createFlow/.test(overlaysJs) && (overlaysJs.match(/createFlow\(/g) || []).length === 1 && !/new Path2D/.test(overlaysJs), 'sea currents and wind use one particle engine (js/flow.js), made once, with no second copy of it in overlays.js')
   report(overlaysJs.includes('Contains information licenced under the <a href="${ECCC_LICENCE}" target="_blank" rel="noopener">Data Server End-use Licence</a> of Environment and Climate Change Canada.') && overlaysJs.includes("const ECCC_LICENCE = 'https://eccc-msc.github.io/open-data/licence/readme_en/'"), 'on-map attribution carries the Environment and Climate Change Canada licence statement and a link to the licence')
