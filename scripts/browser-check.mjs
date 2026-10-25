@@ -2073,8 +2073,8 @@ async function checkOverlays(page, requests, t, shot) {
 // plain failure line, nothing else breaks, and an alert from a service is shown unchanged.
 // ---- change over time: one time slider (js/timeline.js) shared by the layers that change over time (js/time-layers.js)
 const DATACUBE = 'datacube.services.geo.ca'
-const TIME_FILES = { herringyears: ['data/herring-spawn-years.geojson'], sei: ['data/sei-garry-oak-1994-95.geojson', 'data/sei-garry-oak-2002.geojson'], sei2014: ['data/sei-garry-oak-2014.geojson'], canopy: ['data/canopy-2013.png', 'data/canopy-2019.png', 'data/canopy-2023.png'], forestloss: ['data/forest-loss.geojson'] }
-const TIME_CREDITS = { herringyears: 'Herring spawn by year: Fisheries and Oceans Canada (OGL – Canada)', aerials: 'Air photos 1932 and 1950: National Air Photo Library, Natural Resources Canada (OGL – Canada)', sei: 'Sensitive ecosystems: Province of British Columbia (OGL – British Columbia)', landcover: 'Land cover: Natural Resources Canada (OGL – Canada)', canopy: 'Vegetation from LiDAR: City of Victoria (OGL – City of Victoria)', forestloss: 'Forest loss: Hansen/UMD/Google/USGS/NASA (CC BY 4.0)' }
+const TIME_FILES = { herringyears: ['data/herring-spawn-years.geojson'], sei: ['data/sei-garry-oak-1994-95.geojson', 'data/sei-garry-oak-2002.geojson'], sei2014: ['data/sei-garry-oak-2014.geojson'], canopy: ['data/canopy-2013.png', 'data/canopy-2019.png', 'data/canopy-2023.png'], forestloss: ['data/forest-loss.png'] }
+const TIME_CREDITS = { herringyears: 'Herring spawn by year: Fisheries and Oceans Canada (OGL – Canada)', aerials: 'Air photos 1932 and 1950: National Air Photo Library, Natural Resources Canada (OGL – Canada)', sei: 'Sensitive ecosystems: Province of British Columbia (OGL – British Columbia)', landcover: 'Land cover: Natural Resources Canada (OGL – Canada)', canopy: 'Tree canopy from LiDAR: City of Victoria (OGL – City of Victoria)', forestloss: 'Forest loss: Hansen/UMD/Google/USGS/NASA (CC BY 4.0)' }
 const timeUi = (page) => page.evaluate(() => {
   const tl = window.__time.timeline.state(), bar = document.getElementById('timebar'), r = bar.getBoundingClientRect(), s = document.getElementById('time-slider')
   const attrib = document.querySelector('.maplibregl-ctrl-attrib').getBoundingClientRect()
@@ -2251,26 +2251,63 @@ async function checkTime(page, requests, t, name, shot) {
   if (shot) await shot('time-landcover')
   await tick('landcover', false)
 
-  // ---- vegetation from LiDAR: three pictures, asked for once each when the box is ticked
+  // ---- tree canopy from LiDAR: three pictures, asked for once each when the box is ticked
   await view([-123.358, 48.427], 13.2)
   await tick('canopy')
   await waitStatus(page, 'canopy', 40000).catch(() => {})
   await timeTo(page, '2019'); await page.waitForTimeout(800)
   const v1 = await timeUi(page), vv = await timeVis(page, ['canopy-2013', 'canopy-2019', 'canopy-2023']), vst = await statusOf(page, 'canopy')
   const pics = TIME_FILES.canopy.map((f) => fileRequests(f))
-  report(vst.state === 'ok' && v1.lines.includes('Vegetation from LiDAR, City of Victoria: 2019.') && vv['canopy-2019'] === 'visible' && vv['canopy-2013'] === 'none' && vv['canopy-2023'] === 'none' && pics.every((n) => n === 1) && v1.attrib.includes(TIME_CREDITS.canopy), t('time vegetation: the three pictures are asked for once each when the box is ticked, 2019 shows the 2019 picture only, with the credit'), JSON.stringify({ vst, lines: v1.lines, vv, pics }))
+  report(vst.state === 'ok' && v1.lines.includes('Tree canopy, City of Victoria: 2019.') && vv['canopy-2019'] === 'visible' && vv['canopy-2013'] === 'none' && vv['canopy-2023'] === 'none' && pics.every((n) => n === 1) && v1.attrib.includes(TIME_CREDITS.canopy), t('time tree canopy: the three pictures are asked for once each when the box is ticked, 2019 shows the 2019 picture only, with the credit'), JSON.stringify({ vst, lines: v1.lines, vv, pics }))
   if (shot) await shot('time-canopy')
   await tick('canopy', false)
 
-  // ---- forest loss: the loss from 2001 up to the year
-  await view([-123.62, 48.47], 10.6)
+  // ---- forest loss: one picture, read once, painted up to the year, and a popup from the pixel under a click
+  await view([-123.62, 48.47], 11.5)
   await tick('forestloss')
   await waitStatus(page, 'forestloss', 30000).catch(() => {})
   await timeTo(page, '2012'); await page.waitForTimeout(700)
-  const f1 = await timeUi(page), ff = await page.evaluate(() => JSON.stringify(window.__map.getFilter('forestloss-fill')))
-  const years = await page.evaluate(() => [...new Set(window.__map.queryRenderedFeatures({ layers: ['forestloss-fill'] }).map((f) => f.properties.year))].sort())
-  report(f1.lines.includes('Forest loss seen by satellite: 2001 to 2012. Darker is more recent.') && ff === '["<=",["get","year"],2012]' && years.length > 0 && years.every((y) => y >= 2001 && y <= 2012) && f1.attrib.includes(TIME_CREDITS.forestloss), t('time forest loss: a year shows the loss from 2001 up to it and no later loss, with the credit'), JSON.stringify({ lines: f1.lines, ff, years }))
+  const f1 = await timeUi(page), fst = await statusOf(page, 'forestloss')
+  // The picture as painted: every loss cell up to 2012 is drawn in its year's colour, and none after.
+  const painted = await page.evaluate(() => {
+    const L = window.__time.loss, px = L.image.data
+    let shown = 0, wrong = 0, later = 0
+    for (let k = 0; k < L.years.length; k++) {
+      const y = L.years[k]
+      if (!y) continue
+      const on = px[k * 4 + 3] === 255
+      if (y <= 12) { if (on) shown++; else wrong++ } else if (on) later++
+    }
+    return { shown, wrong, later, upTo: L.upTo[12], total: L.upTo[25], vis: window.__map.getLayoutProperty('forestloss', 'visibility') }
+  })
+  // A cell of 2008 and a cell of 2020 in view: the first opens its popup, the second, not shown yet, opens none of its own.
+  const cellOf = (year) => page.evaluate((year) => {
+    const L = window.__time.loss, m = window.__map, b = m.getBounds(), merc = (lat) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360))
+    const [w, n] = [-123.75, 48.7], [e, s] = [-123.2, 48.28]
+    for (let k = 0; k < L.years.length; k += 7) {
+      if (L.years[k] !== year - 2000) continue
+      const x = k % L.width, y = Math.floor(k / L.width)
+      const same = (dx, dy) => L.years[(y + dy) * L.width + x + dx] === year - 2000
+      if (!(same(-1, 0) && same(1, 0) && same(0, -1) && same(0, 1))) continue
+      const lng = w + (x + 0.5) / L.width * (e - w), lat = (360 / Math.PI) * Math.atan(Math.exp(merc(n) - (y + 0.5) / L.height * (merc(n) - merc(s)))) - 90
+      if (!b.contains([lng, lat])) continue
+      const p = m.project([lng, lat])
+      if (p.y > 150 && p.y < innerHeight - 260 && p.x > 330 && p.x < innerWidth - 60) return [p.x, p.y]
+    }
+    return null
+  }, year)
+  const clickAt = async (at) => {
+    if (!at) return null
+    await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+    await page.mouse.click(at[0], at[1])
+    await page.waitForFunction(() => !!document.querySelector('.maplibregl-popup-content'), null, { timeout: 5000 }).catch(() => {})
+    return page.evaluate(() => { const c = document.querySelector('.maplibregl-popup-content'); return c ? { title: c.querySelector('h3')?.textContent, text: c.innerText.replace(/\n+/g, ' | '), links: [...c.querySelectorAll('a')].map((a) => a.href) } : null })
+  }
+  const p2008 = await clickAt(await cellOf(2008)), p2020 = await clickAt(await cellOf(2020))
+  report(fst.state === 'ok' && painted.vis === 'visible' && painted.shown === painted.upTo && painted.wrong === 0 && painted.later === 0 && painted.total > painted.upTo && f1.lines.includes('Forest loss seen by satellite: 2001 to 2012. Darker is more recent.') && f1.attrib.includes(TIME_CREDITS.forestloss) && fileRequests(TIME_FILES.forestloss[0]) === 1, t('time forest loss: the picture is asked for once, and 2012 paints every loss cell up to 2012 and none after, with the readout line and the credit'), JSON.stringify({ fst, painted, lines: f1.lines }))
+  report(!!p2008 && p2008.title === 'Forest loss in 2008' && p2008.text.includes('Hansen/UMD/Google/USGS/NASA') && p2008.text.includes('CC BY 4.0') && p2008.links.some((l) => l.includes('glad.earthengine.app')) && !(p2020?.title || '').startsWith('Forest loss'), t('time forest loss: a click on a cell of 2008 opens its popup with the credit, the licence and a link, and a cell of 2020 is not shown before 2020'), JSON.stringify({ p2008, p2020 }))
   if (shot) await shot('time-forestloss')
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
 
   // ---- everything off: the slider goes, and so do the credits
   for (const id of ['herringyears', 'aerials', 'sei', 'forestloss']) await tick(id, false)
