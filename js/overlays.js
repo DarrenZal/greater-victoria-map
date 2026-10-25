@@ -440,7 +440,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   // it. The last few hours are kept for the next loop. Currents and wind share one canvas and one engine.
   const flow = createFlow({ map, motionQuery })
   const HOURS_KEPT = 14, HOUR_STEP_MS = 1500
-  const newRun = () => ({ hours: [], at: -1, cache: new Map(), pending: new Map(), playing: false, timer: 0, stepAt: 0, shown: null })
+  const newRun = () => ({ hours: [], at: -1, cache: new Map(), pending: new Map(), playing: false, timer: 0, token: 0, stepAt: 0, shown: null })
   const sea = newRun(), wind = newRun()
   async function tiff(url, signal, say) {
     return readGeoTiff(await geomet(url, 'arrayBuffer', signal, say, /image\/tiff/i))
@@ -461,7 +461,10 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       nextFailed: (time) => `The next hour of wind could not be loaded just now. The map still shows ${pacificHour(time)}.`,
     },
   }
-  const stopHourly = (run) => { clearTimeout(run.timer); run.timer = 0 }
+  // Stopping also changes run.token, so a step still waiting for its hour (it was started before this) finds the token changed when
+  // it comes back and does nothing, rather than setting a timer next to the one that Play or a later step set.
+  const stopHourly = (run) => { run.token++; clearTimeout(run.timer); run.timer = 0 }
+  const hourlyTimer = (id, run) => { clearTimeout(run.timer); run.timer = setTimeout(() => hourlyStep(id), HOUR_STEP_MS) }
   const showHourlyControls = (id, on) => { $(`${id}-controls`).hidden = !on; $(`${id}-note`).hidden = !on }
   // One request for an hour at a time: a second call for an hour already on its way waits for that request.
   async function hourlyGrid(id, time, signal, say) {
@@ -493,23 +496,24 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   async function hourlyStep(id) {
     const h = HOURLY[id], run = h.run
     stopHourly(run)
+    const mine = run.token
     if (!run.playing || !state[id].on || document.hidden) return
     const next = (run.at + 1) % run.hours.length, signal = state[id].abort?.signal
     if (!run.cache.has(run.hours[next])) setStatus(id, 'loading', h.loading(run.hours[next]))
     try {
       const grid = await hourlyGrid(id, run.hours[next], signal, sayFor(id, h.loading(run.hours[next])))
-      if (!run.playing || !state[id].on) return
+      if (!run.playing || !state[id].on || mine !== run.token) return
       run.at = next
       showHour(id, run.hours[next], grid)
       setStatus(id, 'ok', h.message(run.hours[next]))
       blendToNext(id) // fetches the hour after this one, and blends toward it
     } catch (e) {
-      if (signal?.aborted || !state[id].on) return
+      if (signal?.aborted || !state[id].on || mine !== run.token) return
       setHourlyPlaying(id, false)
       setStatus(id, 'fail', h.nextFailed(run.hours[run.at]) + geometWhy(e))
       return
     }
-    run.timer = setTimeout(() => hourlyStep(id), HOUR_STEP_MS)
+    if (mine === run.token) hourlyTimer(id, run)
   }
   // While Play runs, the flow is blended from the hour shown to the one after it over the time until the next step, so it changes smoothly
   // and does not jump each hour. The hour after is fetched at the start of the step, no earlier, and the blend starts when it is in.
@@ -527,11 +531,12 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   function setHourlyPlaying(id, on) {
     const { run } = HOURLY[id]
     run.playing = on
+    stopHourly(run) // Pause, or Play again: any step still on its way is out of date
     syncHourlyPlay(id)
     if (on) {
       blendToNext(id) // the first step comes a step from now: the flow starts to change at once, and smoothly
-      run.timer = setTimeout(() => hourlyStep(id), HOUR_STEP_MS)
-    } else { stopHourly(run); flow.unblend() } // back to the hour the status line names
+      hourlyTimer(id, run)
+    } else flow.unblend() // back to the hour the status line names
   }
   for (const id of Object.keys(HOURLY)) {
     const { run } = HOURLY[id]
