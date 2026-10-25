@@ -5,9 +5,8 @@
 //   register(id, { kind, steps, order, show(frame, t), line(frame, t) })
 // `show` puts the layer's picture for year `t` on the map (`frame` is its own step for that year, or null when it has nothing for it) and may
 // return a promise that settles when the picture is in, so Play waits for it. `line` is the layer's sentence in the readout, and the readout
-// lists the layers by `order`. A layer leaves with
-// unregister(id). The slider runs over the steps of every registered layer, so all of them move through time together. A layer can call
-// register again with other steps (another past, or years after today) and the slider follows.
+// lists the layers by `order`. A layer leaves with unregister(id). The slider runs over the steps of every registered layer, so all of them
+// move through time together. A layer can call register again with other steps (another past, or years after today) and the slider follows.
 import { timeAxis, axisIndex, frameAt } from './time-data.js'
 
 const STEP_MS = 1300 // how long Play shows each step, once its pictures are in

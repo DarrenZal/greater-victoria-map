@@ -169,8 +169,9 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console error: ' + m.text().slice(0, 200)); else if (m.type() === 'warning') warnings.push(m.text().slice(0, 160)) })
   page.on('pageerror', (e) => problems.push('page error: ' + e.message.slice(0, 200)))
   page.on('requestfailed', (r) => {
-    // MapLibre cancels elevation tiles and Canadian Hydrographic Service tiles it no longer needs, for example while the map tilts into 3D at load or moves on.
-    if (/ERR_ABORTED|NS_BINDING_ABORTED|cancelled|canceled|aborted/i.test(r.failure()?.errorText || '') && ['s3.amazonaws.com', NONNA_HOST].includes(new URL(r.url()).host)) return
+    // MapLibre cancels elevation tiles, Canadian Hydrographic Service tiles and the datacube's map images (air photos, land cover) it no longer needs,
+    // for example while the map tilts into 3D at load, moves on, or shows another year.
+    if (/ERR_ABORTED|NS_BINDING_ABORTED|cancelled|canceled|aborted/i.test(r.failure()?.errorText || '') && ['s3.amazonaws.com', NONNA_HOST, 'datacube.services.geo.ca'].includes(new URL(r.url()).host)) return
     if (!blockTiles || !r.url().includes('tiles.openfreemap.org')) problems.push(`request failed (${r.failure()?.errorText || '?'}): ` + r.url().slice(0, 120))
   })
   page.on('response', (r) => { if (r.url().startsWith(base) && r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url().slice(0, 120)}`) })
