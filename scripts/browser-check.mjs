@@ -52,7 +52,23 @@ const OVERLAY_NET = {
   radar: { hosts: ['geo.weather.gc.ca'] },
 }
 const NONNA_HOST = 'nonna-geoserver.data.chs-shc.ca', IWLS_HOST = 'api-iwls.dfo-mpo.gc.ca'
-const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov', NONNA_HOST, IWLS_HOST, 'datacube.services.geo.ca']
+// The map's own server, which holds the air photo tiles (scripts/build-aerial-tiles.sh). TILES_FROM=dir answers it from local files, with byte
+// ranges as the server gives them, so the photos can be checked before the files are uploaded or while the server cannot be reached.
+const TILE_HOST = 'map-api.regeneratevictoria.org'
+const TILES_FROM = process.env.TILES_FROM || null
+const LIVE_HOSTS = ['api.weather.gc.ca', 'geo.weather.gc.ca', 'earthquake.usgs.gov', 'api.gbif.org', 'api.tidesandcurrents.noaa.gov', NONNA_HOST, IWLS_HOST, TILE_HOST]
+const tileFiles = new Map()
+async function localTiles(route) {
+  const req = route.request(), name = new URL(req.url()).pathname.split('/').pop()
+  const cors = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'ETag, Content-Range', 'accept-ranges': 'bytes' }
+  if (!tileFiles.has(name)) tileFiles.set(name, await readFile(join(TILES_FROM, name)).catch(() => null))
+  const buf = tileFiles.get(name)
+  if (!buf) return route.fulfill({ status: 404, headers: cors, body: '' })
+  const m = /bytes=(\d+)-(\d*)/.exec(req.headers().range || '')
+  if (!m) return route.fulfill({ status: 200, headers: { ...cors, etag: `"${buf.length}"` }, body: buf })
+  const a = Number(m[1]), b = Math.min(m[2] ? Number(m[2]) : buf.length - 1, buf.length - 1)
+  return route.fulfill({ status: 206, headers: { ...cors, etag: `"${buf.length}"`, 'content-range': `bytes ${a}-${b}/${buf.length}` }, body: buf.subarray(a, b + 1) })
+}
 const ECCC_STATEMENT = 'Contains information licenced under the Data Server End-use Licence of Environment and Climate Change Canada.'
 // Text the map's attribution must carry while each layer is on.
 const OVERLAY_ATTRIB = {
@@ -169,13 +185,14 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console error: ' + m.text().slice(0, 200)); else if (m.type() === 'warning') warnings.push(m.text().slice(0, 160)) })
   page.on('pageerror', (e) => problems.push('page error: ' + e.message.slice(0, 200)))
   page.on('requestfailed', (r) => {
-    // MapLibre cancels elevation tiles, Canadian Hydrographic Service tiles and the datacube's air photo tiles it no longer needs,
+    // MapLibre cancels elevation tiles, Canadian Hydrographic Service tiles and air photo tiles it no longer needs,
     // for example while the map tilts into 3D at load, moves on, or shows another year.
-    if (/ERR_ABORTED|NS_BINDING_ABORTED|cancelled|canceled|aborted/i.test(r.failure()?.errorText || '') && ['s3.amazonaws.com', NONNA_HOST, 'datacube.services.geo.ca'].includes(new URL(r.url()).host)) return
+    if (/ERR_ABORTED|NS_BINDING_ABORTED|cancelled|canceled|aborted/i.test(r.failure()?.errorText || '') && ['s3.amazonaws.com', NONNA_HOST, TILE_HOST].includes(new URL(r.url()).host)) return
     if (!blockTiles || !r.url().includes('tiles.openfreemap.org')) problems.push(`request failed (${r.failure()?.errorText || '?'}): ` + r.url().slice(0, 120))
   })
   page.on('response', (r) => { if (r.url().startsWith(base) && r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url().slice(0, 120)}`) })
   if (blockTiles) await page.route('https://tiles.openfreemap.org/**', (r) => r.abort())
+  if (TILES_FROM) await page.route(`https://${TILE_HOST}/tiles/**`, localTiles)
   await page.goto(base + '/index.html?test', { waitUntil: 'load' })
   // The page is slow to come up when the machine is busy (load 100 to 200 on 22 October), so this waits long enough for it.
   await page.waitForFunction(() => window.__ready && window.__map.areTilesLoaded(), null, { timeout: 180000 })
@@ -2090,6 +2107,7 @@ async function checkTime(page, requests, t, name, shot) {
   const panel = (open) => page.evaluate((o) => { document.getElementById('panel-details').open = o }, open)
   const tick = (id, v = true) => setBox(page, `input[data-time=${id}]`, v)
   const cube = (match = '') => requests.filter((u) => new URL(u).host === DATACUBE && u.includes(match)).length
+  const photoFile = (match = '') => requests.filter((u) => new URL(u).host === TILE_HOST && u.includes(match)).length
   const fileRequests = (f) => requests.filter((u) => new URL(u).pathname.endsWith(`/${f}`)).length
   const view = async (c, z) => {
     await page.evaluate(([c, z]) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: z, pitch: 0, bearing: 0 }) }, [c, z])
@@ -2102,7 +2120,7 @@ async function checkTime(page, requests, t, name, shot) {
   // ---- before any box: nothing on the slider, nothing asked for
   const a = await timeUi(page)
   const filesBefore = Object.values(TIME_FILES).flat().reduce((n, f) => n + fileRequests(f), 0)
-  report(a.hidden && a.layers.length === 0 && cube() === 0 && filesBefore === 0 && !a.overflowX, t('time: at load the time slider is hidden, no layer is on it, and nothing is asked of the federal datacube or of the files of these layers'), JSON.stringify({ hidden: a.hidden, layers: a.layers, cube: cube(), filesBefore }))
+  report(a.hidden && a.layers.length === 0 && cube() === 0 && photoFile() === 0 && filesBefore === 0 && !a.overflowX, t('time: at load the time slider is hidden, no layer is on it, and nothing is asked of the federal datacube, of the map’s tile server or of the files of these layers'), JSON.stringify({ hidden: a.hidden, layers: a.layers, cube: cube(), filesBefore }))
 
   // ---- herring spawn by year: the slider shows, starts at the first season, and Earlier, Later and the slider move it
   await view([-123.5, 48.6], 8.6)
@@ -2182,20 +2200,20 @@ async function checkTime(page, requests, t, name, shot) {
   // waits is read from the control.
   report(speedAtLoad.value === '1' && !speedAtLoad.hidden && msAt['0.5'] === 1000 && msAt[1] === 500 && msAt[4] === 125 && slow >= 1 && slow <= 3 && fast > slow, t('time speed: the speed box starts at 1x, a step waits 1 s at 0.5x, 0.5 s at 1x and 0.125 s at 4x, and in the same 2.5 s Play moves more seasons at 4x than at 0.5x'), JSON.stringify({ speedAtLoad, msAt, slow, fast }))
 
-  // ---- air photos: only the year shown is asked of the datacube, and the readout lists the layers in the order of their boxes
+  // ---- air photos: only the year shown is read from the map's tile server, and the readout lists the layers in the order of their boxes
   await view([-123.365, 48.43], 13)
   await timeTo(page, '1951')
-  const cube0 = cube()
+  const photo0 = photoFile()
   await tick('aerials')
   await waitStatus(page, 'aerials', 30000).catch(() => {})
   await page.waitForTimeout(3000)
-  const a1 = await timeUi(page), av1 = await timeVis(page, ['aerial-1932', 'aerial-1950']), c1932a = cube('time=1932'), c1950a = cube('time=1950')
-  report(a1.axis[0] === '1932' && a1.axis.includes('1950') && a1.year === '1951' && a1.lines[0].startsWith('Herring spawn, 1950/1951 season') && a1.lines[1] === 'Air photo: 1950, the latest before 1951.' && av1['aerial-1950'] === 'visible' && av1['aerial-1932'] === 'none' && c1950a > 0 && c1932a === 0 && cube() > cube0 && a1.attrib.includes(TIME_CREDITS.aerials), t('time air photos: ticking them adds 1932 and 1950 to the slider, a later year shows the 1950 photo and says it is the latest before that year, and only the 1950 photo is asked of the datacube'), JSON.stringify({ axis: a1.axis.slice(0, 3), year: a1.year, lines: a1.lines, av1, c1932a, c1950a }))
+  const a1 = await timeUi(page), av1 = await timeVis(page, ['aerial-1932', 'aerial-1950']), c1932a = photoFile('aerial-1932.pmtiles'), c1950a = photoFile('aerial-1950.pmtiles')
+  report(a1.axis[0] === '1932' && a1.axis.includes('1950') && a1.year === '1951' && a1.lines[0].startsWith('Herring spawn, 1950/1951 season') && a1.lines[1] === 'Air photo: 1950, the latest before 1951.' && av1['aerial-1950'] === 'visible' && av1['aerial-1932'] === 'none' && c1950a > 0 && c1932a === 0 && photoFile() > photo0 && a1.attrib.includes(TIME_CREDITS.aerials), t('time air photos: ticking them adds 1932 and 1950 to the slider, a later year shows the 1950 photo and says it is the latest before that year, and only the 1950 photo is read from the map’s tile server'), JSON.stringify({ axis: a1.axis.slice(0, 3), year: a1.year, lines: a1.lines, av1, c1932a, c1950a }))
   await timeTo(page, '1932')
   const gap = await timeVis(page, ['aerial-1932', 'aerial-1950'])
   await page.waitForFunction(() => window.__map.getLayoutProperty('aerial-1950', 'visibility') === 'none', null, { timeout: 15000 }).catch(() => {})
   const a2 = await timeUi(page), av2 = await timeVis(page, ['aerial-1932', 'aerial-1950'])
-  report(a2.year === '1932' && a2.lines.join('|') === 'Herring spawn, 1931/1932 season: records for 1 shore section, with no places (DFO report of 1989).|Air photo: 1932.' && gap['aerial-1932'] === 'visible' && gap['aerial-1950'] === 'visible' && av2['aerial-1932'] === 'visible' && av2['aerial-1950'] === 'none' && cube('time=1932') > 0, t('time air photos: 1932 asks the datacube for the 1932 photo and shows it, the 1950 photo stays drawn until the 1932 tiles are in so the map is never empty between years, and the herring line gives that season’s one shore section'), JSON.stringify({ a2: a2.lines, gap, av2 }))
+  report(a2.year === '1932' && a2.lines.join('|') === 'Herring spawn, 1931/1932 season: records for 1 shore section, with no places (DFO report of 1989).|Air photo: 1932.' && gap['aerial-1932'] === 'visible' && gap['aerial-1950'] === 'visible' && av2['aerial-1932'] === 'visible' && av2['aerial-1950'] === 'none' && photoFile('aerial-1932.pmtiles') > 0, t('time air photos: 1932 reads the 1932 photo and shows it, the 1950 photo stays drawn until the 1932 tiles are in so the map is never empty between years, and the herring line gives that season’s one shore section'), JSON.stringify({ a2: a2.lines, gap, av2 }))
   if (shot) await shot('time-aerial-1932')
 
   // ---- the photos' swipe: alone on the slider, two maps of their own draw 1932 left of a line and 1950 right of it. They follow the page's map
@@ -2217,12 +2235,12 @@ async function checkTime(page, requests, t, name, shot) {
   await page.click('#time-next'); const s2 = await camera(), sw2 = await timeUi(page)
   await page.click('#time-prev'); await page.focus('.swipe-handle'); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft')
   const s3 = await camera(), sw3 = await timeUi(page)
-  report(s1.pair === 'aerials' && s1.boxes === 2 && s1.others?.every((o) => o === s1.main) && s1.role === 'slider' && s1.events === 'none,none' && s1.layers === 'aerial-1932/aerial-1950' && s1.skirts === 'none,none'
+  report(s1.pair === 'aerials' && s1.boxes === 2 && s1.others?.every((o) => o === s1.main) && s1.role === 'slider' && s1.events === 'none,none' && s1.layers === 'aerial-1932/aerial-1950' && s1.skirts === 'auto,auto'
     && s1.now === '100' && s1.edge === 'right' && sw1.year === '1932' && sw1.lines.join('|') === 'Air photos: 1932. Drag the line at the right edge to compare it with 1950.'
     && sv1['aerial-1932'] === 'none' && sv1['aerial-1950'] === 'none' && sv1['aerials-credit'] === 'visible' && sw1.attrib.includes(TIME_CREDITS.aerials)
     && s2.now === '0' && s2.edge === 'left' && sw2.year === '1950' && s3.now === '96' && s3.edge === null && s3.clips !== s1.clips && sw3.year === '1932 and 1950'
     && /1932 on the left of the line, 1950 on the right/.test(s3.text) && sw3.lines.join('|') === 'Air photos: 1932 on the left of the line, 1950 on the right.',
-  t('time photos swipe: alone on the slider the photos get a line with 1932 on its left and 1950 on its right, each drawn by its own map that follows the page’s map exactly and draws no terrain skirts, the page’s map draws neither year and keeps their credit, Later and Earlier snap the line to the edges, and the arrow keys move it'), JSON.stringify({ s1, s2: [s2.now, s2.edge, sw2.year], s3: [s3.now, s3.edge, sw3.year, sw3.lines], sv1, lines: sw1.lines }))
+  t('time photos swipe: alone on the slider the photos get a line with 1932 on its left and 1950 on its right, each drawn by its own map that follows the page’s map exactly and keeps the terrain skirts that hide cracks under a photo, the page’s map draws neither year and keeps their credit, Later and Earlier snap the line to the edges, and the arrow keys move it'), JSON.stringify({ s1, s2: [s2.now, s2.edge, sw2.year], s3: [s3.now, s3.edge, sw3.year, sw3.lines], sv1, lines: sw1.lines }))
   // In 3D the two maps lift their photos over the same terrain, from the same camera, including the height of the centre.
   if (name === 'desktop') {
     await setBox(page, '#terrain3d', true)
@@ -2550,15 +2568,15 @@ async function checkOverlaysBlocked(browser, base) {
   await page.waitForFunction(() => window.__map.getSource('ov-alerts') && window.__map.querySourceFeatures('ov-alerts').length > 0, null, { timeout: 30000 }).catch(() => {})
   const shown = await page.evaluate(() => ({ state: document.getElementById('status-alerts').dataset.state, text: document.querySelector('#alerts-list .alert-text')?.textContent, title: document.querySelector('#alerts-list summary')?.textContent, count: window.__map.getSource('ov-alerts') ? window.__map.querySourceFeatures('ov-alerts').length : 0 }))
   report(shown.state === 'ok' && shown.text === text && shown.title.includes('orange warning') && shown.count > 0, t('an alert is shown word for word as issued, with its area drawn on the map'), JSON.stringify(shown))
-  // Change over time: with the datacube blocked, the air photos ask for their map images and then say plainly they could not be loaded. The
+  // Change over time: with the map's tile server blocked, the air photos ask for their tiles and then say plainly they could not be loaded. The
   // herring spawn by year and the land cover are files of this site and still load.
   await page.evaluate(() => window.__map.jumpTo({ center: [-123.365, 48.43], zoom: 12, pitch: 0 }))
-  for (const [id, words] of [['aerials', 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.']]) {
-    const before = hostCount(requests, 'datacube.services.geo.ca')
+  for (const [id, words] of [['aerials', 'The air photos could not be loaded just now. Try again later.']]) {
+    const before = hostCount(requests, TILE_HOST)
     await setBox(page, `input[data-time=${id}]`, true)
     await page.waitForFunction((id) => document.getElementById('status-' + id).dataset.state === 'fail', id, { timeout: 60000 }).catch(() => {})
     const st = await statusOf(page, id)
-    report(st.state === 'fail' && st.text === words && hostCount(requests, 'datacube.services.geo.ca') > before, t(`time ${id}: with the datacube blocked its map images are asked for and a plain failure line shows`), JSON.stringify(st))
+    report(st.state === 'fail' && st.text === words && hostCount(requests, TILE_HOST) > before, t(`time ${id}: with the map’s tile server blocked its tiles are asked for and a plain failure line shows`), JSON.stringify(st))
     await setBox(page, `input[data-time=${id}]`, false)
   }
   await setBox(page, 'input[data-time=herringyears]', true)

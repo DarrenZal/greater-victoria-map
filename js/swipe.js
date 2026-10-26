@@ -47,6 +47,10 @@ export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove,
 
   // `spec.left`, and `spec.right` if given, is what that side draws: style `sources` and `layers`. `names` are the two sides, for the
   // handle. `opts.at` is where the line starts, as the share of the map left of it, and `opts.edges` lets the line go to the edges.
+  // `opts.skirts` keeps MapLibre's terrain skirts, the walls it hangs below each terrain tile's edges to hide the cracks between tiles. The
+  // page's map hides the walls under its opaque ground. A side that draws shapes over clear ground has no ground, so the walls would show as
+  // long streaks below the shapes on a tilted map, and it goes without them. A photo covers its ground, and without the walls the cracks
+  // between terrain tiles would show through it as lines.
   function open(spec, names, opts = {}) {
     if (sides.length) close()
     label = names
@@ -58,10 +62,8 @@ export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove,
       const box = el('div', null, 'swipe-map')
       root.append(box)
       const s = { box, right: side === 'right', styled: false }
-      // No terrain skirts: MapLibre hangs a wall below each terrain tile's edges, which the page's map hides under its opaque ground.
-      // These maps have no ground, so the walls showed as long streaks below the shapes on a tilted map.
       s.map = new MapClass({
-        container: box, interactive: false, attributionControl: false, centerClampedToGround: false, maxPitch: 85, fadeDuration: 0, terrainSkirtLength: 'none',
+        container: box, interactive: false, attributionControl: false, centerClampedToGround: false, maxPitch: 85, fadeDuration: 0, terrainSkirtLength: opts.skirts ? 'auto' : 'none',
         style: { version: 8, sources: spec[side].sources, layers: spec[side].layers },
         center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
       })

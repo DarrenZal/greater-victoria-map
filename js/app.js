@@ -160,7 +160,7 @@ map.on('error', (e) => { if (basemap && e.sourceId === 'openmaptiles') noteBasem
 
 const overlays = createOverlays({ map, $, el, link, basemap, motionQuery, addProtocol })
 // Layers that change over time, and the one time slider they share.
-const time = createTimeLayers({ map, $, el, link, motionQuery, MapClass: Map, demTiles: TERRAIN_TILES, exaggeration: TERRAIN_EXAGGERATION })
+const time = createTimeLayers({ map, $, el, link, motionQuery, MapClass: Map, demTiles: TERRAIN_TILES, exaggeration: TERRAIN_EXAGGERATION, addProtocol })
 
 // group -> layer ids, for the toggles
 const GROUPS = {

@@ -145,16 +145,17 @@ export function herringEarlyInfo(p) {
 export const herringEarlyRadius = () => ['interpolate', ['exponential', 2], ['zoom'], 0, ['/', ['get', 'r_m'], 51860], 22, ['/', ['*', ['get', 'r_m'], 4194304], 51860]]
 
 // ---- aerial photos of Victoria, 1932 and 1950 (Natural Resources Canada, National Air Photo Library)
-// A time-enabled WMS of the federal datacube. The two mosaics are greyscale. The record says the photos of one year are "not necessarily
+// The two greyscale mosaics of the federal datacube, made into WebP tiles by scripts/build-aerial-tiles.sh and kept as one PMTiles file per
+// year on the map's own server, which the page reads by range requests. The record says the photos of one year are "not necessarily
 // coregistrated" with the other's, so the two may not line up exactly.
-export const DATACUBE = 'https://datacube.services.geo.ca'
+export const AERIAL_TILES = 'https://map-api.regeneratevictoria.org/tiles'
 export const AERIAL_RECORD = 'https://open.canada.ca/data/en/dataset/d8627209-bda2-436f-b22b-0eb19fdc6660'
 export const AERIAL_YEARS = [step(1932), step(1950)]
 // [west, south, east, north] of each mosaic, from its STAC item, so no tile is asked for outside it.
 export const AERIAL_BOUNDS = { 1932: [-123.4397, 48.3927, -123.2759, 48.4793], 1950: [-123.4379, 48.4021, -123.2867, 48.4792] }
 export function aerialTileUrl(year) {
   if (!AERIAL_BOUNDS[year]) throw new Error('no photo for that year')
-  return `${DATACUBE}/ows/aerial?service=WMS&version=1.3.0&request=GetMap&layers=victoria&styles=default&crs=EPSG:3857&bbox={bbox-epsg-3857}&width=256&height=256&format=image/png&transparent=true&time=${year}-07-01T12:00:00Z`
+  return `pmtiles://${AERIAL_TILES}/aerial-${year}.pmtiles/{z}/{x}/{y}`
 }
 
 // ---- Sensitive Ecosystems Inventory, mapped in 1994-95 and updated in 2002, and the Garry oak mapping of 2014 (Province of British Columbia)

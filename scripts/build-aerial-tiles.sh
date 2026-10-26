@@ -1,8 +1,8 @@
 #!/bin/sh
 # Builds the 1932 and 1950 air photos of Victoria as two PMTiles files of WebP tiles, so the map can show them without asking NRCan's
 # WMS to draw every tile (about 0.8 s a tile, 4 s a screen):
-#   raw/aerials/aerial-1932.pmtiles   zoom 10 to 17 (the photo has 1 m pixels, zoom 17 has about 0.8 m on the ground here)
-#   raw/aerials/aerial-1950.pmtiles   zoom 10 to 18 (the photo has 0.5 m pixels, zoom 18 has about 0.4 m)
+#   raw/aerials/aerial-1932.pmtiles   zoom 8 to 17 (the photo has 1 m pixels, zoom 17 has about 0.8 m on the ground here)
+#   raw/aerials/aerial-1950.pmtiles   zoom 8 to 18 (the photo has 0.5 m pixels, zoom 18 has about 0.4 m)
 #
 # Developer machine only. The files are too big for the site (about 125 MB), so they are not committed. They are copied to the tile
 # host by hand (see README, "Air photo tiles"). Source, licence and processing: data/SOURCES.md.
@@ -28,7 +28,7 @@ ONLY="${ONLY:-}"
 QUALITY="${QUALITY:-75}"
 GDAL_BIN="${GDAL_BIN:-$HOME/miniconda3/envs/cascadiamap/bin}"
 NAPL="https://datacube-prod-data-public.s3.amazonaws.com/store/imagery/aerial/napl/napl-victoria"
-MIN_ZOOM=10
+MIN_ZOOM=8
 
 PATH="$GDAL_BIN:$PATH"
 export PATH
@@ -63,6 +63,29 @@ build() {
   # The zooms above are WebP too. Without these open options GDAL writes them as PNG, about 9 times bigger.
   # shellcheck disable=SC2086
   gdaladdo -q -r average -oo TILE_FORMAT=WEBP -oo QUALITY="$QUALITY" "$DIR/aerial-$y.mbtiles" $factors
+  # GDAL stops the zooms above where the photo fits in a few tiles (zoom 11 here), and the map opens at about zoom 10. So the zooms from
+  # there down to $MIN_ZOOM are made from the zoom below, four tiles into one. MBTiles rows count from the south.
+  "$GDAL_BIN/python" -I - "$DIR/aerial-$y.mbtiles" "$MIN_ZOOM" "$QUALITY" <<'EOF'
+import io, sqlite3, sys
+from PIL import Image
+db = sqlite3.connect(sys.argv[1])
+lowest, quality = int(sys.argv[2]), int(sys.argv[3])
+top = db.execute('select min(zoom_level) from tiles').fetchone()[0]
+for z in range(top - 1, lowest - 1, -1):
+    kids = {(x, y): d for x, y, d in db.execute('select tile_column, tile_row, tile_data from tiles where zoom_level = ?', (z + 1,))}
+    for px, py in {(x // 2, y // 2) for x, y in kids}:
+        im = Image.new('RGBA', (512, 512))
+        for dx in (0, 1):
+            for dy in (0, 1):
+                d = kids.get((2 * px + dx, 2 * py + dy))
+                if d:
+                    im.paste(Image.open(io.BytesIO(d)).convert('RGBA'), (256 * dx, 256 * (1 - dy)))
+        out = io.BytesIO()
+        im.resize((256, 256), Image.LANCZOS).save(out, 'WEBP', quality=quality)
+        db.execute('insert or replace into tiles values (?, ?, ?, ?)', (z, px, py, out.getvalue()))
+db.execute("update metadata set value = ? where name = 'minzoom'", (str(min(top, lowest)),))
+db.commit()
+EOF
   rm -f "$DIR/aerial-$y.pmtiles"
   pmtiles convert "$DIR/aerial-$y.mbtiles" "$DIR/aerial-$y.pmtiles" > /dev/null
   echo "aerial-$y.pmtiles -> $(wc -c < "$DIR/aerial-$y.pmtiles" | tr -d ' ') bytes, zoom $MIN_ZOOM to $z"
@@ -70,4 +93,5 @@ build() {
 
 build 1932 17
 build 1950 18
-echo "Done. Check with: pmtiles show $DIR/aerial-1932.pmtiles"
+(cd "$DIR" && shasum -a 256 aerial-1932.pmtiles aerial-1950.pmtiles > SHA256SUMS)
+echo "Done. Check with: pmtiles show $DIR/aerial-1932.pmtiles. Copy the two files and SHA256SUMS to the tile server (README, Hosting)."

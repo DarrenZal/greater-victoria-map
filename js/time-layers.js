@@ -2,8 +2,8 @@
 //
 // Each box in "Change over time" is off at load and makes no request until it is ticked. Once its data is in, the layer registers its years
 // with the one time control (js/timeline.js), and the slider at the bottom of the map moves every ticked layer through time together. The
-// air photos are map images from Natural Resources Canada's datacube, asked for only while their box is ticked and only for the year shown.
-// The others are files of this site. The years, text and popups are in js/time-data.js.
+// air photos are tiles on the map's own server (map-api.regeneratevictoria.org), made from Natural Resources Canada's mosaics, asked for only
+// while their box is ticked. The others are files of this site. The years, text and popups are in js/time-data.js.
 import {
   snapshotLine,
   HERRING_YEARS_FILE, HERRING_RECORD, herringSteps, herringSeason, herringYearInfo, herringLine, herringRadius,
@@ -32,7 +32,8 @@ const LOSS_ATTRIB = `Forest loss: <a href="${LOSS_PAGE}" target="_blank" rel="no
 const EMPTY = { type: 'FeatureCollection', features: [] }
 const TILE_WAIT_MS = 10000 // the longest a step waits for its map images
 const AERIAL_MAX_ZOOM = { 1932: 17, 1950: 18 } // about 1 m and 0.5 m a pixel
-const aerialSource = (t) => ({ type: 'raster', tiles: [aerialTileUrl(t)], tileSize: 256, bounds: AERIAL_BOUNDS[t], maxzoom: AERIAL_MAX_ZOOM[t] })
+const AERIAL_MIN_ZOOM = 8 // the lowest zoom in the tile files
+const aerialSource = (t) => ({ type: 'raster', tiles: [aerialTileUrl(t)], tileSize: 256, bounds: AERIAL_BOUNDS[t], minzoom: AERIAL_MIN_ZOOM, maxzoom: AERIAL_MAX_ZOOM[t] })
 const LANDCOVER_OPACITY = 0.7
 const CANOPY_OPACITY = 0.8
 const FADE_MS = 250 // a picture fades into the next year's over this long, or at once under reduced motion
@@ -41,7 +42,7 @@ const SEI_IDS = ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-li
 const json = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }
 const plural = (n, one, many) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`
 
-export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demTiles, exaggeration }) {
+export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demTiles, exaggeration, addProtocol }) {
   const timeline = createTimeline({ $, motionQuery })
   const pairSwipe = createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove: pairMoved, listeners: { error: tileError, sourcedata: tileData } })
   let ready
@@ -74,14 +75,14 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
       show(id, true)
     }
   }
-  // The air photos come from the datacube a tile at a time, so a step shows the new year at once and keeps the year before drawn until the
+  // The air photos come a tile at a time, so a step shows the new year at once and keeps the year before drawn until the
   // new year's tiles are in. The map is never empty between two years. `aerialStep` drops a step that a later one, Swipe or the box overtook.
   let aerialStep = 0
 
   // ---- the layers. `ids` are hidden when the box is unticked. `kind` and `steps` are what each registers with the time control.
   const DEFS = {
     herringyears: { label: 'Herring spawn by year', ids: ['herringyears-section', 'herringyears-all', 'herringyears-dot'], ui: ['herringyears-note'], kind: 'event', load: loadHerring },
-    aerials: { label: 'Air photos', ids: ['aerial-1932', 'aerial-1950', 'aerials-credit'], ui: ['aerials-note'], kind: 'snapshot', steps: AERIAL_YEARS, load: async () => ({ message: 'Greyscale air photos of central Victoria, Oak Bay, Esquimalt and south Saanich, from Natural Resources Canada.' }) },
+    aerials: { label: 'Air photos', ids: ['aerial-1932', 'aerial-1950', 'aerials-credit'], ui: ['aerials-note'], kind: 'snapshot', steps: AERIAL_YEARS, load: async () => { await usePmtiles(); return { message: 'Greyscale air photos of central Victoria, Oak Bay, Esquimalt and south Saanich, from Natural Resources Canada.' } } },
     sei: { label: 'Sensitive ecosystems', ids: ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-line'], ui: ['sei-key', 'sei-note'], kind: 'snapshot', steps: SEI_YEARS, load: loadSei },
     sei2014: { label: 'Garry oak ecosystems mapped in 2014', ids: ['sei2014-fill', 'sei2014-line'], ui: ['sei2014-note'], load: loadSei2014 },
     landcover: { label: 'Land cover', ids: [...LANDCOVER_YEARS.map((s) => `landcover-${s.t}`), 'landcover-credit'], ui: ['landcover-key', 'landcover-note'], kind: 'snapshot', steps: LANDCOVER_YEARS, load: loadLandcover },
@@ -184,7 +185,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   // an edge moves the step to that year. With another layer on the slider, the layer follows the slider again.
   const PAIRS = {
     aerials: {
-      title: 'Air photos', names: ['1932', '1950'],
+      title: 'Air photos', names: ['1932', '1950'], skirts: true,
       side: (t) => ({ sources: { [`aerial-${t}`]: aerialSource(t) }, layers: [{ id: `aerial-${t}`, type: 'raster', source: `aerial-${t}`, paint: { 'raster-fade-duration': 0 } }] }),
       // The photos have no popups, so the page's map draws neither year, and an empty source carries their credit.
       page: (open) => { if (open) { aerialStep++; for (const s of AERIAL_YEARS) show(`aerial-${s.t}`, false) } show('aerials-credit', open) },
@@ -203,7 +204,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     if (pair.id !== id) {
       if (pair.id) pairShut(pair.id)
       PAIRS[id].page(true)
-      pairSwipe.open({ left: PAIRS[id].side(years[0].t), right: PAIRS[id].side(years[1].t) }, PAIRS[id].names, { at: edge, edges: true })
+      pairSwipe.open({ left: PAIRS[id].side(years[0].t), right: PAIRS[id].side(years[1].t) }, PAIRS[id].names, { at: edge, edges: true, skirts: PAIRS[id].skirts })
       pair.id = id
     } else if (!pair.dragged) pairSwipe.setAt(edge)
   }
@@ -250,19 +251,28 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   // While the ecosystems have the swipe, a click on one side finds only the year drawn there.
   const hiddenAt = (layer, point) => pair.id === 'sei' && ((layer === 'sei-1994-fill' && point.x > pairSwipe.x()) || (layer === 'sei-2002-fill' && point.x <= pairSwipe.x()))
 
-  // ---- the map images of the federal datacube. A tile that fails says so in the status line while none of that layer's tiles has come.
-  const WMS = { aerials: /^aerial-(1932|1950)$/ }
-  const wms = { aerials: { ok: 0 } }
-  const WMS_FAILURE = { aerials: 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.' }
+  // ---- the air photo tiles. A tile that fails says so in the status line while none of that layer's tiles has come.
+  const TILED = { aerials: /^aerial-(1932|1950)$/ }
+  const tiled = { aerials: { ok: 0 } }
+  const TILED_FAILURE = { aerials: 'The air photos could not be loaded just now. Try again later.' }
+  // The tile files are PMTiles, read by range requests. The reader (vendor/pmtiles.js, 20 KB) is loaded on the first tick only.
+  let pmtilesReady = null
+  const usePmtiles = () => (pmtilesReady ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'vendor/pmtiles.js'
+    s.onload = () => { addProtocol('pmtiles', new window.pmtiles.Protocol().tile); resolve() }
+    s.onerror = () => { pmtilesReady = null; s.remove(); reject(new Error('the PMTiles reader did not load')) }
+    document.head.append(s)
+  }))
   // The swipe's maps draw the photos too, so they pass their events here as well.
   function tileError(e) {
-    const id = Object.keys(WMS).find((k) => WMS[k].test(e.sourceId || ''))
-    if (id && state[id].on && !wms[id].ok) setStatus(id, 'fail', WMS_FAILURE[id])
+    const id = Object.keys(TILED).find((k) => TILED[k].test(e.sourceId || ''))
+    if (id && state[id].on && !tiled[id].ok) setStatus(id, 'fail', TILED_FAILURE[id])
   }
   function tileData(e) {
-    const id = Object.keys(WMS).find((k) => WMS[k].test(e.sourceId || ''))
+    const id = Object.keys(TILED).find((k) => TILED[k].test(e.sourceId || ''))
     if (!id || !e.tile || e.tile.state !== 'loaded') return
-    if (!wms[id].ok++ && state[id].on && $(`status-${id}`).dataset.state === 'fail') setStatus(id, 'ok', state[id].message)
+    if (!tiled[id].ok++ && state[id].on && $(`status-${id}`).dataset.state === 'fail') setStatus(id, 'ok', state[id].message)
   }
   map.on('error', tileError)
   map.on('sourcedata', tileData)
