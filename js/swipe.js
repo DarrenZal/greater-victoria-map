@@ -1,12 +1,14 @@
-// A swipe for the Greater Victoria demo map: a second map over the page's map that draws one raster layer and is cut at a line the visitor
-// drags, so the left of the line shows one picture and the right shows the page's map. Plain ES module, no build step.
+// A swipe for the Greater Victoria demo map: a line the visitor drags across the map, with what each side shows drawn by a map of its own
+// over the page's map and cut at the line. Plain ES module, no build step.
 //
-// The second map only draws, and the page's map keeps every click. It follows the page's map on every move, with the same centre, zoom, tilt,
-// turn and height of the centre above the sea, and lifts its picture over the same 3D terrain when that is on, so the two line up.
-export function createSwipe({ map, MapClass, el, demTiles, exaggeration }) {
+// The air photos give the left side only (the 1932 photo), and the page's map shows 1950 on the right. The sensitive ecosystems are shapes
+// over the street map, so they give both sides (1994-95 on the left, 2002 on the right) and the page's map draws neither, or each year would
+// show through the other. The maps over the page's map only draw, and the page's map keeps every click. They follow it on every move, with
+// the same centre, zoom, tilt, turn and height of the centre above the sea, and lift what they draw over the same 3D terrain when that is on,
+// so everything lines up.
+export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove }) {
   const root = map.getContainer()
-  let other = null, styled = false, at = 0.5, label = ['', '']
-  const box = el('div', null, 'swipe-map')
+  let sides = [], at = 0.5, range = [0.02, 0.98], label = ['', '']
   const handle = el('div', null, 'swipe-handle')
   handle.setAttribute('role', 'slider')
   handle.tabIndex = 0
@@ -18,55 +20,74 @@ export function createSwipe({ map, MapClass, el, demTiles, exaggeration }) {
 
   const place = () => {
     const w = root.clientWidth, x = Math.round(at * w)
-    box.style.clipPath = `inset(0 ${w - x}px 0 0)`
+    for (const s of sides) s.box.style.clipPath = s.right ? `inset(0 0 0 ${x}px)` : `inset(0 ${w - x}px 0 0)`
     handle.style.left = `${x}px`
+    // At an edge the grip moves inside the map, so it can still be taken.
+    if (at <= 0 || at >= 1) handle.dataset.edge = at <= 0 ? 'left' : 'right'
+    else delete handle.dataset.edge
     const pct = Math.round(at * 100)
     handle.setAttribute('aria-valuenow', String(pct))
     handle.setAttribute('aria-valuetext', `${label[0]} on the left of the line, ${label[1]} on the right, the line ${pct}% across`)
   }
   const follow = () => {
-    if (!other) return
-    other.jumpTo({ center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(), elevation: map.getCenterElevation() })
+    for (const s of sides) s.map.jumpTo({ center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(), elevation: map.getCenterElevation() })
   }
   const terrain = () => {
-    if (!other || !styled) return // the second map's style is not in yet. 'style.load' calls this again
     const on = !!map.getTerrain()
-    if (on && !other.getSource('dem')) other.addSource('dem', { type: 'raster-dem', tiles: [demTiles], encoding: 'terrarium', tileSize: 256, maxzoom: 15 })
-    other.setTerrain(on ? { source: 'dem', exaggeration } : null)
+    for (const s of sides) {
+      if (!s.styled) continue // that map's style is not in yet. Its 'style.load' calls this again
+      if (on && !s.map.getSource('dem')) s.map.addSource('dem', { type: 'raster-dem', tiles: [demTiles], encoding: 'terrarium', tileSize: 256, maxzoom: 15 })
+      s.map.setTerrain(on ? { source: 'dem', exaggeration } : null)
+    }
     follow()
   }
-  const resize = () => { other?.resize(); place() }
+  const resize = () => { for (const s of sides) s.map.resize(); place() }
 
-  // `layer` is a raster layer with its source ({ id, source }), drawn on the left of the line. `names` are the two sides, for the handle.
-  function open(layer, names) {
-    if (other) close()
+  // `spec.left`, and `spec.right` if given, is what that side draws: style `sources` and `layers`. `names` are the two sides, for the
+  // handle. `opts.at` is where the line starts, as the share of the map left of it, and `opts.edges` lets the line go to the edges.
+  function open(spec, names, opts = {}) {
+    if (sides.length) close()
     label = names
     left.textContent = names[0]; right.textContent = names[1]
-    root.append(box, handle)
-    other = new MapClass({
-      container: box, interactive: false, attributionControl: false, centerClampedToGround: false, maxPitch: 85, fadeDuration: 0,
-      style: { version: 8, sources: { [layer.id]: layer.source }, layers: [{ id: layer.id, type: 'raster', source: layer.id, paint: { 'raster-fade-duration': 0 } }] },
-      center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
-    })
-    styled = false
-    other.once('style.load', () => { styled = true; terrain() })
+    range = opts.edges ? [0, 1] : [0.02, 0.98]
+    at = clamp(opts.at ?? 0.5)
+    for (const side of ['left', 'right']) {
+      if (!spec[side]) continue
+      const box = el('div', null, 'swipe-map')
+      root.append(box)
+      const s = { box, right: side === 'right', styled: false }
+      s.map = new MapClass({
+        container: box, interactive: false, attributionControl: false, centerClampedToGround: false, maxPitch: 85, fadeDuration: 0,
+        style: { version: 8, sources: spec[side].sources, layers: spec[side].layers },
+        center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
+      })
+      s.map.once('style.load', () => { s.styled = true; terrain() })
+      sides.push(s)
+    }
+    root.append(handle)
     map.on('move', follow)
     map.on('terrain', terrain)
     map.on('resize', resize)
     place()
   }
   function close() {
-    if (!other) return
+    if (!sides.length) return
     map.off('move', follow); map.off('terrain', terrain); map.off('resize', resize)
-    other.remove(); other = null
-    box.remove(); handle.remove()
+    for (const s of sides) { s.map.remove(); s.box.remove() }
+    sides = []
+    handle.remove()
   }
 
-  // Drag the line with a mouse, a pen or a finger, or move it with the arrow keys (Shift for bigger steps), Home and End.
-  const setAt = (v) => { at = Math.min(0.98, Math.max(0.02, v)); place() }
+  // Drag the line with a mouse, a pen or a finger, or move it with the arrow keys (Shift for bigger steps), Home and End. A line that may
+  // go to the edges snaps to one within 2% of it. Only a move by the visitor is passed to `onMove`.
+  const clamp = (v) => {
+    const c = Math.min(range[1], Math.max(range[0], v))
+    return range[0] === 0 && c < 0.02 ? 0 : range[1] === 1 && c > 0.98 ? 1 : c
+  }
+  const setAt = (v, byVisitor = false) => { at = clamp(v); place(); if (byVisitor) onMove?.(at) }
   handle.addEventListener('pointerdown', (e) => {
     handle.setPointerCapture(e.pointerId)
-    const moveTo = (ev) => { const r = root.getBoundingClientRect(); setAt((ev.clientX - r.left) / r.width) }
+    const moveTo = (ev) => { const r = root.getBoundingClientRect(); setAt((ev.clientX - r.left) / r.width, true) }
     const up = () => { handle.removeEventListener('pointermove', moveTo); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up) }
     handle.addEventListener('pointermove', moveTo)
     handle.addEventListener('pointerup', up)
@@ -78,8 +99,12 @@ export function createSwipe({ map, MapClass, el, demTiles, exaggeration }) {
     const to = { ArrowLeft: at - d, ArrowDown: at - d, ArrowRight: at + d, ArrowUp: at + d, Home: 0, End: 1 }[e.key]
     if (to == null) return
     e.preventDefault()
-    setAt(to)
+    setAt(to, true)
   })
 
-  return { open, close, isOpen: () => !!other, at: () => at, setAt, other: () => other }
+  return {
+    open, close, isOpen: () => sides.length > 0, at: () => at, setAt: (v) => setAt(v),
+    // the line's distance from the left of the map in pixels, the map of the left side, and every map over the page's map
+    x: () => Math.round(at * root.clientWidth), other: () => sides[0]?.map ?? null, maps: () => sides.map((s) => s.map),
+  }
 }

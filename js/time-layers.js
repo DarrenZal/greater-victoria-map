@@ -32,12 +32,15 @@ const AERIAL_MAX_ZOOM = { 1932: 17, 1950: 18 } // about 1 m and 0.5 m a pixel
 const LANDCOVER_OPACITY = 0.7
 const CANOPY_OPACITY = 0.8
 const FADE_MS = 250 // a picture fades into the next year's over this long, or at once under reduced motion
+const SEI_FILL_OPACITY = ['match', ['get', 'class'], 'NS', 0.75, 0.5]
+const SEI_IDS = ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-line']
 const json = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }
 const plural = (n, one, many) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`
 
 export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demTiles, exaggeration }) {
   const timeline = createTimeline({ $, motionQuery })
   const swipe = createSwipe({ map, MapClass, el, demTiles, exaggeration })
+  const seiSwipe = createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove: seiMoved })
   let ready
   const whenReady = new Promise((resolve) => { ready = resolve })
 
@@ -102,8 +105,14 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
       line: (frame, t) => snapshotLine('Air photo', AERIAL_YEARS, frame, t),
     },
     sei: {
-      show: (frame) => { for (const s of SEI_YEARS) for (const part of ['fill', 'line']) show(`sei-${s.t}-${part}`, s.t === frame?.t) },
-      line: (frame, t) => snapshotLine('Sensitive ecosystems', SEI_YEARS, frame, t),
+      show: (frame) => {
+        if (seiAlone()) return seiSwipeTo(frame)
+        seiSwipeShut()
+        for (const s of SEI_YEARS) for (const part of ['fill', 'line']) show(`sei-${s.t}-${part}`, s.t === frame?.t)
+      },
+      line: (frame, t) => (seiSwipe.isOpen() ? seiSwipeLine() : snapshotLine('Sensitive ecosystems', SEI_YEARS, frame, t)),
+      canStep: (dir) => seiSwipe.isOpen() && (dir < 0 ? seiSwipe.at() < 1 : seiSwipe.at() > 0),
+      label: (step) => (seiSwipe.isOpen() && seiSwipe.at() > 0 && seiSwipe.at() < 1 ? '1994-95 and 2002' : step.label),
     },
     landcover: {
       show: (frame) => crossfade('landcover', LANDCOVER_YEARS, frame, LANDCOVER_OPACITY),
@@ -153,10 +162,14 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     state[id].on = false
     if (def.kind) timeline.unregister(id)
     if (id === 'aerials') { aerialStep++; closeSwipe(); $('aerials-swipe').checked = false }
+    if (id === 'sei') seiSwipeShut()
     for (const l of def.ids) show(l, false)
     for (const u of def.ui || []) $(u).hidden = true
     setStatus(id, '', '')
+    // With the photos' swipe gone, the ecosystems may be alone on the slider again, and then they get their own swipe.
+    if (id === 'aerials') reapply()
   }
+  const reapply = () => { const s = timeline.state(); if (s.axis.length) timeline.go(s.at) }
   for (const box of document.querySelectorAll('input[data-time]')) {
     box.addEventListener('change', () => {
       const id = box.dataset.time
@@ -165,15 +178,64 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   }
 
   // ---- the swipe of the air photos: 1932 on the left of a line the visitor drags, 1950 on the right. While it is open the photos leave the
-  // time control, because both years are on the screen at once.
+  // time control, because both years are on the screen at once. It opens before the photos leave, so the ecosystems, if they are then
+  // alone on the slider, keep to one year and the map never has two lines.
   const SWIPE_LINE = 'Swipe: 1932 on the left of the line and 1950 on the right. Drag the line, or use the arrow keys on it.'
   function openSwipe() {
-    timeline.unregister('aerials')
     aerialStep++
     show('aerial-1932', false); show('aerial-1950', true)
-    swipe.open({ id: 'aerial-1932-left', source: { type: 'raster', tiles: [aerialTileUrl(1932)], tileSize: 256, bounds: AERIAL_BOUNDS[1932], maxzoom: AERIAL_MAX_ZOOM[1932] } }, ['1932', '1950'])
+    const source = { type: 'raster', tiles: [aerialTileUrl(1932)], tileSize: 256, bounds: AERIAL_BOUNDS[1932], maxzoom: AERIAL_MAX_ZOOM[1932] }
+    swipe.open({ left: { sources: { 'aerial-1932-left': source }, layers: [{ id: 'aerial-1932-left', type: 'raster', source: 'aerial-1932-left', paint: { 'raster-fade-duration': 0 } }] } }, ['1932', '1950'])
+    timeline.unregister('aerials')
+    reapply()
     setStatus('aerials', 'ok', SWIPE_LINE)
   }
+
+  // ---- the swipe of the ecosystems. With the ecosystems alone on the slider and the photos' swipe shut, 1994-95 is drawn left of a line the
+  // visitor drags and 2002 right of it, each by a map of its own, so neither year shows through the other. The page's map keeps both
+  // layers at no opacity, so a click still finds them (hiddenAt picks the year on the clicked side). Earlier puts the line at the right edge,
+  // so 1994-95 fills the map, and Later at the left edge, so 2002 does. A line dragged to an edge moves the step to that year.
+  const sei = { data: {}, dragged: false }
+  const seiAlone = () => { const l = timeline.state().layers; return l.length === 1 && l[0] === 'sei' && !swipe.isOpen() }
+  const seiSide = (v) => ({
+    sources: { [`sei-${v}`]: { type: 'geojson', data: sei.data[v] } },
+    layers: [
+      { id: `sei-${v}-fill`, type: 'fill', source: `sei-${v}`, paint: { 'fill-color': seiColour(), 'fill-opacity': SEI_FILL_OPACITY } },
+      { id: `sei-${v}-line`, type: 'line', source: `sei-${v}`, paint: { 'line-color': seiColour(), 'line-width': 0.8 } },
+    ],
+  })
+  const seiOpacity = (on) => {
+    for (const id of SEI_IDS) {
+      if (!map.getLayer(id)) continue
+      if (id.endsWith('fill')) map.setPaintProperty(id, 'fill-opacity', on ? SEI_FILL_OPACITY : 0)
+      else map.setPaintProperty(id, 'line-opacity', on ? 1 : 0)
+    }
+  }
+  function seiSwipeTo(frame) {
+    const edge = frame?.t === 2002 ? 0 : 1
+    if (!seiSwipe.isOpen()) {
+      for (const id of SEI_IDS) show(id, true)
+      seiOpacity(false)
+      seiSwipe.open({ left: seiSide(1994), right: seiSide(2002) }, ['1994-95', '2002'], { at: edge, edges: true })
+    } else if (!sei.dragged) seiSwipe.setAt(edge)
+  }
+  function seiSwipeShut() {
+    if (!seiSwipe.isOpen()) return
+    seiSwipe.close()
+    seiOpacity(true)
+  }
+  function seiMoved(p) {
+    const want = p <= 0 ? 1 : p >= 1 ? 0 : null
+    if (want != null && timeline.state().at !== want) { sei.dragged = true; timeline.go(want); sei.dragged = false } else timeline.refresh()
+  }
+  function seiSwipeLine() {
+    const p = seiSwipe.at()
+    if (p >= 1) return 'Sensitive ecosystems: 1994-95. Drag the line at the right edge to compare it with 2002.'
+    if (p <= 0) return 'Sensitive ecosystems: 2002. Drag the line at the left edge to compare it with 1994-95.'
+    return 'Sensitive ecosystems: 1994-95 on the left of the line, 2002 on the right.'
+  }
+  // While the ecosystems' swipe is open, a click on one side finds only the year drawn there.
+  const hiddenAt = (layer, point) => seiSwipe.isOpen() && ((layer === 'sei-1994-fill' && point.x > seiSwipe.x()) || (layer === 'sei-2002-fill' && point.x <= seiSwipe.x()))
   function closeSwipe() { if (swipe.isOpen()) swipe.close() }
   $('aerials-swipe').addEventListener('change', (e) => {
     if (!state.aerials.on || !state.aerials.loaded) return
@@ -212,6 +274,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     if (!a.features?.length || !b.features?.length) throw new Error('not a feature collection')
     map.getSource('tl-sei-1994').setData(a)
     map.getSource('tl-sei-2002').setData(b)
+    sei.data = { 1994: a, 2002: b }
     const disturbed = b.features.filter((f) => f.properties.class === 'NS').length
     return { message: `${plural(a.features.length, 'polygon', 'polygons')} mapped in 1994-95. The 2002 update marks ${plural(disturbed, 'patch', 'patches')} as disturbed since 1992.` }
   }
@@ -370,7 +433,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     map.addLayer({ id: 'forestloss-credit', type: 'circle', source: 'tl-forestloss-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
     for (const v of [1994, 2002]) {
       geo(`tl-sei-${v}`, SEI_ATTRIB)
-      map.addLayer({ id: `sei-${v}-fill`, type: 'fill', source: `tl-sei-${v}`, layout: hidden, paint: { 'fill-color': seiColour(), 'fill-opacity': ['match', ['get', 'class'], 'NS', 0.75, 0.5] } }, mid)
+      map.addLayer({ id: `sei-${v}-fill`, type: 'fill', source: `tl-sei-${v}`, layout: hidden, paint: { 'fill-color': seiColour(), 'fill-opacity': SEI_FILL_OPACITY } }, mid)
       map.addLayer({ id: `sei-${v}-line`, type: 'line', source: `tl-sei-${v}`, layout: hidden, paint: { 'line-color': seiColour(), 'line-width': 0.8 } }, mid)
     }
     // In the 2014 mapping NS means a polygon whose main ecosystem is not sensitive, not a disturbance, so it is grey there.
@@ -411,5 +474,5 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   // The popup of the forest loss under a click, or null.
   const pixelPopup = (lngLat) => { const y = lossAt(lngLat); return y ? popupFor(y, 'forestloss') : null }
 
-  return { addLayers, popupFor, pixelPopup, queryLayers: QUERY_LAYERS, defs: DEFS, state, timeline, swipe, loss }
+  return { addLayers, popupFor, pixelPopup, hiddenAt, queryLayers: QUERY_LAYERS, defs: DEFS, state, timeline, swipe, seiSwipe, loss }
 }

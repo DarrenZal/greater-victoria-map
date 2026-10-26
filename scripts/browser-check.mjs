@@ -1291,7 +1291,7 @@ async function checkTides(page, requests, t, name, shot) {
     const labels = (p?.rows || []).map((r) => r[0]).filter((l) => l !== 'Right now')
     if (level) {
       const high = p?.rows.find((r) => r[0] === 'High tide'), low = p?.rows.find((r) => r[0] === 'Low tide'), now = p?.rows.find((r) => r[0] === 'Right now')
-      report(!!p && p.tag === 'tide predictions' && !!high && !!low && TIDE_CLOCK.test(high[1]) && TIDE_CLOCK.test(low[1]) && high[2] === `${Number(said['High tide'].v).toFixed(2)} m` && low[2] === `${Number(said['Low tide'].v).toFixed(2)} m` && !!now && /^\d\.\d\d m$/.test(now[2]) && labels.join() === soonest(said).join(), t(`tides ${id}: the popup gives the next high and low tide, soonest first, in Pacific time, with the heights NOAA gives, and the height now`), JSON.stringify({ rows: p?.rows, said }))
+      report(!!p && p.tag === 'tide predictions' && !!high && !!low && TIDE_CLOCK.test(high[1]) && TIDE_CLOCK.test(low[1]) && high[2] === `${Number(said['High tide'].v).toFixed(2)} m` && low[2] === `${Number(said['Low tide'].v).toFixed(2)} m` && !!now && /^-?\d\.\d\d m$/.test(now[2]) && labels.join() === soonest(said).join(), t(`tides ${id}: the popup gives the next high and low tide, soonest first, in Pacific time, with the heights NOAA gives, and the height now`), JSON.stringify({ rows: p?.rows, said }))
     } else {
       const flood = p?.rows.find((r) => r[0] === 'Max flood'), ebb = p?.rows.find((r) => r[0] === 'Max ebb'), slack = p?.rows.find((r) => r[0] === 'Slack water'), now = p?.rows.find((r) => r[0] === 'Right now')
       report(!!p && p.tag === 'tidal current predictions' && !!flood && !!ebb && !!slack && TIDE_CLOCK.test(flood[1]) && TIDE_CLOCK.test(ebb[1]) && TIDE_CLOCK.test(slack[1]) && flood[2] === `${Math.abs(Number(said['Max flood'].v)).toFixed(1)} knots` && ebb[2] === `${Math.abs(Number(said['Max ebb'].v)).toFixed(1)} knots` && !!now && /^(slack|\d\.\d knots (flood|ebb))$/.test(now[2]) && labels.join() === soonest(said).join(), t(`tides ${id}: the popup gives the next slack, maximum flood and maximum ebb, soonest first, in Pacific time, with the speeds in knots that NOAA gives`), JSON.stringify({ rows: p?.rows, said }))
@@ -1353,7 +1353,7 @@ async function checkTides(page, requests, t, name, shot) {
     const latest = await page.evaluate(() => window.__overlays.tideCache.get('07120')?.tide.latest ?? null)
     const order = g.rows.map((r) => r[0]).filter((l) => l !== 'Observed')
     report(!!high && !!low && high[2] === `${want['High tide'].v.toFixed(2)} m` && low[2] === `${want['Low tide'].v.toFixed(2)} m` && high[1] === await clockOf(want['High tide'].ms) && low[1] === await clockOf(want['Low tide'].ms) && order.join() === [want['High tide'], want['Low tide']].sort((a, b) => a.ms - b.ms).map((e) => e.type).join(), t('gauge: the popup gives the next high and low tide, soonest first, in Pacific time, with the heights the service gives'), JSON.stringify({ rows: g.rows, want }))
-    report(!!seen && /^\d\.\d\d m$/.test(seen[2]) && TIDE_CLOCK.test(seen[1]) && !!latest && !!obsLast && Math.abs(latest.ms - Date.parse(obsLast.eventDate)) <= 10 * 60e3 && Math.abs(Number(seen[2].replace(' m', '')) - obsLast.value) <= 0.25 && Date.now() - latest.ms < 30 * 60e3, t('gauge: the popup gives the latest observed level with its time (within 30 minutes of now, and within 10 minutes and a quarter of a metre of what the service says a moment later)'), JSON.stringify({ seen, latest, obsLast }))
+    report(!!seen && /^-?\d\.\d\d m$/.test(seen[2]) && TIDE_CLOCK.test(seen[1]) && !!latest && !!obsLast && Math.abs(latest.ms - Date.parse(obsLast.eventDate)) <= 10 * 60e3 && Math.abs(Number(seen[2].replace(' m', '')) - obsLast.value) <= 0.25 && Date.now() - latest.ms < 30 * 60e3, t('gauge: the popup gives the latest observed level with its time (within 30 minutes of now, and within 10 minutes and a quarter of a metre of what the service says a moment later)'), JSON.stringify({ seen, latest, obsLast }))
   } else report(false, t('gauge: the check could not ask the Canadian Hydrographic Service itself for the highs, lows and observed levels'), JSON.stringify({ g: !!g, hiloSaid: !!hiloSaid, obsSaid: !!obsSaid }))
   const obsP = g?.svg?.paths.find((x) => x.cls === 'observed'), predP = g?.svg?.paths.find((x) => x.cls === 'predicted')
   report(!!g && g.title === 'Victoria Harbour' && g.tag === 'tide gauge' && g.svg?.viewBox === '0 0 260 106' && /^Predicted tide height for the 24 hours around now, from [\d.]+ to [\d.]+ metres\. The observed height is drawn over it up to now\. A red line marks now\.$/.test(g.svg.label) && g.svg.paths.length === 2 && !!predP && !!obsP && predP.stroke !== obsP.stroke && predP.points >= 90 && obsP.points >= 30 && obsP.points <= 40 && g.svg.dots === 1 && g.svg.cx > 30 && g.svg.cx < 47 && Math.abs(obsP.lastX - g.svg.cx) <= 8 && ['12 a.m.', '6 a.m.', '12 p.m.', '6 p.m.', 'now', 'predicted', 'observed'].every((x) => g.svg.texts.includes(x)) && g.svg.img === 0, t('gauge: the popup has a 24 hour curve as SVG, the predicted levels (about 96 points) with the observed ones (about 36, up to now) drawn over them in another colour, a now marker three 24ths of the way across, the axis in Pacific hours and a key'), JSON.stringify({ ...g?.svg, texts: g?.svg?.texts.join('|') }))
@@ -2152,8 +2152,10 @@ async function checkTime(page, requests, t, name, shot) {
   await page.evaluate(() => window.__time.timeline.setPlaying(false))
   // The speed box: it starts at 1x, and 4x moves many more steps in the same time than 0.5x.
   const speedAtLoad = await page.evaluate(() => ({ value: document.getElementById('time-speed').value, hidden: document.getElementById('time-speed-box').hidden }))
+  const msAt = {}
   const stepsIn = async (v) => {
     await page.selectOption('#time-speed', v)
+    msAt[v] = (await timeUi(page)).stepMs
     await timeTo(page, '1951')
     const from = (await timeUi(page)).log.length
     await page.click('#time-play')
@@ -2162,8 +2164,10 @@ async function checkTime(page, requests, t, name, shot) {
     return (await timeUi(page)).log.length - from
   }
   const slow = await stepsIn('0.5'), fast = await stepsIn('4')
-  await page.selectOption('#time-speed', '1')
-  report(speedAtLoad.value === '1' && !speedAtLoad.hidden && slow >= 1 && slow <= 3 && fast >= 8 && fast > 3 * slow, t('time speed: the speed box starts at 1x, and in the same 2.5 s Play moves a few seasons at 0.5x and many at 4x'), JSON.stringify({ speedAtLoad, slow, fast }))
+  await page.selectOption('#time-speed', '1'); msAt[1] = (await timeUi(page)).stepMs
+  // A busy machine draws slowly and delays every step, so Play itself is only asked to be faster at 4x than at 0.5x. The time each step
+  // waits is read from the control.
+  report(speedAtLoad.value === '1' && !speedAtLoad.hidden && msAt['0.5'] === 1000 && msAt[1] === 500 && msAt[4] === 125 && slow >= 1 && slow <= 3 && fast > slow, t('time speed: the speed box starts at 1x, a step waits 1 s at 0.5x, 0.5 s at 1x and 0.125 s at 4x, and in the same 2.5 s Play moves more seasons at 4x than at 0.5x'), JSON.stringify({ speedAtLoad, msAt, slow, fast }))
 
   // ---- air photos: only the year shown is asked of the datacube, and the readout lists the layers in the order of their boxes
   await view([-123.365, 48.43], 13)
@@ -2338,9 +2342,68 @@ async function checkTime(page, requests, t, name, shot) {
   const two1 = await parts(), tw1 = await timeUi(page)
   await page.click('#time-prev'); const tw2 = await timeUi(page)
   await page.click('#time-next'); const tw3 = await timeUi(page)
+  // The ecosystems alone get a swipe: 1994-95 left of the line and 2002 right of it, each drawn by a map of its own, and the page's map keeps
+  // both at no opacity for clicks. Later puts the line at the left edge and Earlier at the right edge. A line in between names both years and
+  // lets both arrows work, a line moved to an edge moves the step, and a click finds the year drawn on its side of the line.
+  const sw = () => page.evaluate(() => {
+    const S = window.__time.seiSwipe, m = window.__map
+    return { open: S.isOpen(), at: S.at(), maps: S.maps().map((o) => o.getStyle().layers.map((l) => l.id).join()), boxes: document.querySelectorAll('.swipe-map').length, edge: document.querySelector('.swipe-handle')?.dataset.edge ?? null,
+      prev: document.getElementById('time-prev').disabled, next: document.getElementById('time-next').disabled, year: document.getElementById('time-year').textContent, line: document.querySelector('#time-lines p')?.textContent,
+      main: [m.getLayoutProperty('sei-1994-fill', 'visibility'), m.getLayoutProperty('sei-2002-fill', 'visibility'), JSON.stringify(m.getPaintProperty('sei-1994-fill', 'fill-opacity')), JSON.stringify(m.getPaintProperty('sei-2002-line', 'line-opacity') ?? 1)].join('|'),
+      follow: S.maps().every((o) => o.getCenter().lng.toFixed(6) === m.getCenter().lng.toFixed(6) && o.getCenter().lat.toFixed(6) === m.getCenter().lat.toFixed(6) && o.getZoom().toFixed(4) === m.getZoom().toFixed(4)) }
+  })
+  const keys = async (key, n = 1) => { await page.focus('.swipe-handle'); for (let i = 0; i < n; i++) await page.keyboard.press(key) }
+  const k1 = await sw()
+  await page.click('#time-prev'); const k2 = await sw()
+  await keys('ArrowLeft', 25); const k3 = await sw()
+  await page.click('#time-next'); const k4 = await sw()
+  await keys('End'); const k5 = await sw()
+  report(k1.open && k1.boxes === 2 && k1.maps.join('/') === 'sei-1994-fill,sei-1994-line/sei-2002-fill,sei-2002-line' && k1.follow && k1.main === 'visible|visible|0|0' && k1.at === 0 && k1.edge === 'left' && k1.year === '2002' && !k1.prev && k1.next && k1.line === 'Sensitive ecosystems: 2002. Drag the line at the left edge to compare it with 1994-95.'
+    && k2.at === 1 && k2.edge === 'right' && k2.year === '1994-95' && k2.prev && !k2.next
+    && Math.abs(k3.at - 0.5) < 0.01 && k3.edge === null && k3.year === '1994-95 and 2002' && !k3.prev && !k3.next && k3.line === 'Sensitive ecosystems: 1994-95 on the left of the line, 2002 on the right.'
+    && k4.at === 0 && k4.year === '2002' && k5.at === 1 && k5.year === '1994-95',
+  t('time ecosystems swipe: alone on the slider the ecosystems get a line with 1994-95 on its left and 2002 on its right, each drawn by its own map that follows the page’s map, Later snaps the line to the left edge and Earlier to the right edge, a line between them names both years and lets both arrows work, and a line moved to an edge moves the year'), JSON.stringify({ k1, k2, k3, k4, k5 }))
+  // A click on each side of the line in the middle opens the year drawn there, over Langford and Colwood, where both sides have polygons.
+  await view([-123.47, 48.45], 11.5)
+  await keys('ArrowLeft', 25)
+  const sidePoint = (layer, left) => page.evaluate(([layer, left]) => {
+    document.querySelector('.maplibregl-popup')?.remove()
+    const m = window.__map, x0 = window.__time.seiSwipe.x()
+    for (let y = 150; y < innerHeight - 260; y += 10) for (let x = left ? 20 : x0 + 30; left ? x < x0 - 30 : x < innerWidth - 20; x += 10) {
+      if (!document.elementFromPoint(x, y)?.classList.contains('maplibregl-canvas')) continue
+      const box = [[x - 3, y - 3], [x + 3, y + 3]]
+      if (m.queryRenderedFeatures(box, { layers: [layer] }).length && !m.queryRenderedFeatures(box, { layers: ['pins'] }).length) return [x, y]
+    }
+    return null
+  }, [layer, left])
+  const tagAt = async (p) => {
+    if (!p) return null
+    await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+    await page.mouse.click(p[0], p[1])
+    await page.waitForFunction(() => !!document.querySelector('.maplibregl-popup-content .tag'), null, { timeout: 5000 }).catch(() => {})
+    return page.evaluate(() => document.querySelector('.maplibregl-popup-content .tag')?.textContent ?? null)
+  }
+  const tagL = await tagAt(await sidePoint('sei-1994-fill', true)), tagR = await tagAt(await sidePoint('sei-2002-fill', false))
+  await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+  report(tagL === 'sensitive ecosystems, 1994-95' && tagR === 'sensitive ecosystems, 2002', t('time ecosystems swipe: a click left of the line opens the 1994-95 mapping and a click right of it the 2002 update'), JSON.stringify({ tagL, tagR }))
+  if (shot) await shot('time-sei-swipe')
   await tick('herringyears'); await waitStatus(page, 'herringyears', 30000).catch(() => {})
-  const two2 = await parts()
+  const two2 = await parts(), k6 = await sw()
   report(tw1.axis.join() === '1994-95,2002' && two1.play && two1.speed && two1.track && two1.prev && tw1.year === '2002' && tw2.year === '1994-95' && tw3.year === '2002' && !two2.play && !two2.speed && !two2.track && two2.row, t('time two steps: with only the ecosystems on, the bar has Earlier and Later and no Play, speed or slider, and ticking herring brings them back, all in one row that fits'), JSON.stringify({ two1, axis: tw1.axis, years: [tw1.year, tw2.year, tw3.year], two2 }))
+  // With another layer on, the ecosystems follow the slider again with no swipe. The swipes of the photos and of the ecosystems are never open
+  // together: the photos' swipe keeps the ecosystems to one year, and once it is gone the ecosystems get theirs back.
+  await tick('herringyears', false); await page.waitForTimeout(400)
+  const k7 = await sw()
+  await tick('aerials'); await waitStatus(page, 'aerials', 30000).catch(() => {}); const k8 = await sw()
+  await panel(true); await setBox(page, '#aerials-swipe', true); await panel(false)
+  await page.waitForFunction(() => window.__time.swipe.isOpen(), null, { timeout: 10000 }).catch(() => {})
+  const k9 = await sw(), k9a = await page.evaluate(() => ({ photos: window.__time.swipe.isOpen(), handles: document.querySelectorAll('.swipe-handle').length, layers: window.__time.timeline.state().layers.join() }))
+  await tick('aerials', false); await page.waitForTimeout(600)
+  const k10 = await sw(), k10a = await page.evaluate(() => ({ photos: window.__time.swipe.isOpen(), handles: document.querySelectorAll('.swipe-handle').length }))
+  // The page's map shows the year of the step (1994-95 here) at its usual opacity again.
+  const restored = 'visible|none|["match",["get","class"],"NS",0.75,0.5]|1'
+  report(!k6.open && k6.boxes === 0 && k6.main === restored && k7.open && k7.boxes === 2 && !k8.open && k8.boxes === 0 && !k9.open && k9a.photos && k9a.handles === 1 && k9a.layers === 'sei' && k10.open && !k10a.photos && k10a.handles === 1 && k10.boxes === 2,
+    t('time ecosystems swipe: ticking another time layer closes it and gives the page’s map its ecosystems back, unticking it opens it again, and the photos’ swipe and the ecosystems’ swipe are never on the map together'), JSON.stringify({ k6: [k6.open, k6.boxes, k6.main], k7: [k7.open, k7.boxes], k8: [k8.open, k8.boxes, k8.main], k9: [k9.open, k9a], k10: [k10.open, k10a, k10.boxes], restored }))
 
   // ---- everything off: the slider goes, and so do the credits
   for (const id of ['herringyears', 'aerials', 'sei', 'forestloss']) await tick(id, false)

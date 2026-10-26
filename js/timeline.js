@@ -8,6 +8,8 @@
 // return a promise that settles when the picture is in, so Play waits for it. `line` is the layer's sentence in the readout, and the readout
 // lists the layers by `order`. A layer leaves with unregister(id). The slider runs over the steps of every registered layer, so all of them
 // move through time together. A layer can call register again with other steps (another past, or years after today) and the slider follows.
+// A layer alone on the slider may also give `canStep(-1 or 1)`, which keeps Earlier or Later on at the first or last step, and `label(step)`,
+// the year shown for a step. The swipe of the ecosystems uses them, and calls refresh() when its line moves.
 import { timeAxis, axisIndex, frameAt } from './time-data.js'
 
 const STEP_MS = 500 // how long Play shows each step at 1x, once its pictures are in. The speed box divides it (0.5x is 1 s, 4x 125 ms)
@@ -18,7 +20,7 @@ export function createTimeline({ $, motionQuery }) {
   const year = $('time-year'), lines = $('time-lines'), from = $('time-from'), to = $('time-to'), paused = $('time-paused')
   const speed = $('time-speed'), speedBox = $('time-speed-box'), track = $('time-track')
   const layers = new Map()
-  let axis = [], at = -1, playing = false, timer = 0, token = 0, ready = Promise.resolve()
+  let axis = [], at = -1, playing = false, timer = 0, token = 0, ready = Promise.resolve(), said = ''
   // For scripts/browser-check.mjs: each step Play or the visitor moves to, with the time it was shown.
   const log = new URLSearchParams(location.search).has('test') ? [] : null
 
@@ -40,29 +42,40 @@ export function createTimeline({ $, motionQuery }) {
     apply()
   }
 
+  const ordered = () => [...layers.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  // The one layer on the slider, or null.
+  const alone = () => (layers.size === 1 ? layers.values().next().value : null)
+
   // Show step `at` on every layer and say so.
   function apply() {
     bar.hidden = !axis.length
-    if (!axis.length) { lines.replaceChildren(); return }
+    if (!axis.length) { lines.replaceChildren(); said = ''; return }
     const s = axis[at], waits = []
     slider.max = String(axis.length - 1)
     slider.value = String(at)
     slider.setAttribute('aria-valuetext', s.label)
-    year.textContent = s.label
     from.textContent = axis[0].label
     to.textContent = axis.at(-1).label
-    const out = []
-    for (const l of [...layers.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
-      const frame = frameAt(l.steps, l.kind, s.t)
-      const p = l.show(frame, s.t)
+    for (const l of ordered()) {
+      const p = l.show(frameAt(l.steps, l.kind, s.t), s.t)
       if (p?.then) waits.push(p)
-      out.push(l.line(frame, s.t))
     }
-    lines.replaceChildren(...out.map((text) => { const p = document.createElement('p'); p.textContent = text; return p }))
+    say()
     ready = Promise.race([Promise.allSettled(waits), new Promise((r) => setTimeout(r, WAIT_MS))])
     if (log) log.push({ t: s.t, at: performance.now() })
     sync()
   }
+  // The year and the readout, one line per layer. The readout is replaced only when it changes, so a line dragged across the map is not
+  // read out at every pixel.
+  function say() {
+    const s = axis[at]
+    year.textContent = alone()?.label?.(s) ?? s.label
+    const out = ordered().map((l) => l.line(frameAt(l.steps, l.kind, s.t), s.t))
+    if (out.join('\n') === said) return
+    said = out.join('\n')
+    lines.replaceChildren(...out.map((text) => { const p = document.createElement('p'); p.textContent = text; return p }))
+  }
+  function refresh() { if (axis.length) { say(); sync() } }
   function go(i) {
     if (!axis.length) return
     at = Math.max(0, Math.min(axis.length - 1, i))
@@ -78,8 +91,8 @@ export function createTimeline({ $, motionQuery }) {
     play.setAttribute('aria-pressed', String(playing))
     play.disabled = reduced || axis.length < 2
     paused.hidden = !reduced || two
-    prev.disabled = at <= 0
-    next.disabled = at >= axis.length - 1
+    prev.disabled = at <= 0 && !alone()?.canStep?.(-1)
+    next.disabled = at >= axis.length - 1 && !alone()?.canStep?.(1)
     // A readout that changes every step is not read out while Play runs.
     lines.setAttribute('aria-live', playing ? 'off' : 'polite')
   }
@@ -115,9 +128,9 @@ export function createTimeline({ $, motionQuery }) {
   motionQuery.addEventListener('change', () => { if (motionQuery.matches) setPlaying(false); sync() })
 
   return {
-    register, unregister, go, setPlaying,
+    register, unregister, go, setPlaying, refresh,
     // the year the slider is on, or null when nothing is registered
     time: () => axis[at]?.t ?? null,
-    state: () => ({ axis: axis.map((s) => s.label), at, playing, layers: [...layers.keys()], log }),
+    state: () => ({ axis: axis.map((s) => s.label), at, playing, layers: [...layers.keys()], log, stepMs: STEP_MS / (Number(speed.value) || 1) }),
   }
 }

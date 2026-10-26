@@ -468,6 +468,8 @@ map.on('click', (e) => {
   for (const id of QUERY_ORDER) {
     // Forest loss is a picture, so its popup comes from the pixel under the click, in its place in the order.
     if (id === 'parks-bc' && (content = time.pixelPopup(e.lngLat))) { from = 'forestloss'; break }
+    // While the ecosystems' swipe is open, each side of its line answers for the year it draws.
+    if (time.hiddenAt(id, e.point)) continue
     let group = hits.filter((h) => h.layer.id === id)
     if (!group.length) continue
     // Watersheds nest, so show the smallest one under the click.
