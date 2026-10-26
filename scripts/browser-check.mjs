@@ -2350,7 +2350,9 @@ async function checkTime(page, requests, t, name, shot) {
     return { open: S.isOpen(), at: S.at(), maps: S.maps().map((o) => o.getStyle().layers.map((l) => l.id).join()), boxes: document.querySelectorAll('.swipe-map').length, edge: document.querySelector('.swipe-handle')?.dataset.edge ?? null,
       prev: document.getElementById('time-prev').disabled, next: document.getElementById('time-next').disabled, year: document.getElementById('time-year').textContent, line: document.querySelector('#time-lines p')?.textContent,
       main: [m.getLayoutProperty('sei-1994-fill', 'visibility'), m.getLayoutProperty('sei-2002-fill', 'visibility'), JSON.stringify(m.getPaintProperty('sei-1994-fill', 'fill-opacity')), JSON.stringify(m.getPaintProperty('sei-2002-line', 'line-opacity') ?? 1)].join('|'),
-      follow: S.maps().every((o) => o.getCenter().lng.toFixed(6) === m.getCenter().lng.toFixed(6) && o.getCenter().lat.toFixed(6) === m.getCenter().lat.toFixed(6) && o.getZoom().toFixed(4) === m.getZoom().toFixed(4)) }
+      follow: S.maps().every((o) => o.getCenter().lng.toFixed(6) === m.getCenter().lng.toFixed(6) && o.getCenter().lat.toFixed(6) === m.getCenter().lat.toFixed(6) && o.getZoom().toFixed(4) === m.getZoom().toFixed(4)),
+      // MapLibre has no getter for the terrainSkirtLength option, so this reads the map's own field
+      skirts: S.maps().map((o) => o._terrainSkirtLength).join() }
   })
   const keys = async (key, n = 1) => { await page.focus('.swipe-handle'); for (let i = 0; i < n; i++) await page.keyboard.press(key) }
   const k1 = await sw()
@@ -2358,11 +2360,11 @@ async function checkTime(page, requests, t, name, shot) {
   await keys('ArrowLeft', 25); const k3 = await sw()
   await page.click('#time-next'); const k4 = await sw()
   await keys('End'); const k5 = await sw()
-  report(k1.open && k1.boxes === 2 && k1.maps.join('/') === 'sei-1994-fill,sei-1994-line/sei-2002-fill,sei-2002-line' && k1.follow && k1.main === 'visible|visible|0|0' && k1.at === 0 && k1.edge === 'left' && k1.year === '2002' && !k1.prev && k1.next && k1.line === 'Sensitive ecosystems: 2002. Drag the line at the left edge to compare it with 1994-95.'
+  report(k1.open && k1.boxes === 2 && k1.maps.join('/') === 'sei-1994-fill,sei-1994-line/sei-2002-fill,sei-2002-line' && k1.follow && k1.skirts === 'none,none' && k1.main === 'visible|visible|0|0' && k1.at === 0 && k1.edge === 'left' && k1.year === '2002' && !k1.prev && k1.next && k1.line === 'Sensitive ecosystems: 2002. Drag the line at the left edge to compare it with 1994-95.'
     && k2.at === 1 && k2.edge === 'right' && k2.year === '1994-95' && k2.prev && !k2.next
     && Math.abs(k3.at - 0.5) < 0.01 && k3.edge === null && k3.year === '1994-95 and 2002' && !k3.prev && !k3.next && k3.line === 'Sensitive ecosystems: 1994-95 on the left of the line, 2002 on the right.'
     && k4.at === 0 && k4.year === '2002' && k5.at === 1 && k5.year === '1994-95',
-  t('time ecosystems swipe: alone on the slider the ecosystems get a line with 1994-95 on its left and 2002 on its right, each drawn by its own map that follows the page’s map, Later snaps the line to the left edge and Earlier to the right edge, a line between them names both years and lets both arrows work, and a line moved to an edge moves the year'), JSON.stringify({ k1, k2, k3, k4, k5 }))
+  t('time ecosystems swipe: alone on the slider the ecosystems get a line with 1994-95 on its left and 2002 on its right, each drawn by its own map that follows the page’s map and draws no terrain skirts (they showed as streaks below the shapes on a tilted map), Later snaps the line to the left edge and Earlier to the right edge, a line between them names both years and lets both arrows work, and a line moved to an edge moves the year'), JSON.stringify({ k1, k2, k3, k4, k5 }))
   // A click on each side of the line in the middle opens the year drawn there, over Langford and Colwood, where both sides have polygons.
   await view([-123.47, 48.45], 11.5)
   await keys('ArrowLeft', 25)

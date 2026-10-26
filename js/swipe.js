@@ -56,8 +56,10 @@ export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove 
       const box = el('div', null, 'swipe-map')
       root.append(box)
       const s = { box, right: side === 'right', styled: false }
+      // No terrain skirts: MapLibre hangs a wall below each terrain tile's edges, which the page's map hides under its opaque ground.
+      // These maps have no ground, so the walls showed as long streaks below the shapes on a tilted map.
       s.map = new MapClass({
-        container: box, interactive: false, attributionControl: false, centerClampedToGround: false, maxPitch: 85, fadeDuration: 0,
+        container: box, interactive: false, attributionControl: false, centerClampedToGround: false, maxPitch: 85, fadeDuration: 0, terrainSkirtLength: 'none',
         style: { version: 8, sources: spec[side].sources, layers: spec[side].layers },
         center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
       })
