@@ -111,28 +111,6 @@ export function aerialTileUrl(year) {
   return `${DATACUBE}/ows/aerial?service=WMS&version=1.3.0&request=GetMap&layers=victoria&styles=default&crs=EPSG:3857&bbox={bbox-epsg-3857}&width=256&height=256&format=image/png&transparent=true&time=${year}-07-01T12:00:00Z`
 }
 
-// ---- Land Cover of Canada, 2010, 2015 and 2020 (Natural Resources Canada), 30 m from satellite
-export const LANDCOVER_RECORD = 'https://open.canada.ca/data/en/dataset/11990a35-912e-4002-b197-d57dd88836d7'
-export const LANDCOVER_YEARS = [step(2010), step(2015), step(2020)]
-export function landcoverTileUrl(year) {
-  if (!LANDCOVER_YEARS.some((s) => s.t === year)) throw new Error('no land cover for that year')
-  return `${DATACUBE}/ows/landcover?service=WMS&version=1.3.0&request=GetMap&layers=landcover-${year}&styles=official&crs=EPSG:3857&bbox={bbox-epsg-3857}&width=256&height=256&format=image/png&transparent=true`
-}
-// The classes found in the map area, with the colours the service draws them in (read from its pictures on 2026-10-25). The names are the
-// service's own, from its legend.
-export const LANDCOVER_CLASSES = [
-  ['#003c00', 'Temperate or sub-polar needleleaf forest'],
-  ['#138b04', 'Temperate or sub-polar broadleaf deciduous forest'],
-  ['#5b742a', 'Mixed forest'],
-  ['#b29d32', 'Temperate or sub-polar shrubland'],
-  ['#e0ce89', 'Temperate or sub-polar grassland'],
-  ['#6aa289', 'Wetland'],
-  ['#f0b86c', 'Cropland'],
-  ['#a7aaad', 'Barren land'],
-  ['#db2025', 'Urban and built-up'],
-  ['#4b6fa2', 'Water'],
-]
-
 // ---- Sensitive Ecosystems Inventory, mapped in 1994-95 and updated in 2002, and the Garry oak mapping of 2014 (Province of British Columbia)
 // The 2002 update kept the polygons of the 1990s and marked the parts disturbed since the 1992 air photos as not sensitive (NS). So the two
 // steps are the same ground, and what changes is the disturbed patches. The 2014 mapping is a different survey on different ground and is a
@@ -251,4 +229,34 @@ export function lossInfo(year) {
     ],
     source: 'Source: Hansen/UMD/Google/USGS/NASA, Global Forest Change 2000 to 2025, version 1.13, clipped to the demo box. Licensed CC BY 4.0.',
   }
+}
+
+// ---- Land Cover of Canada, 2010, 2015 and 2020 (Natural Resources Canada), 30 m from satellite
+// One picture of the demo box in Web Mercator (made by scripts/fetch-time-rasters.sh from the datacube's files), in which a pixel's red,
+// green and blue are its class in 2010, 2015 and 2020, and a pixel with no data is clear. The page reads the classes from it once and colours
+// each year itself, so a step to another year waits for nothing.
+export const LANDCOVER_RECORD = 'https://open.canada.ca/data/en/dataset/11990a35-912e-4002-b197-d57dd88836d7'
+export const LANDCOVER_YEARS = [step(2010), step(2015), step(2020)]
+export const LANDCOVER_FILE = 'data/landcover-2010-2020.png'
+export const LANDCOVER_CORNERS = LOSS_CORNERS
+// The classes found in the demo box: the service's code, the colour it draws the class in (matched to the codes against its own map images
+// of the box on 2026-10-25) and the name in its legend.
+export const LANDCOVER_CLASSES = [
+  [1, '#003c00', 'Temperate or sub-polar needleleaf forest'],
+  [5, '#138b04', 'Temperate or sub-polar broadleaf deciduous forest'],
+  [6, '#5b742a', 'Mixed forest'],
+  [8, '#b29d32', 'Temperate or sub-polar shrubland'],
+  [10, '#e0ce89', 'Temperate or sub-polar grassland'],
+  [14, '#6aa289', 'Wetland'],
+  [15, '#f0b86c', 'Cropland'],
+  [16, '#a7aaad', 'Barren land'],
+  [17, '#db2025', 'Urban and built-up'],
+  [18, '#4b6fa2', 'Water'],
+  [19, '#fef9fe', 'Snow and ice'],
+]
+// A table from class code to the colour drawn: red, green, blue and alpha, four entries a code. No data (0) and a code not in the list are clear.
+export function landcoverLut() {
+  const lut = new Uint8ClampedArray(256 * 4)
+  for (const [code, hex] of LANDCOVER_CLASSES) lut.set([1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).concat(255), code * 4)
+  return lut
 }

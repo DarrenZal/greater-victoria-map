@@ -2,13 +2,13 @@
 //
 // Each box in "Change over time" is off at load and makes no request until it is ticked. Once its data is in, the layer registers its years
 // with the one time control (js/timeline.js), and the slider at the bottom of the map moves every ticked layer through time together. The
-// air photos and the land cover are map images from Natural Resources Canada's datacube, asked for only while their box is ticked and only
-// for the year shown. The others are files of this site. The years, text and popups are in js/time-data.js.
+// air photos are map images from Natural Resources Canada's datacube, asked for only while their box is ticked and only for the year shown.
+// The others are files of this site. The years, text and popups are in js/time-data.js.
 import {
   snapshotLine,
   HERRING_YEARS_FILE, HERRING_RECORD, herringSteps, herringSeason, herringYearInfo, herringLine, herringRadius,
   AERIAL_RECORD, AERIAL_YEARS, AERIAL_BOUNDS, aerialTileUrl,
-  LANDCOVER_RECORD, LANDCOVER_YEARS, landcoverTileUrl, LANDCOVER_CLASSES,
+  LANDCOVER_RECORD, LANDCOVER_YEARS, LANDCOVER_FILE, LANDCOVER_CORNERS, LANDCOVER_CLASSES, landcoverLut,
   SEI_RECORD, SEI_FILES, SEI_YEARS, SEI_KEY, SEI_CLASSES, seiColour, seiInfo,
   CANOPY_YEARS, CANOPY_FILES, CANOPY_CORNERS, CANOPY_ITEMS,
   LOSS_FILE, LOSS_YEARS, LOSS_PAGE, LOSS_CORNERS, lossYearOf, lossPixel, lossRgb, lossGradient, lossLine, lossInfo,
@@ -29,9 +29,9 @@ const LOSS_ATTRIB = `Forest loss: <a href="${LOSS_PAGE}" target="_blank" rel="no
 const EMPTY = { type: 'FeatureCollection', features: [] }
 const TILE_WAIT_MS = 10000 // the longest a step waits for its map images
 const AERIAL_MAX_ZOOM = { 1932: 17, 1950: 18 } // about 1 m and 0.5 m a pixel
-const LANDCOVER_MAX_ZOOM = 13 // 30 m cells: closer in, the map stretches the images
-const LANDCOVER_BOUNDS = [-124.4, 47.9, -122.7, 49.1] // the area the map reaches. The service has data for Canada only
 const LANDCOVER_OPACITY = 0.7
+const CANOPY_OPACITY = 0.8
+const FADE_MS = 250 // a picture fades into the next year's over this long, or at once under reduced motion
 const json = async (url, signal) => { const r = await fetch(url, { signal }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }
 const plural = (n, one, many) => `${n.toLocaleString('en-CA')} ${n === 1 ? one : many}`
 
@@ -57,6 +57,20 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     setTimeout(check, 50)
   })
   const show = (id, on) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none') }
+  // A layer with a picture of its own per year (land cover, tree canopy) keeps every year drawn while its box is ticked, at no opacity but
+  // the year shown's, so a step only fades one picture into the next.
+  function crossfade(prefix, years, frame, opacity) {
+    for (const s of years) {
+      const id = `${prefix}-${s.t}`
+      if (!map.getLayer(id)) continue
+      map.setPaintProperty(id, 'raster-opacity-transition', { duration: motionQuery.matches ? 0 : FADE_MS, delay: 0 })
+      map.setPaintProperty(id, 'raster-opacity', s.t === frame?.t ? opacity : 0)
+      show(id, true)
+    }
+  }
+  // The air photos come from the datacube a tile at a time, so a step shows the new year at once and keeps the year before drawn until the
+  // new year's tiles are in. The map is never empty between two years. `aerialStep` drops a step that a later one, Swipe or the box overtook.
+  let aerialStep = 0
 
   // ---- the layers. `ids` are hidden when the box is unticked. `kind` and `steps` are what each registers with the time control.
   const DEFS = {
@@ -64,7 +78,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     aerials: { label: 'Air photos', ids: ['aerial-1932', 'aerial-1950'], ui: ['aerials-controls', 'aerials-note'], kind: 'snapshot', steps: AERIAL_YEARS, load: async () => ({ message: 'Greyscale air photos of central Victoria, Oak Bay, Esquimalt and south Saanich, from Natural Resources Canada.' }) },
     sei: { label: 'Sensitive ecosystems', ids: ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-line'], ui: ['sei-key', 'sei-note'], kind: 'snapshot', steps: SEI_YEARS, load: loadSei },
     sei2014: { label: 'Garry oak ecosystems mapped in 2014', ids: ['sei2014-fill', 'sei2014-line'], ui: ['sei2014-note'], load: loadSei2014 },
-    landcover: { label: 'Land cover', ids: LANDCOVER_YEARS.map((s) => `landcover-${s.t}`), ui: ['landcover-key', 'landcover-note'], kind: 'snapshot', steps: LANDCOVER_YEARS, load: async () => ({ message: 'Land cover of Canada from satellite images, 30 m cells, from Natural Resources Canada.' }) },
+    landcover: { label: 'Land cover', ids: [...LANDCOVER_YEARS.map((s) => `landcover-${s.t}`), 'landcover-credit'], ui: ['landcover-key', 'landcover-note'], kind: 'snapshot', steps: LANDCOVER_YEARS, load: loadLandcover },
     canopy: { label: 'Tree canopy', ids: [...CANOPY_YEARS.map((s) => `canopy-${s.t}`), 'canopy-credit'], ui: ['canopy-note'], kind: 'snapshot', steps: CANOPY_YEARS, load: loadCanopy },
     forestloss: { label: 'Forest loss', ids: ['forestloss', 'forestloss-credit'], ui: ['forestloss-key', 'forestloss-note'], kind: 'cumulative', steps: LOSS_YEARS, load: loadLoss },
   }
@@ -79,8 +93,11 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     },
     aerials: {
       show: (frame) => {
-        for (const s of AERIAL_YEARS) show(`aerial-${s.t}`, s.t === frame?.t)
-        return frame ? tilesIn(`aerial-${frame.t}`) : null
+        const want = frame ? `aerial-${frame.t}` : null, mine = ++aerialStep
+        const others = () => { for (const s of AERIAL_YEARS) if (`aerial-${s.t}` !== want) show(`aerial-${s.t}`, false) }
+        if (!want) { others(); return null }
+        show(want, true)
+        return tilesIn(want).then(() => { if (mine === aerialStep) others() })
       },
       line: (frame, t) => snapshotLine('Air photo', AERIAL_YEARS, frame, t),
     },
@@ -89,14 +106,11 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
       line: (frame, t) => snapshotLine('Sensitive ecosystems', SEI_YEARS, frame, t),
     },
     landcover: {
-      show: (frame) => {
-        for (const s of LANDCOVER_YEARS) show(`landcover-${s.t}`, s.t === frame?.t)
-        return frame ? tilesIn(`landcover-${frame.t}`) : null
-      },
+      show: (frame) => crossfade('landcover', LANDCOVER_YEARS, frame, LANDCOVER_OPACITY),
       line: (frame, t) => snapshotLine('Land cover', LANDCOVER_YEARS, frame, t),
     },
     canopy: {
-      show: (frame) => { for (const s of CANOPY_YEARS) show(`canopy-${s.t}`, s.t === frame?.t) },
+      show: (frame) => crossfade('canopy', CANOPY_YEARS, frame, CANOPY_OPACITY),
       line: (frame, t) => snapshotLine('Tree canopy, City of Victoria', CANOPY_YEARS, frame, t),
     },
     forestloss: {
@@ -130,7 +144,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     // asks for. The 2014 mapping is not on the time line.
     if (def.kind !== 'snapshot') for (const l of def.ids) show(l, true)
     if (!def.kind) return
-    if (id === 'canopy') show('canopy-credit', true)
+    if (id === 'canopy' || id === 'landcover') show(`${id}-credit`, true)
     if (id === 'aerials' && $('aerials-swipe').checked) openSwipe()
     else join(id)
   }
@@ -138,7 +152,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     const def = DEFS[id]
     state[id].on = false
     if (def.kind) timeline.unregister(id)
-    if (id === 'aerials') { closeSwipe(); $('aerials-swipe').checked = false }
+    if (id === 'aerials') { aerialStep++; closeSwipe(); $('aerials-swipe').checked = false }
     for (const l of def.ids) show(l, false)
     for (const u of def.ui || []) $(u).hidden = true
     setStatus(id, '', '')
@@ -155,6 +169,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   const SWIPE_LINE = 'Swipe: 1932 on the left of the line and 1950 on the right. Drag the line, or use the arrow keys on it.'
   function openSwipe() {
     timeline.unregister('aerials')
+    aerialStep++
     show('aerial-1932', false); show('aerial-1950', true)
     swipe.open({ id: 'aerial-1932-left', source: { type: 'raster', tiles: [aerialTileUrl(1932)], tileSize: 256, bounds: AERIAL_BOUNDS[1932], maxzoom: AERIAL_MAX_ZOOM[1932] } }, ['1932', '1950'])
     setStatus('aerials', 'ok', SWIPE_LINE)
@@ -167,9 +182,9 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   })
 
   // ---- the map images of the federal datacube. A tile that fails says so in the status line while none of that layer's tiles has come.
-  const WMS = { aerials: /^aerial-(1932|1950)$/, landcover: /^landcover-\d{4}$/ }
-  const wms = { aerials: { ok: 0 }, landcover: { ok: 0 } }
-  const WMS_FAILURE = { aerials: 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.', landcover: 'The land cover could not be loaded just now from Natural Resources Canada. Try again later.' }
+  const WMS = { aerials: /^aerial-(1932|1950)$/ }
+  const wms = { aerials: { ok: 0 } }
+  const WMS_FAILURE = { aerials: 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.' }
   map.on('error', (e) => {
     const id = Object.keys(WMS).find((k) => WMS[k].test(e.sourceId || ''))
     if (id && state[id].on && !wms[id].ok) setStatus(id, 'fail', WMS_FAILURE[id])
@@ -211,7 +226,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     for (const s of CANOPY_YEARS) {
       if (map.getSource(`canopy-${s.t}`)) continue
       map.addSource(`canopy-${s.t}`, { type: 'image', url: CANOPY_FILES[s.t], coordinates: CANOPY_CORNERS })
-      map.addLayer({ id: `canopy-${s.t}`, type: 'raster', source: `canopy-${s.t}`, layout: { visibility: 'none' }, paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 0 } }, pos.low)
+      map.addLayer({ id: `canopy-${s.t}`, type: 'raster', source: `canopy-${s.t}`, layout: { visibility: 'none' }, paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 } }, pos.low)
     }
     // A picture that cannot be had makes the map send an error for its source, and the box then says so.
     const failed = new Set()
@@ -234,6 +249,40 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     } finally { map.off('error', onError) }
     return { message: 'City of Victoria only, from the City’s LiDAR surveys.' }
   }
+  // Land cover: one picture whose red, green and blue are a pixel's class in 2010, 2015 and 2020. It is read once and coloured into a picture
+  // per year, each its own layer, so the time control only fades between them (crossfade).
+  async function loadLandcover() {
+    const reply = await fetch(LANDCOVER_FILE)
+    if (!reply.ok) throw new Error(`HTTP ${reply.status}`)
+    const bitmap = await createImageBitmap(await reply.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })
+    const w = bitmap.width, h = bitmap.height, read = document.createElement('canvas')
+    read.width = w; read.height = h
+    const g = read.getContext('2d', { willReadFrequently: true })
+    g.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    const px = g.getImageData(0, 0, w, h).data, lut = landcoverLut(), n = w * h
+    let cells = 0
+    for (const [i, s] of LANDCOVER_YEARS.entries()) {
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      const out = new ImageData(w, h), o = out.data
+      for (let k = 0; k < n; k++) {
+        const c = px[k * 4 + 3] < 128 ? 0 : px[k * 4 + i] * 4
+        o[k * 4] = lut[c]; o[k * 4 + 1] = lut[c + 1]; o[k * 4 + 2] = lut[c + 2]; o[k * 4 + 3] = lut[c + 3]
+        if (lut[c + 3]) cells++
+      }
+      canvas.getContext('2d').putImageData(out, 0, 0)
+      const id = `landcover-${s.t}`
+      if (!map.getSource(id)) {
+        map.addSource(id, { type: 'image', coordinates: LANDCOVER_CORNERS })
+        map.addLayer({ id, type: 'raster', source: id, layout: { visibility: 'none' }, paint: { 'raster-opacity': 0, 'raster-fade-duration': 0, 'raster-resampling': 'nearest' } }, pos.low)
+      }
+      map.getSource(id).updateImage({ image: canvas, coordinates: LANDCOVER_CORNERS })
+    }
+    if (!cells) throw new Error('no land cover in the picture')
+    return { message: 'Land cover of Canada from satellite images, 30 m cells, in the demo box, from Natural Resources Canada.' }
+  }
+
   // Forest loss: one picture in which each pixel's red value gives its loss year (lossYearOf). It is read once into a list of the loss pixels in
   // order of year, so the picture for a year is the first so many of them, and a step paints or clears only the pixels between two years.
   const loss = { width: 0, height: 0, years: null, order: null, upTo: null, image: null, canvas: null, shown: 0 }
@@ -293,7 +342,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   // ---- the keys under the boxes
   const swatchRow = (colour, text) => { const r = el('div', null, 'swatch-row'); const s = el('span', null, 'swatch'); s.style.background = colour; r.append(s, el('span', text)); return r }
   $('sei-key').replaceChildren(...SEI_KEY.map(([k, text]) => swatchRow(SEI_CLASSES[k].colour, text)))
-  $('landcover-key').replaceChildren(...LANDCOVER_CLASSES.map(([c, text]) => swatchRow(c, text)))
+  $('landcover-key').replaceChildren(...LANDCOVER_CLASSES.map(([, colour, text]) => swatchRow(colour, text)))
   $('forestloss-bar').style.backgroundImage = lossGradient()
 
   // ---- map layers, added once when the basemap style is in. All start hidden.
@@ -301,11 +350,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   function addLayers({ before, low, mid }) {
     const hidden = { visibility: 'none' }
     const geo = (id, attribution) => map.addSource(id, { type: 'geojson', data: EMPTY, attribution })
-    // Air photos and land cover: one source per year, so each year keeps its own tiles, and a hidden year asks for nothing.
-    for (const s of LANDCOVER_YEARS) {
-      map.addSource(`landcover-${s.t}`, { type: 'raster', tiles: [landcoverTileUrl(s.t)], tileSize: 256, bounds: LANDCOVER_BOUNDS, maxzoom: LANDCOVER_MAX_ZOOM, attribution: LANDCOVER_ATTRIB })
-      map.addLayer({ id: `landcover-${s.t}`, type: 'raster', source: `landcover-${s.t}`, layout: hidden, paint: { 'raster-opacity': LANDCOVER_OPACITY, 'raster-fade-duration': 0 } }, low)
-    }
+    // Air photos: one source per year, so each year keeps its own tiles, and a hidden year asks for nothing.
     for (const s of AERIAL_YEARS) {
       map.addSource(`aerial-${s.t}`, { type: 'raster', tiles: [aerialTileUrl(s.t)], tileSize: 256, bounds: AERIAL_BOUNDS[s.t], maxzoom: AERIAL_MAX_ZOOM[s.t], attribution: AERIAL_ATTRIB })
       map.addLayer({ id: `aerial-${s.t}`, type: 'raster', source: `aerial-${s.t}`, layout: hidden, paint: { 'raster-fade-duration': 0 } }, low)
@@ -313,6 +358,9 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     // Tree canopy from LiDAR: the pictures are added on the first tick (loadCanopy), because an image source fetches its picture as soon as it
     // is added, even while hidden. An image source cannot carry a credit, so an empty point source does.
     pos.low = low
+    // Land cover: the pictures are added on the first tick (loadLandcover). Their credit rides on an empty point source, as for the canopy.
+    geo('tl-landcover-credit', LANDCOVER_ATTRIB)
+    map.addLayer({ id: 'landcover-credit', type: 'circle', source: 'tl-landcover-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
     geo('tl-canopy-credit', CANOPY_ATTRIB)
     map.addLayer({ id: 'canopy-credit', type: 'circle', source: 'tl-canopy-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
 

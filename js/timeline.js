@@ -1,5 +1,6 @@
-// The time control of the Greater Victoria demo map: one slider, a Play button, Earlier and Later, and a readout of what each layer shows.
-// Plain ES module, no build step. It is hidden until a layer that changes over time is ticked.
+// The time control of the Greater Victoria demo map: one slider, a Play button with a speed, Earlier and Later, and a readout of what each
+// layer shows. With only two steps on it (one layer of two pictures) it is Earlier and Later alone. Plain ES module, no build step. It is
+// hidden until a layer that changes over time is ticked.
 //
 // A layer registers its steps (see js/time-data.js) and two functions:
 //   register(id, { kind, steps, order, show(frame, t), line(frame, t) })
@@ -9,12 +10,13 @@
 // move through time together. A layer can call register again with other steps (another past, or years after today) and the slider follows.
 import { timeAxis, axisIndex, frameAt } from './time-data.js'
 
-const STEP_MS = 1300 // how long Play shows each step, once its pictures are in
+const STEP_MS = 500 // how long Play shows each step at 1x, once its pictures are in. The speed box divides it (0.5x is 1 s, 4x 125 ms)
 const WAIT_MS = 10000 // the longest Play waits for a step's pictures before it moves on
 
 export function createTimeline({ $, motionQuery }) {
   const bar = $('timebar'), slider = $('time-slider'), play = $('time-play'), prev = $('time-prev'), next = $('time-next')
   const year = $('time-year'), lines = $('time-lines'), from = $('time-from'), to = $('time-to'), paused = $('time-paused')
+  const speed = $('time-speed'), speedBox = $('time-speed-box'), track = $('time-track')
   const layers = new Map()
   let axis = [], at = -1, playing = false, timer = 0, token = 0, ready = Promise.resolve()
   // For scripts/browser-check.mjs: each step Play or the visitor moves to, with the time it was shown.
@@ -68,11 +70,14 @@ export function createTimeline({ $, motionQuery }) {
   }
 
   function sync() {
-    const reduced = motionQuery.matches
+    const reduced = motionQuery.matches, two = axis.length <= 2
+    // Two steps need no Play, speed or slider: Earlier and Later go between them.
+    if (two && playing) { playing = false; token++; clearTimeout(timer); timer = 0 }
+    play.hidden = speedBox.hidden = track.hidden = two
     play.textContent = playing ? 'Pause' : 'Play'
     play.setAttribute('aria-pressed', String(playing))
     play.disabled = reduced || axis.length < 2
-    paused.hidden = !reduced
+    paused.hidden = !reduced || two
     prev.disabled = at <= 0
     next.disabled = at >= axis.length - 1
     // A readout that changes every step is not read out while Play runs.
@@ -99,7 +104,7 @@ export function createTimeline({ $, motionQuery }) {
       go(at + 1)
       if (at >= axis.length - 1) setPlaying(false)
       else schedule()
-    }, STEP_MS)
+    }, STEP_MS / (Number(speed.value) || 1))
   }
 
   play.addEventListener('click', () => setPlaying(!playing))

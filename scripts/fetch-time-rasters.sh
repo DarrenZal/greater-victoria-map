@@ -1,7 +1,8 @@
 #!/bin/sh
-# Rebuilds the pictures of two layers under "Change over time":
+# Rebuilds the pictures of three layers under "Change over time":
 #   data/canopy-2013.png, canopy-2019.png, canopy-2023.png  (City of Victoria tree canopy from LiDAR)
 #   data/forest-loss.png                                    (Hansen Global Forest Change v1.13, loss year)
+#   data/landcover-2010-2020.png                            (Land Cover of Canada, 2010, 2015 and 2020)
 #
 # Developer machine only. The browser never calls these services. Run it once, check the result with
 # `node scripts/check-demo.mjs`, and commit the pictures. Same style as scripts/fetch-time-layers.sh.
@@ -16,7 +17,7 @@
 #   RAW_DIR=dir   where the downloads go (default raw/, not committed)
 #   WORK_DIR=dir  scratch files (default $RAW_DIR/work)
 #   GDAL_BIN=dir  folder with the GDAL programs and their python (default ~/miniconda3/envs/cascadiamap/bin)
-#   ONLY=canopy   run only one part: canopy or loss
+#   ONLY=canopy   run only one part: canopy, loss or landcover
 #   ZOPFLI=0      skip zopflipng
 #   STATS=1       also print the value distribution of each canopy year
 set -eu
@@ -191,6 +192,48 @@ print("loss cells per year:", " ".join("%d:%d" % (2000 + v, c) for v, c in enume
     cp "$WORK/loss_plain.png" "$OUT/forest-loss.png"
   fi
   echo "forest-loss.png -> $(wc -c < "$OUT/forest-loss.png" | tr -d ' ') bytes"
+fi
+
+# ---- Land Cover of Canada, 2010, 2015 and 2020 (OGL-Canada)
+# The datacube's cloud-optimised files (listed by its STAC catalogue, collection "landcover"). Only the part around the demo box is
+# read. Values are the NALCMS classes (1 needleleaf forest ... 19 snow and ice, 0 no data). The three years go into one indexed PNG of
+# the demo box in Web Mercator, 1361 x 1568 cells of about 30 m on the ground: the colour of a pixel is its class in 2010 (red), 2015
+# (green) and 2020 (blue), and a pixel with no data in any year is clear. The page reads the classes back and colours each year itself.
+LANDCOVER="https://datacube-prod-data-public.s3.ca-central-1.amazonaws.com/store/land/landcover"
+if want landcover; then
+  # The source grid is a Lambert projection, tilted against the box, so it is warped straight onto the box (nearest neighbour) rather
+  # than clipped first. Only the blocks under the box are read.
+  for y in 2010 2015 2020; do
+    if [ "$FETCH" = "1" ]; then
+      GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR gdalwarp -q -overwrite -t_srs EPSG:3857 -r near \
+        -te -13775786.985667605 6153563.915440912 -13714561.265731305 6224110.131660087 -ts 1361 1568 -ot Byte -co COMPRESS=DEFLATE \
+        "/vsicurl/$LANDCOVER/landcover-$y-classification.tif" "$RAW/landcover_${y}_3857.tif"
+      echo "landcover $y -> $(wc -c < "$RAW/landcover_${y}_3857.tif" | tr -d ' ') bytes"
+    fi
+  done
+  "$GDAL_BIN/python" -I -c '
+import sys
+import numpy as np
+import rasterio
+from PIL import Image
+a = [rasterio.open(p).read(1) for p in sys.argv[1:4]]
+key = (a[0].astype(np.uint32) << 16) | (a[1].astype(np.uint32) << 8) | a[2]
+u, inv = np.unique(key, return_inverse=True)
+if len(u) > 256:
+    sys.exit("more than 256 combinations of classes")
+pal = [v for k in u.tolist() for v in ((k >> 16) & 255, (k >> 8) & 255, k & 255)]
+im = Image.fromarray(inv.reshape(a[0].shape).astype(np.uint8), mode="P")
+im.putpalette(pal + [0] * (768 - len(pal)))
+extra = {"transparency": int(np.flatnonzero(u == 0)[0])} if (u == 0).any() else {}
+im.save(sys.argv[4], optimize=True, **extra)
+print(len(u), "combinations of classes. Cells per class in 2020:", " ".join("%d:%d" % (v, c) for v, c in enumerate(np.bincount(a[2].ravel())) if c))
+' "$RAW/landcover_2010_3857.tif" "$RAW/landcover_2015_3857.tif" "$RAW/landcover_2020_3857.tif" "$WORK/landcover_plain.png"
+  if [ "$ZOPFLI" = "1" ] && command -v zopflipng > /dev/null; then
+    zopflipng -y --filters=0me "$WORK/landcover_plain.png" "$OUT/landcover-2010-2020.png" > /dev/null
+  else
+    cp "$WORK/landcover_plain.png" "$OUT/landcover-2010-2020.png"
+  fi
+  echo "landcover-2010-2020.png -> $(wc -c < "$OUT/landcover-2010-2020.png" | tr -d ' ') bytes"
 fi
 
 echo "Done. Next: node scripts/check-demo.mjs"

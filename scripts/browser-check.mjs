@@ -169,7 +169,7 @@ async function openPage(browser, base, vp, { blockTiles = false, reducedMotion =
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console error: ' + m.text().slice(0, 200)); else if (m.type() === 'warning') warnings.push(m.text().slice(0, 160)) })
   page.on('pageerror', (e) => problems.push('page error: ' + e.message.slice(0, 200)))
   page.on('requestfailed', (r) => {
-    // MapLibre cancels elevation tiles, Canadian Hydrographic Service tiles and the datacube's map images (air photos, land cover) it no longer needs,
+    // MapLibre cancels elevation tiles, Canadian Hydrographic Service tiles and the datacube's air photo tiles it no longer needs,
     // for example while the map tilts into 3D at load, moves on, or shows another year.
     if (/ERR_ABORTED|NS_BINDING_ABORTED|cancelled|canceled|aborted/i.test(r.failure()?.errorText || '') && ['s3.amazonaws.com', NONNA_HOST, 'datacube.services.geo.ca'].includes(new URL(r.url()).host)) return
     if (!blockTiles || !r.url().includes('tiles.openfreemap.org')) problems.push(`request failed (${r.failure()?.errorText || '?'}): ` + r.url().slice(0, 120))
@@ -2150,6 +2150,20 @@ async function checkTime(page, requests, t, name, shot) {
   await page.click('#time-play').catch(() => {})
   report(hidA === hidB.year && hidB.playing && hidC.year !== hidB.year, t('time Play: while the tab is hidden it does not step, and it goes on when the tab is shown again'), JSON.stringify({ hidA, hidB: hidB.year, hidC: hidC.year }))
   await page.evaluate(() => window.__time.timeline.setPlaying(false))
+  // The speed box: it starts at 1x, and 4x moves many more steps in the same time than 0.5x.
+  const speedAtLoad = await page.evaluate(() => ({ value: document.getElementById('time-speed').value, hidden: document.getElementById('time-speed-box').hidden }))
+  const stepsIn = async (v) => {
+    await page.selectOption('#time-speed', v)
+    await timeTo(page, '1951')
+    const from = (await timeUi(page)).log.length
+    await page.click('#time-play')
+    await page.waitForTimeout(2500)
+    await page.evaluate(() => window.__time.timeline.setPlaying(false))
+    return (await timeUi(page)).log.length - from
+  }
+  const slow = await stepsIn('0.5'), fast = await stepsIn('4')
+  await page.selectOption('#time-speed', '1')
+  report(speedAtLoad.value === '1' && !speedAtLoad.hidden && slow >= 1 && slow <= 3 && fast >= 8 && fast > 3 * slow, t('time speed: the speed box starts at 1x, and in the same 2.5 s Play moves a few seasons at 0.5x and many at 4x'), JSON.stringify({ speedAtLoad, slow, fast }))
 
   // ---- air photos: only the year shown is asked of the datacube, and the readout lists the layers in the order of their boxes
   await view([-123.365, 48.43], 13)
@@ -2160,9 +2174,11 @@ async function checkTime(page, requests, t, name, shot) {
   await page.waitForTimeout(3000)
   const a1 = await timeUi(page), av1 = await timeVis(page, ['aerial-1932', 'aerial-1950']), c1932a = cube('time=1932'), c1950a = cube('time=1950')
   report(a1.axis[0] === '1932' && a1.axis[1] === '1950' && a1.year === '1951' && a1.lines[0].startsWith('Herring spawn, 1950/1951 season') && a1.lines[1] === 'Air photo: 1950, the latest before 1951.' && av1['aerial-1950'] === 'visible' && av1['aerial-1932'] === 'none' && c1950a > 0 && c1932a === 0 && cube() > cube0 && a1.attrib.includes(TIME_CREDITS.aerials), t('time air photos: ticking them adds 1932 and 1950 to the slider, a later year shows the 1950 photo and says it is the latest before that year, and only the 1950 photo is asked of the datacube'), JSON.stringify({ axis: a1.axis.slice(0, 3), year: a1.year, lines: a1.lines, av1, c1932a, c1950a }))
-  await timeTo(page, '1932'); await page.waitForTimeout(3000)
+  await timeTo(page, '1932')
+  const gap = await timeVis(page, ['aerial-1932', 'aerial-1950'])
+  await page.waitForFunction(() => window.__map.getLayoutProperty('aerial-1950', 'visibility') === 'none', null, { timeout: 15000 }).catch(() => {})
   const a2 = await timeUi(page), av2 = await timeVis(page, ['aerial-1932', 'aerial-1950'])
-  report(a2.year === '1932' && a2.lines.join('|') === 'Herring spawn: the records begin with the 1950/1951 season.|Air photo: 1932.' && av2['aerial-1932'] === 'visible' && av2['aerial-1950'] === 'none' && cube('time=1932') > 0, t('time air photos: 1932 shows the 1932 photo, asks the datacube for it, and the herring line says its records begin later'), JSON.stringify({ a2: a2.lines, av2 }))
+  report(a2.year === '1932' && a2.lines.join('|') === 'Herring spawn: the records begin with the 1950/1951 season.|Air photo: 1932.' && gap['aerial-1932'] === 'visible' && gap['aerial-1950'] === 'visible' && av2['aerial-1932'] === 'visible' && av2['aerial-1950'] === 'none' && cube('time=1932') > 0, t('time air photos: 1932 asks the datacube for the 1932 photo and shows it, the 1950 photo stays drawn until the 1932 tiles are in so the map is never empty between years, and the herring line says its records begin later'), JSON.stringify({ a2: a2.lines, gap, av2 }))
   if (shot) await shot('time-aerial-1932')
 
   // ---- the swipe: a second map draws 1932 left of a line, the page's map draws 1950, the two follow each other, and the line moves by keyboard
@@ -2239,16 +2255,20 @@ async function checkTime(page, requests, t, name, shot) {
   report(gst.state === 'ok' && /all in the west of the map area\.$/.test(gst.text) && Object.values(gv).every((v) => v === 'visible') && !g.layers.includes('sei2014') && g.axis.join() === axisBefore, t('time ecosystems 2014: the later mapping shows on its own, says it is in the west only, and adds nothing to the slider'), JSON.stringify({ gst, gv, layers: g.layers }))
   await tick('sei2014', false)
 
-  // ---- land cover: one year's map images at a time
+  // ---- land cover: one stored picture of the three years, read once, and a step only fades between the years
+  const opacityOf = (ids) => page.evaluate((ids) => Object.fromEntries(ids.map((id) => [id, window.__map.getLayer(id) ? [window.__map.getLayoutProperty(id, 'visibility') ?? 'visible', window.__map.getPaintProperty(id, 'raster-opacity')] : 'absent'])), ids)
+  const LC = ['landcover-2010', 'landcover-2015', 'landcover-2020']
   await view([-123.45, 48.47], 10.5)
   await timeTo(page, '2016')
-  const lc0 = { 2010: cube('landcover-2010'), 2015: cube('landcover-2015'), 2020: cube('landcover-2020') }
+  const lcCube = cube('/ows/landcover')
   await tick('landcover')
   await waitStatus(page, 'landcover', 30000).catch(() => {})
-  await page.waitForTimeout(3500)
-  const l1 = await timeUi(page), lv = await timeVis(page, ['landcover-2010', 'landcover-2015', 'landcover-2020'])
+  await page.waitForTimeout(800)
+  const l1 = await timeUi(page), lo1 = await opacityOf(LC), lst = await statusOf(page, 'landcover')
   const lcRows = await page.evaluate(() => document.querySelectorAll('#landcover-key .swatch-row').length)
-  report(l1.year === '2016' && l1.lines.includes('Land cover: 2015, the latest before 2016.') && lv['landcover-2015'] === 'visible' && lv['landcover-2010'] === 'none' && lv['landcover-2020'] === 'none' && cube('landcover-2015') > lc0[2015] && cube('landcover-2010') === lc0[2010] && cube('landcover-2020') === lc0[2020] && lcRows === 10 && l1.attrib.includes(TIME_CREDITS.landcover), t('time land cover: a year shows the latest map in or before it, only that year is asked of the datacube, and the key has the ten classes of the area'), JSON.stringify({ year: l1.year, lines: l1.lines, lv, lc0, now: [cube('landcover-2010'), cube('landcover-2015'), cube('landcover-2020')], lcRows }))
+  await timeTo(page, '2020'); await page.waitForTimeout(400)
+  const l2 = await timeUi(page), lo2 = await opacityOf(LC)
+  report(lst.state === 'ok' && l1.year === '2016' && l1.lines.includes('Land cover: 2015, the latest before 2016.') && lo1['landcover-2015'].join() === 'visible,0.7' && lo1['landcover-2010'].join() === 'visible,0' && lo1['landcover-2020'].join() === 'visible,0' && l2.lines.includes('Land cover: 2020.') && lo2['landcover-2020'][1] === 0.7 && lo2['landcover-2015'][1] === 0 && fileRequests('landcover-2010-2020.png') === 1 && cube('/ows/landcover') === lcCube && lcRows === 11 && l1.attrib.includes(TIME_CREDITS.landcover), t('time land cover: its one picture is asked for once and nothing of the datacube, a year shows the latest map in or before it, a step to another year only changes which picture is opaque, and the key has the eleven classes of the box'), JSON.stringify({ lst, year: l1.year, lines: [l1.lines, l2.lines], lo1, lo2, file: fileRequests('landcover-2010-2020.png'), cube: [lcCube, cube('/ows/landcover')], lcRows }))
   if (shot) await shot('time-landcover')
   await tick('landcover', false)
 
@@ -2257,9 +2277,9 @@ async function checkTime(page, requests, t, name, shot) {
   await tick('canopy')
   await waitStatus(page, 'canopy', 40000).catch(() => {})
   await timeTo(page, '2019'); await page.waitForTimeout(800)
-  const v1 = await timeUi(page), vv = await timeVis(page, ['canopy-2013', 'canopy-2019', 'canopy-2023']), vst = await statusOf(page, 'canopy')
+  const v1 = await timeUi(page), vv = await opacityOf(['canopy-2013', 'canopy-2019', 'canopy-2023']), vst = await statusOf(page, 'canopy')
   const pics = TIME_FILES.canopy.map((f) => fileRequests(f))
-  report(vst.state === 'ok' && v1.lines.includes('Tree canopy, City of Victoria: 2019.') && vv['canopy-2019'] === 'visible' && vv['canopy-2013'] === 'none' && vv['canopy-2023'] === 'none' && pics.every((n) => n === 1) && v1.attrib.includes(TIME_CREDITS.canopy), t('time tree canopy: the three pictures are asked for once each when the box is ticked, 2019 shows the 2019 picture only, with the credit'), JSON.stringify({ vst, lines: v1.lines, vv, pics }))
+  report(vst.state === 'ok' && v1.lines.includes('Tree canopy, City of Victoria: 2019.') && vv['canopy-2019'].join() === 'visible,0.8' && vv['canopy-2013'].join() === 'visible,0' && vv['canopy-2023'].join() === 'visible,0' && pics.every((n) => n === 1) && v1.attrib.includes(TIME_CREDITS.canopy), t('time tree canopy: the three pictures are asked for once each when the box is ticked, 2019 shows the 2019 picture only (the others drawn at no opacity, ready to fade in), with the credit'), JSON.stringify({ vst, lines: v1.lines, vv, pics }))
   if (shot) await shot('time-canopy')
   await tick('canopy', false)
 
@@ -2310,6 +2330,17 @@ async function checkTime(page, requests, t, name, shot) {
   report(!!p2008 && p2008.title === 'Forest loss in 2008' && p2008.text.includes('Hansen/UMD/Google/USGS/NASA') && p2008.text.includes('CC BY 4.0') && p2008.links.some((l) => l.includes('glad.earthengine.app')) && !(p2020?.title || '').startsWith('Forest loss'), t('time forest loss: a click on a cell of 2008 opens its popup with the credit, the licence and a link, and a cell of 2020 is not shown before 2020'), JSON.stringify({ p2008, p2020 }))
   if (shot) await shot('time-forestloss')
   await page.evaluate(() => document.querySelector('.maplibregl-popup')?.remove())
+
+  // ---- two steps: with only the ecosystems on, the bar is Earlier and Later alone. A layer with more steps brings Play, speed and slider back.
+  for (const id of ['herringyears', 'aerials', 'forestloss']) await tick(id, false)
+  await page.waitForTimeout(400)
+  const parts = () => page.evaluate(() => ({ play: document.getElementById('time-play').hidden, speed: document.getElementById('time-speed-box').hidden, track: document.getElementById('time-track').hidden, prev: document.getElementById('time-prev').getBoundingClientRect().width > 0, row: document.querySelector('#timebar .time-row').scrollWidth <= document.querySelector('#timebar .time-row').clientWidth + 1 }))
+  const two1 = await parts(), tw1 = await timeUi(page)
+  await page.click('#time-prev'); const tw2 = await timeUi(page)
+  await page.click('#time-next'); const tw3 = await timeUi(page)
+  await tick('herringyears'); await waitStatus(page, 'herringyears', 30000).catch(() => {})
+  const two2 = await parts()
+  report(tw1.axis.join() === '1994-95,2002' && two1.play && two1.speed && two1.track && two1.prev && tw1.year === '2002' && tw2.year === '1994-95' && tw3.year === '2002' && !two2.play && !two2.speed && !two2.track && two2.row, t('time two steps: with only the ecosystems on, the bar has Earlier and Later and no Play, speed or slider, and ticking herring brings them back, all in one row that fits'), JSON.stringify({ two1, axis: tw1.axis, years: [tw1.year, tw2.year, tw3.year], two2 }))
 
   // ---- everything off: the slider goes, and so do the credits
   for (const id of ['herringyears', 'aerials', 'sei', 'forestloss']) await tick(id, false)
@@ -2433,10 +2464,10 @@ async function checkOverlaysBlocked(browser, base) {
   await page.waitForFunction(() => window.__map.getSource('ov-alerts') && window.__map.querySourceFeatures('ov-alerts').length > 0, null, { timeout: 30000 }).catch(() => {})
   const shown = await page.evaluate(() => ({ state: document.getElementById('status-alerts').dataset.state, text: document.querySelector('#alerts-list .alert-text')?.textContent, title: document.querySelector('#alerts-list summary')?.textContent, count: window.__map.getSource('ov-alerts') ? window.__map.querySourceFeatures('ov-alerts').length : 0 }))
   report(shown.state === 'ok' && shown.text === text && shown.title.includes('orange warning') && shown.count > 0, t('an alert is shown word for word as issued, with its area drawn on the map'), JSON.stringify(shown))
-  // Change over time: with the datacube blocked, the air photos and the land cover ask for their map images and then say plainly they could not
-  // be loaded. The herring spawn by year is a file of this site and still loads.
+  // Change over time: with the datacube blocked, the air photos ask for their map images and then say plainly they could not be loaded. The
+  // herring spawn by year and the land cover are files of this site and still load.
   await page.evaluate(() => window.__map.jumpTo({ center: [-123.365, 48.43], zoom: 12, pitch: 0 }))
-  for (const [id, words] of [['aerials', 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.'], ['landcover', 'The land cover could not be loaded just now from Natural Resources Canada. Try again later.']]) {
+  for (const [id, words] of [['aerials', 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.']]) {
     const before = hostCount(requests, 'datacube.services.geo.ca')
     await setBox(page, `input[data-time=${id}]`, true)
     await page.waitForFunction((id) => document.getElementById('status-' + id).dataset.state === 'fail', id, { timeout: 60000 }).catch(() => {})
@@ -2448,6 +2479,11 @@ async function checkOverlaysBlocked(browser, base) {
   await waitStatus(page, 'herringyears', 30000).catch(() => {})
   const hy = await statusOf(page, 'herringyears')
   report(hy.state === 'ok', t('time herring loads from this site while the outside services are blocked'), JSON.stringify(hy))
+  await setBox(page, 'input[data-time=landcover]', true)
+  await waitStatus(page, 'landcover', 30000).catch(() => {})
+  const lcb = await statusOf(page, 'landcover')
+  report(lcb.state === 'ok', t('time land cover loads from this site while the outside services are blocked'), JSON.stringify(lcb))
+  await setBox(page, 'input[data-time=landcover]', false)
   await setBox(page, 'input[data-time=herringyears]', false)
   // the static layers need no outside service
   for (const id of ['ecoregions', 'industry', 'protected', 'srkw', 'rkw', 'cetaceans', 'kelp', 'eelgrass', 'herring', 'seabirds']) {

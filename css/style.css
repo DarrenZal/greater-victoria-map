@@ -133,6 +133,9 @@ body {
 .time-row { display: flex; align-items: center; gap: 6px; }
 #timebar button.small { min-height: 40px; min-width: 44px; padding: 4px 12px; }
 #time-prev, #time-next { font-size: 20px; line-height: 1; }
+#time-speed-box { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+#time-speed { min-height: 40px; font: inherit; }
+#time-speed-box[hidden], #time-track[hidden], #time-play[hidden] { display: none; }
 #time-year { margin-left: auto; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 #time-slider { display: block; width: 100%; height: 32px; margin: 4px 0 0; accent-color: var(--accent); }
 .time-ends { display: flex; justify-content: space-between; font-size: 12px; opacity: .8; }
