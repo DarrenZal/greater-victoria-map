@@ -29,6 +29,7 @@ const LOSS_ATTRIB = `Forest loss: <a href="${LOSS_PAGE}" target="_blank" rel="no
 const EMPTY = { type: 'FeatureCollection', features: [] }
 const TILE_WAIT_MS = 10000 // the longest a step waits for its map images
 const AERIAL_MAX_ZOOM = { 1932: 17, 1950: 18 } // about 1 m and 0.5 m a pixel
+const aerialSource = (t) => ({ type: 'raster', tiles: [aerialTileUrl(t)], tileSize: 256, bounds: AERIAL_BOUNDS[t], maxzoom: AERIAL_MAX_ZOOM[t] })
 const LANDCOVER_OPACITY = 0.7
 const CANOPY_OPACITY = 0.8
 const FADE_MS = 250 // a picture fades into the next year's over this long, or at once under reduced motion
@@ -39,8 +40,7 @@ const plural = (n, one, many) => `${n.toLocaleString('en-CA')} ${n === 1 ? one :
 
 export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demTiles, exaggeration }) {
   const timeline = createTimeline({ $, motionQuery })
-  const swipe = createSwipe({ map, MapClass, el, demTiles, exaggeration })
-  const seiSwipe = createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove: seiMoved })
+  const pairSwipe = createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove: pairMoved, listeners: { error: tileError, sourcedata: tileData } })
   let ready
   const whenReady = new Promise((resolve) => { ready = resolve })
 
@@ -78,7 +78,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   // ---- the layers. `ids` are hidden when the box is unticked. `kind` and `steps` are what each registers with the time control.
   const DEFS = {
     herringyears: { label: 'Herring spawn by year', ids: ['herringyears-all', 'herringyears-dot'], ui: ['herringyears-note'], kind: 'event', load: loadHerring },
-    aerials: { label: 'Air photos', ids: ['aerial-1932', 'aerial-1950'], ui: ['aerials-controls', 'aerials-note'], kind: 'snapshot', steps: AERIAL_YEARS, load: async () => ({ message: 'Greyscale air photos of central Victoria, Oak Bay, Esquimalt and south Saanich, from Natural Resources Canada.' }) },
+    aerials: { label: 'Air photos', ids: ['aerial-1932', 'aerial-1950', 'aerials-credit'], ui: ['aerials-note'], kind: 'snapshot', steps: AERIAL_YEARS, load: async () => ({ message: 'Greyscale air photos of central Victoria, Oak Bay, Esquimalt and south Saanich, from Natural Resources Canada.' }) },
     sei: { label: 'Sensitive ecosystems', ids: ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-line'], ui: ['sei-key', 'sei-note'], kind: 'snapshot', steps: SEI_YEARS, load: loadSei },
     sei2014: { label: 'Garry oak ecosystems mapped in 2014', ids: ['sei2014-fill', 'sei2014-line'], ui: ['sei2014-note'], load: loadSei2014 },
     landcover: { label: 'Land cover', ids: [...LANDCOVER_YEARS.map((s) => `landcover-${s.t}`), 'landcover-credit'], ui: ['landcover-key', 'landcover-note'], kind: 'snapshot', steps: LANDCOVER_YEARS, load: loadLandcover },
@@ -96,23 +96,23 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     },
     aerials: {
       show: (frame) => {
+        if (pairAlone('aerials')) return pairTo('aerials', frame)
+        pairShut('aerials')
         const want = frame ? `aerial-${frame.t}` : null, mine = ++aerialStep
         const others = () => { for (const s of AERIAL_YEARS) if (`aerial-${s.t}` !== want) show(`aerial-${s.t}`, false) }
         if (!want) { others(); return null }
         show(want, true)
         return tilesIn(want).then(() => { if (mine === aerialStep) others() })
       },
-      line: (frame, t) => snapshotLine('Air photo', AERIAL_YEARS, frame, t),
+      ...pairParts('aerials', (frame, t) => snapshotLine('Air photo', AERIAL_YEARS, frame, t)),
     },
     sei: {
       show: (frame) => {
-        if (seiAlone()) return seiSwipeTo(frame)
-        seiSwipeShut()
+        if (pairAlone('sei')) return pairTo('sei', frame)
+        pairShut('sei')
         for (const s of SEI_YEARS) for (const part of ['fill', 'line']) show(`sei-${s.t}-${part}`, s.t === frame?.t)
       },
-      line: (frame, t) => (seiSwipe.isOpen() ? seiSwipeLine() : snapshotLine('Sensitive ecosystems', SEI_YEARS, frame, t)),
-      canStep: (dir) => seiSwipe.isOpen() && (dir < 0 ? seiSwipe.at() < 1 : seiSwipe.at() > 0),
-      label: (step) => (seiSwipe.isOpen() && seiSwipe.at() > 0 && seiSwipe.at() < 1 ? '1994-95 and 2002' : step.label),
+      ...pairParts('sei', (frame, t) => snapshotLine('Sensitive ecosystems', SEI_YEARS, frame, t)),
     },
     landcover: {
       show: (frame) => crossfade('landcover', LANDCOVER_YEARS, frame, LANDCOVER_OPACITY),
@@ -154,22 +154,19 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     if (def.kind !== 'snapshot') for (const l of def.ids) show(l, true)
     if (!def.kind) return
     if (id === 'canopy' || id === 'landcover') show(`${id}-credit`, true)
-    if (id === 'aerials' && $('aerials-swipe').checked) openSwipe()
-    else join(id)
+    join(id)
   }
   function disable(id) {
     const def = DEFS[id]
     state[id].on = false
+    // The layer left on the slider, if it is alone and has two years, gets the swipe as it leaves.
     if (def.kind) timeline.unregister(id)
-    if (id === 'aerials') { aerialStep++; closeSwipe(); $('aerials-swipe').checked = false }
-    if (id === 'sei') seiSwipeShut()
+    if (id === 'aerials') aerialStep++
+    pairShut(id)
     for (const l of def.ids) show(l, false)
     for (const u of def.ui || []) $(u).hidden = true
     setStatus(id, '', '')
-    // With the photos' swipe gone, the ecosystems may be alone on the slider again, and then they get their own swipe.
-    if (id === 'aerials') reapply()
   }
-  const reapply = () => { const s = timeline.state(); if (s.axis.length) timeline.go(s.at) }
   for (const box of document.querySelectorAll('input[data-time]')) {
     box.addEventListener('change', () => {
       const id = box.dataset.time
@@ -177,26 +174,61 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     })
   }
 
-  // ---- the swipe of the air photos: 1932 on the left of a line the visitor drags, 1950 on the right. While it is open the photos leave the
-  // time control, because both years are on the screen at once. It opens before the photos leave, so the ecosystems, if they are then
-  // alone on the slider, keep to one year and the map never has two lines.
-  const SWIPE_LINE = 'Swipe: 1932 on the left of the line and 1950 on the right. Drag the line, or use the arrow keys on it.'
-  function openSwipe() {
-    aerialStep++
-    show('aerial-1932', false); show('aerial-1950', true)
-    const source = { type: 'raster', tiles: [aerialTileUrl(1932)], tileSize: 256, bounds: AERIAL_BOUNDS[1932], maxzoom: AERIAL_MAX_ZOOM[1932] }
-    swipe.open({ left: { sources: { 'aerial-1932-left': source }, layers: [{ id: 'aerial-1932-left', type: 'raster', source: 'aerial-1932-left', paint: { 'raster-fade-duration': 0 } }] } }, ['1932', '1950'])
-    timeline.unregister('aerials')
-    reapply()
-    setStatus('aerials', 'ok', SWIPE_LINE)
+  // ---- the swipe. A layer of two years alone on the slider (the air photos, the ecosystems) is drawn by two maps of its own over the page's
+  // map, the earlier year left of a line the visitor drags and the later year right of it, so neither year shows through the other. Earlier
+  // puts the line at the right edge, so the earlier year fills the map, and Later at the left edge, so the later year does. A line dragged to
+  // an edge moves the step to that year. With another layer on the slider, the layer follows the slider again.
+  const PAIRS = {
+    aerials: {
+      title: 'Air photos', names: ['1932', '1950'],
+      side: (t) => ({ sources: { [`aerial-${t}`]: aerialSource(t) }, layers: [{ id: `aerial-${t}`, type: 'raster', source: `aerial-${t}`, paint: { 'raster-fade-duration': 0 } }] }),
+      // The photos have no popups, so the page's map draws neither year, and an empty source carries their credit.
+      page: (open) => { if (open) { aerialStep++; for (const s of AERIAL_YEARS) show(`aerial-${s.t}`, false) } show('aerials-credit', open) },
+    },
+    sei: {
+      title: 'Sensitive ecosystems', names: ['1994-95', '2002'],
+      side: (t) => seiSide(t),
+      // The page's map keeps both years at no opacity, so a click still finds them (hiddenAt picks the year on the clicked side).
+      page: (open) => { if (open) for (const id of SEI_IDS) show(id, true); seiOpacity(!open) },
+    },
+  }
+  const pair = { id: null, dragged: false }
+  const pairAlone = (id) => { const l = timeline.state().layers; return l.length === 1 && l[0] === id }
+  function pairTo(id, frame) {
+    const years = DEFS[id].steps, edge = frame?.t === years[1].t ? 0 : 1
+    if (pair.id !== id) {
+      if (pair.id) pairShut(pair.id)
+      PAIRS[id].page(true)
+      pairSwipe.open({ left: PAIRS[id].side(years[0].t), right: PAIRS[id].side(years[1].t) }, PAIRS[id].names, { at: edge, edges: true })
+      pair.id = id
+    } else if (!pair.dragged) pairSwipe.setAt(edge)
+  }
+  function pairShut(id) {
+    if (pair.id !== id) return
+    pairSwipe.close()
+    pair.id = null
+    PAIRS[id].page(false)
+  }
+  function pairMoved(at) {
+    const want = at <= 0 ? 1 : at >= 1 ? 0 : null
+    if (want != null && timeline.state().at !== want) { pair.dragged = true; timeline.go(want); pair.dragged = false } else timeline.refresh()
+  }
+  function pairLine(id) {
+    const { title, names } = PAIRS[id], at = pairSwipe.at()
+    if (at >= 1) return `${title}: ${names[0]}. Drag the line at the right edge to compare it with ${names[1]}.`
+    if (at <= 0) return `${title}: ${names[1]}. Drag the line at the left edge to compare it with ${names[0]}.`
+    return `${title}: ${names[0]} on the left of the line, ${names[1]} on the right.`
+  }
+  // What the time control asks of a layer that may have the swipe: its readout line, whether an arrow moves the line, and the year shown.
+  function pairParts(id, line) {
+    return {
+      line: (frame, t) => (pair.id === id ? pairLine(id) : line(frame, t)),
+      canStep: (dir) => pair.id === id && (dir < 0 ? pairSwipe.at() < 1 : pairSwipe.at() > 0),
+      label: (step) => (pair.id === id && pairSwipe.at() > 0 && pairSwipe.at() < 1 ? PAIRS[id].names.join(' and ') : step.label),
+    }
   }
 
-  // ---- the swipe of the ecosystems. With the ecosystems alone on the slider and the photos' swipe shut, 1994-95 is drawn left of a line the
-  // visitor drags and 2002 right of it, each by a map of its own, so neither year shows through the other. The page's map keeps both
-  // layers at no opacity, so a click still finds them (hiddenAt picks the year on the clicked side). Earlier puts the line at the right edge,
-  // so 1994-95 fills the map, and Later at the left edge, so 2002 does. A line dragged to an edge moves the step to that year.
-  const sei = { data: {}, dragged: false }
-  const seiAlone = () => { const l = timeline.state().layers; return l.length === 1 && l[0] === 'sei' && !swipe.isOpen() }
+  const sei = { data: {} }
   const seiSide = (v) => ({
     sources: { [`sei-${v}`]: { type: 'geojson', data: sei.data[v] } },
     layers: [
@@ -211,51 +243,25 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
       else map.setPaintProperty(id, 'line-opacity', on ? 1 : 0)
     }
   }
-  function seiSwipeTo(frame) {
-    const edge = frame?.t === 2002 ? 0 : 1
-    if (!seiSwipe.isOpen()) {
-      for (const id of SEI_IDS) show(id, true)
-      seiOpacity(false)
-      seiSwipe.open({ left: seiSide(1994), right: seiSide(2002) }, ['1994-95', '2002'], { at: edge, edges: true })
-    } else if (!sei.dragged) seiSwipe.setAt(edge)
-  }
-  function seiSwipeShut() {
-    if (!seiSwipe.isOpen()) return
-    seiSwipe.close()
-    seiOpacity(true)
-  }
-  function seiMoved(p) {
-    const want = p <= 0 ? 1 : p >= 1 ? 0 : null
-    if (want != null && timeline.state().at !== want) { sei.dragged = true; timeline.go(want); sei.dragged = false } else timeline.refresh()
-  }
-  function seiSwipeLine() {
-    const p = seiSwipe.at()
-    if (p >= 1) return 'Sensitive ecosystems: 1994-95. Drag the line at the right edge to compare it with 2002.'
-    if (p <= 0) return 'Sensitive ecosystems: 2002. Drag the line at the left edge to compare it with 1994-95.'
-    return 'Sensitive ecosystems: 1994-95 on the left of the line, 2002 on the right.'
-  }
-  // While the ecosystems' swipe is open, a click on one side finds only the year drawn there.
-  const hiddenAt = (layer, point) => seiSwipe.isOpen() && ((layer === 'sei-1994-fill' && point.x > seiSwipe.x()) || (layer === 'sei-2002-fill' && point.x <= seiSwipe.x()))
-  function closeSwipe() { if (swipe.isOpen()) swipe.close() }
-  $('aerials-swipe').addEventListener('change', (e) => {
-    if (!state.aerials.on || !state.aerials.loaded) return
-    if (e.target.checked) openSwipe()
-    else { closeSwipe(); show('aerial-1950', false); setStatus('aerials', 'ok', state.aerials.message); join('aerials') }
-  })
+  // While the ecosystems have the swipe, a click on one side finds only the year drawn there.
+  const hiddenAt = (layer, point) => pair.id === 'sei' && ((layer === 'sei-1994-fill' && point.x > pairSwipe.x()) || (layer === 'sei-2002-fill' && point.x <= pairSwipe.x()))
 
   // ---- the map images of the federal datacube. A tile that fails says so in the status line while none of that layer's tiles has come.
   const WMS = { aerials: /^aerial-(1932|1950)$/ }
   const wms = { aerials: { ok: 0 } }
   const WMS_FAILURE = { aerials: 'The air photos could not be loaded just now from Natural Resources Canada. Try again later.' }
-  map.on('error', (e) => {
+  // The swipe's maps draw the photos too, so they pass their events here as well.
+  function tileError(e) {
     const id = Object.keys(WMS).find((k) => WMS[k].test(e.sourceId || ''))
     if (id && state[id].on && !wms[id].ok) setStatus(id, 'fail', WMS_FAILURE[id])
-  })
-  map.on('sourcedata', (e) => {
+  }
+  function tileData(e) {
     const id = Object.keys(WMS).find((k) => WMS[k].test(e.sourceId || ''))
     if (!id || !e.tile || e.tile.state !== 'loaded') return
-    if (!wms[id].ok++ && state[id].on && $(`status-${id}`).dataset.state === 'fail') setStatus(id, 'ok', id === 'aerials' && swipe.isOpen() ? SWIPE_LINE : state[id].message)
-  })
+    if (!wms[id].ok++ && state[id].on && $(`status-${id}`).dataset.state === 'fail') setStatus(id, 'ok', state[id].message)
+  }
+  map.on('error', tileError)
+  map.on('sourcedata', tileData)
 
   // ---- loading. Each file is fetched on the first tick only.
   async function loadHerring() {
@@ -415,9 +421,12 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     const geo = (id, attribution) => map.addSource(id, { type: 'geojson', data: EMPTY, attribution })
     // Air photos: one source per year, so each year keeps its own tiles, and a hidden year asks for nothing.
     for (const s of AERIAL_YEARS) {
-      map.addSource(`aerial-${s.t}`, { type: 'raster', tiles: [aerialTileUrl(s.t)], tileSize: 256, bounds: AERIAL_BOUNDS[s.t], maxzoom: AERIAL_MAX_ZOOM[s.t], attribution: AERIAL_ATTRIB })
+      map.addSource(`aerial-${s.t}`, { ...aerialSource(s.t), attribution: AERIAL_ATTRIB })
       map.addLayer({ id: `aerial-${s.t}`, type: 'raster', source: `aerial-${s.t}`, layout: hidden, paint: { 'raster-fade-duration': 0 } }, low)
     }
+    // While the photos have the swipe, the page's map draws neither year, so their credit rides on an empty point source.
+    geo('tl-aerials-credit', AERIAL_ATTRIB)
+    map.addLayer({ id: 'aerials-credit', type: 'circle', source: 'tl-aerials-credit', layout: hidden, paint: { 'circle-radius': 0, 'circle-opacity': 0 } }, before)
     // Tree canopy from LiDAR: the pictures are added on the first tick (loadCanopy), because an image source fetches its picture as soon as it
     // is added, even while hidden. An image source cannot carry a credit, so an empty point source does.
     pos.low = low
@@ -474,5 +483,5 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   // The popup of the forest loss under a click, or null.
   const pixelPopup = (lngLat) => { const y = lossAt(lngLat); return y ? popupFor(y, 'forestloss') : null }
 
-  return { addLayers, popupFor, pixelPopup, hiddenAt, queryLayers: QUERY_LAYERS, defs: DEFS, state, timeline, swipe, seiSwipe, loss }
+  return { addLayers, popupFor, pixelPopup, hiddenAt, queryLayers: QUERY_LAYERS, defs: DEFS, state, timeline, pairSwipe, pairOf: () => pair.id, loss }
 }

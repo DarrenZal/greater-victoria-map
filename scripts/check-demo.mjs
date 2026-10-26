@@ -638,7 +638,8 @@ const PICTURE_LIMIT = 1024 * 1024
 const FIRST_NATION_NAME = /tsawwassen|tsawout|native friendship/i
 const OGL_VICTORIA_STATEMENT = 'Contains information licensed under the Open Government Licence – City of Victoria.'
 
-// Boxes: every layer that changes over time has a box, off at load, the Swipe box is off and hidden, and the time slider is hidden.
+// Boxes: every layer that changes over time has a box, off at load, the air photos have no Swipe box, and the time slider is hidden.
+const AERIAL_SWIPE_SENTENCE = 'With no other layer on the time slider, a line splits the map: 1932 on its left and 1950 on its right.'
 function ruleTimeBoxes(html) {
   const out = []
   for (const id of TIME_IDS) {
@@ -646,9 +647,9 @@ function ruleTimeBoxes(html) {
     if (!m) out.push(`no box for ${id}`)
     else if (/\bchecked\b/.test(m[0])) out.push(`${id} is on by default`)
   }
-  const swipe = html.match(/<label[^>]*id="aerials-controls"[^>]*>\s*<input[^>]*id="aerials-swipe"[^>]*>/)
-  if (!swipe) out.push('no Swipe box under the air photos')
-  else { if (/\bchecked\b/.test(swipe[0])) out.push('Swipe is on by default'); if (!/<label[^>]*\bhidden\b/.test(swipe[0])) out.push('the Swipe box shows before the air photos are ticked') }
+  // The air photos get the swipe when they are alone on the slider, as the ecosystems do, so they have no Swipe box, and their note says so.
+  if (/id="aerials-swipe"/.test(html)) out.push('a Swipe box under the air photos, which get the swipe when alone on the slider')
+  if (!textOf(html).includes(AERIAL_SWIPE_SENTENCE)) out.push('the air photo note does not say that a line splits the map')
   if (!/<section id="timebar" hidden/.test(html)) out.push('the time slider is not hidden at load')
   if (!/<p id="time-paused" hidden>/.test(html)) out.push('the reduced motion note of the time slider is not hidden at load')
   if (!/<input type="range" id="time-slider"[^>]*aria-label="Year"/.test(html)) out.push('the time slider has no range input with a label')
@@ -782,7 +783,7 @@ function selftest() {
   const marineHtml = `<p><strong>Marine life and protection</strong> (each box off until you switch it on). None shows where an animal is now. Not for navigation. Each loads one file from this site.</p><p><strong>Protected marine areas.</strong> From CPCAD. Only the marine zone of each area is shown. The no-take line is the Marine Resource Use field.</p><p><strong>Killer whale important area.</strong> Experts drew by hand an area, not a sighting. It does not show where the whales are now and carries no added management.</p><p><strong>Whale and porpoise density.</strong> A model of summer 2018, not where animals are now. Nhat is the model's number. Canadian waters only.</p><p><strong>Coastal habitat</strong> (kelp beds, eelgrass, herring spawn and seabird colonies). Contains information licensed under the Open Government Licence – British Columbia. CRIMS is a legacy dataset that began in 1979 and was only updated now and then, and the Province has no plans to update it.</p><p><strong>Federal data in the marine layers above</strong> (protected areas). ${OGL_CANADA_STATEMENT}</p><p>Nothing here shows where an animal is now. Not for navigation.</p><p>Coastal habitat comes from the Province's Coastal Resource Information Management System (CRIMS). It is a legacy survey that began in 1979 and was only updated now and then, so it is not a current record.</p>`
   const marineJs = "const PROTECTED_ATTRIB = `Protected areas: CPCAD (${OGL_CANADA_LINK})`\nconst SRKW_ATTRIB = `Killer whale critical habitat: DFO (${OGL_CANADA_LINK})`\nconst RKW_ATTRIB = `Killer whale important area: DFO (${OGL_CANADA_LINK})`\nconst CETACEANS_ATTRIB = `Whale and porpoise model: DFO (${OGL_CANADA_LINK})`\nconst CRIMS_ATTRIB = `Coastal habitat: CRIMS, a legacy survey from 1979 (${OGL_BC_LINK})`\nsrc('ov-protected', PROTECTED_ATTRIB)\nsrc('ov-srkw', SRKW_ATTRIB)\nsrc('ov-rkw', RKW_ATTRIB)\nsrc('ov-cetaceans', CETACEANS_ATTRIB)\nsrc('ov-kelp', CRIMS_ATTRIB)\nsrc('ov-eelgrass', CRIMS_ATTRIB)\nsrc('ov-herring', CRIMS_ATTRIB)\nsrc('ov-seabirds', CRIMS_ATTRIB)"
   // Change over time fixtures
-  const timeHtml = (checked = false, over = {}) => TIME_IDS.map((id) => `<input type="checkbox" data-time="${id}"${checked ? ' checked' : ''}>`).join('') + (over.swipe ?? '<label class="sub" id="aerials-controls" hidden><input type="checkbox" id="aerials-swipe"> <span>Swipe</span></label>') + (over.bar ?? '<section id="timebar" hidden aria-label="Time slider"><label id="time-speed-box">Speed <select id="time-speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option></select></label><input type="range" id="time-slider" min="0" max="0" step="1" value="0" aria-label="Year"><p id="time-paused" hidden>x</p></section>') + `<p>${over.sentence ?? TIME_SENTENCE}</p>`
+  const timeHtml = (checked = false, over = {}) => TIME_IDS.map((id) => `<input type="checkbox" data-time="${id}"${checked ? ' checked' : ''}>`).join('') + (over.note ?? `<p id="aerials-note" hidden>${AERIAL_SWIPE_SENTENCE}</p>`) + (over.bar ?? '<section id="timebar" hidden aria-label="Time slider"><label id="time-speed-box">Speed <select id="time-speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option></select></label><input type="range" id="time-slider" min="0" max="0" step="1" value="0" aria-label="Year"><p id="time-paused" hidden>x</p></section>') + `<p>${over.sentence ?? TIME_SENTENCE}</p>`
   const tf = (name, features) => f(`data/${name}.geojson`, fc(features))
   const pointF = (props, c = [-123.4, 48.5]) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: props })
   const polyF = (props, b) => ({ type: 'Feature', geometry: sq(b), properties: props })
@@ -905,7 +906,8 @@ function selftest() {
     ['ruleMarineCredits (a source without its credit)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml), f('x.js', marineJs.replace("src('ov-herring', CRIMS_ATTRIB)", "src('ov-herring', USGS_ATTRIB)"))], [f('x.html', marineHtml), f('x.js', marineJs)]],
     ['ruleMarineCredits (the credit does not name its licence)', (files) => ruleMarineCredits(files[0].text, files[1].text), [f('x.html', marineHtml), f('x.js', marineJs.replace('(${OGL_CANADA_LINK})', ''))], [f('x.html', marineHtml), f('x.js', marineJs)]],
     ['ruleTimeBoxes (on by default)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(true))], [f('x.html', timeHtml())]],
-    ['ruleTimeBoxes (Swipe shown at load)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { swipe: '<label class="sub" id="aerials-controls"><input type="checkbox" id="aerials-swipe"> <span>Swipe</span></label>' }))], [f('x.html', timeHtml())]],
+    ['ruleTimeBoxes (a Swipe box under the air photos)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { note: `<label class="sub" id="aerials-controls" hidden><input type="checkbox" id="aerials-swipe"> <span>Swipe</span></label><p id="aerials-note" hidden>${AERIAL_SWIPE_SENTENCE}</p>` }))], [f('x.html', timeHtml())]],
+    ['ruleTimeBoxes (no swipe sentence for the air photos)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { note: '<p id="aerials-note" hidden>The photos.</p>' }))], [f('x.html', timeHtml())]],
     ['ruleTimeBoxes (slider shown at load)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { bar: '<section id="timebar" aria-label="Time slider"><label id="time-speed-box">Speed <select id="time-speed"><option value="1" selected>1x</option></select></label><input type="range" id="time-slider" aria-label="Year"><p id="time-paused" hidden>x</p></section>' }))], [f('x.html', timeHtml())]],
     ['ruleTimeBoxes (no speed box)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { bar: '<section id="timebar" hidden aria-label="Time slider"><input type="range" id="time-slider" aria-label="Year"><p id="time-paused" hidden>x</p></section>' }))], [f('x.html', timeHtml())]],
     ['ruleTimeBoxes (no sentence)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { sentence: 'Layers.' }))], [f('x.html', timeHtml())]],
@@ -1070,7 +1072,7 @@ function checkTree() {
   report(...pair(ruleMarineCredits(html, overlaysJs), 'marine life and protection: the credits and the panel say what each layer is, how old it is and that it is not for navigation, and every source carries its credit on the map'))
   report(...pair(ruleCrimsVintage(files, textOf(credits)), 'coastal habitat: the survey years in the credits are the years in the data (herring spawn records, eelgrass mapping)'))
   const timeLayersJs = byPath['js/time-layers.js']?.text || '', timelineJs = byPath['js/timeline.js']?.text || ''
-  report(...pair(ruleTimeBoxes(html), 'change over time: every layer has a box, all off by default, Swipe off and hidden, the time slider hidden at load, and the section sentence present'))
+  report(...pair(ruleTimeBoxes(html), 'change over time: every layer has a box, all off by default, no Swipe box and a note that a line splits the map for the air photos, the time slider hidden at load, and the section sentence present'))
   report(...pair(ruleTimeFiles(files), `change over time: ${Object.keys(TIME_FILES).length} data files inside their boxes with only the fields the popups use, sensible years, no place named for a First Nation, disturbed patches in 2002, the 2014 mapping in the west only, and ${TIME_PICTURES.length} pictures under 1 MB each`))
   report(...pair(ruleTimeCredits(html, timeLayersJs), 'change over time: the credits say what each layer is and carry its licence statement word for word, and every source on the map carries its credit and licence'))
   report(...pair(ruleTimeControl(timelineJs), 'change over time: Play is off at load and under reduced motion, waits while the tab is hidden, and its readout is not read out while it plays'))

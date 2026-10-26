@@ -2185,42 +2185,49 @@ async function checkTime(page, requests, t, name, shot) {
   report(a2.year === '1932' && a2.lines.join('|') === 'Herring spawn: the records begin with the 1950/1951 season.|Air photo: 1932.' && gap['aerial-1932'] === 'visible' && gap['aerial-1950'] === 'visible' && av2['aerial-1932'] === 'visible' && av2['aerial-1950'] === 'none' && cube('time=1932') > 0, t('time air photos: 1932 asks the datacube for the 1932 photo and shows it, the 1950 photo stays drawn until the 1932 tiles are in so the map is never empty between years, and the herring line says its records begin later'), JSON.stringify({ a2: a2.lines, gap, av2 }))
   if (shot) await shot('time-aerial-1932')
 
-  // ---- the swipe: a second map draws 1932 left of a line, the page's map draws 1950, the two follow each other, and the line moves by keyboard
-  await panel(true)
-  const swipeShown = await page.evaluate(() => !document.getElementById('aerials-controls').hidden)
-  await setBox(page, '#aerials-swipe', true)
-  await page.waitForFunction(() => window.__time.swipe.isOpen(), null, { timeout: 10000 }).catch(() => {})
-  await panel(false)
+  // ---- the photos' swipe: alone on the slider, two maps of their own draw 1932 left of a line and 1950 right of it. They follow the page's map
+  // exactly, the page's map draws neither year but keeps their credit, Later and Earlier snap the line to the edges, and the arrow keys move it.
+  await tick('herringyears', false)
+  await page.waitForFunction(() => window.__time.pairOf() === 'aerials', null, { timeout: 10000 }).catch(() => {})
   await page.evaluate(() => window.__map.jumpTo({ center: [-123.37, 48.425], zoom: 14.2 }))
   await page.waitForTimeout(2500)
   const camera = () => page.evaluate(() => {
-    const m = window.__map, o = window.__time.swipe.other(), c = (x) => [x.getCenter().lng.toFixed(7), x.getCenter().lat.toFixed(7), x.getZoom().toFixed(4), x.getPitch().toFixed(3), x.getBearing().toFixed(3), x.getCenterElevation().toFixed(2)].join()
-    const box = document.querySelector('.swipe-map'), h = document.querySelector('.swipe-handle')
-    return o ? { main: c(m), other: c(o), terrain: [!!m.getTerrain(), !!o.getTerrain()], clip: box.style.clipPath, now: h.getAttribute('aria-valuenow'), text: h.getAttribute('aria-valuetext'), role: h.getAttribute('role'), layers: o.getStyle().layers.map((l) => l.id), events: getComputedStyle(box).pointerEvents } : null
+    const m = window.__map, S = window.__time.pairSwipe, c = (x) => [x.getCenter().lng.toFixed(7), x.getCenter().lat.toFixed(7), x.getZoom().toFixed(4), x.getPitch().toFixed(3), x.getBearing().toFixed(3), x.getCenterElevation().toFixed(2)].join()
+    const boxes = [...document.querySelectorAll('.swipe-map')], h = document.querySelector('.swipe-handle')
+    if (!S.isOpen()) return { pair: window.__time.pairOf(), boxes: boxes.length, handle: !!h }
+    return { pair: window.__time.pairOf(), main: c(m), others: S.maps().map(c), terrain: [!!m.getTerrain(), ...S.maps().map((o) => !!o.getTerrain())], boxes: boxes.length, clips: boxes.map((b) => b.style.clipPath).join('|'),
+      now: h.getAttribute('aria-valuenow'), edge: h.dataset.edge ?? null, text: h.getAttribute('aria-valuetext'), role: h.getAttribute('role'), events: boxes.map((b) => getComputedStyle(b).pointerEvents).join(),
+      layers: S.maps().map((o) => o.getStyle().layers.map((l) => l.id).join()).join('/'), skirts: S.maps().map((o) => o._terrainSkirtLength).join() }
   })
-  const s1 = await camera(), sw1 = await timeUi(page), sst = await statusOf(page, 'aerials'), sv = await timeVis(page, ['aerial-1932', 'aerial-1950'])
-  await page.focus('.swipe-handle'); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft')
-  const s2 = await camera()
-  report(swipeShown && !!s1 && s1.main === s1.other && s1.role === 'slider' && s1.now === '50' && s2.now === '46' && s1.clip !== s2.clip && /1932 on the left of the line, 1950 on the right/.test(s1.text) && s1.layers.join() === 'aerial-1932-left' && s1.events === 'none' && sv['aerial-1950'] === 'visible' && sv['aerial-1932'] === 'none' && !sw1.layers.includes('aerials') && sst.text.startsWith('Swipe: 1932 on the left of the line and 1950 on the right.'), t('time swipe: the Swipe box shows once the photos are on, a second map draws only the 1932 photo left of the line and follows the page’s map exactly, the page’s map shows 1950, the photos leave the slider, and the line is a slider the arrow keys move'), JSON.stringify({ swipeShown, s1, s2: s2 && [s2.now, s2.clip], sv, layers: sw1.layers, sst }))
-  // In 3D the second map lifts its photo over the same terrain, from the same camera, including the height of the centre.
+  const PAGE_PHOTOS = ['aerial-1932', 'aerial-1950', 'aerials-credit']
+  const s1 = await camera(), sw1 = await timeUi(page), sv1 = await timeVis(page, PAGE_PHOTOS)
+  await page.click('#time-next'); const s2 = await camera(), sw2 = await timeUi(page)
+  await page.click('#time-prev'); await page.focus('.swipe-handle'); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft')
+  const s3 = await camera(), sw3 = await timeUi(page)
+  report(s1.pair === 'aerials' && s1.boxes === 2 && s1.others?.every((o) => o === s1.main) && s1.role === 'slider' && s1.events === 'none,none' && s1.layers === 'aerial-1932/aerial-1950' && s1.skirts === 'none,none'
+    && s1.now === '100' && s1.edge === 'right' && sw1.year === '1932' && sw1.lines.join('|') === 'Air photos: 1932. Drag the line at the right edge to compare it with 1950.'
+    && sv1['aerial-1932'] === 'none' && sv1['aerial-1950'] === 'none' && sv1['aerials-credit'] === 'visible' && sw1.attrib.includes(TIME_CREDITS.aerials)
+    && s2.now === '0' && s2.edge === 'left' && sw2.year === '1950' && s3.now === '96' && s3.edge === null && s3.clips !== s1.clips && sw3.year === '1932 and 1950'
+    && /1932 on the left of the line, 1950 on the right/.test(s3.text) && sw3.lines.join('|') === 'Air photos: 1932 on the left of the line, 1950 on the right.',
+  t('time photos swipe: alone on the slider the photos get a line with 1932 on its left and 1950 on its right, each drawn by its own map that follows the page’s map exactly and draws no terrain skirts, the page’s map draws neither year and keeps their credit, Later and Earlier snap the line to the edges, and the arrow keys move it'), JSON.stringify({ s1, s2: [s2.now, s2.edge, sw2.year], s3: [s3.now, s3.edge, sw3.year, sw3.lines], sv1, lines: sw1.lines }))
+  // In 3D the two maps lift their photos over the same terrain, from the same camera, including the height of the centre.
   if (name === 'desktop') {
     await setBox(page, '#terrain3d', true)
     await page.waitForFunction(() => Math.abs(window.__map.getPitch() - 60) < 1 && !window.__map.isMoving(), null, { timeout: 60000 }).catch(() => {})
     await page.waitForTimeout(4000)
-    const s3 = await camera()
-    report(!!s3 && s3.main === s3.other && s3.terrain.every(Boolean), t('time swipe in 3D: the second map has the same terrain and the same camera, height of the centre included, so the two photos line up'), JSON.stringify(s3))
+    const s4 = await camera()
+    report(s4.others?.every((o) => o === s4.main) && s4.terrain.length === 3 && s4.terrain.every(Boolean), t('time photos swipe in 3D: the two maps have the same terrain and the same camera, height of the centre included, so the photos line up'), JSON.stringify(s4))
     if (shot) await shot('time-swipe-3d')
     await setBox(page, '#terrain3d', false)
     await page.waitForFunction(() => window.__map.getPitch() < 0.5 && !window.__map.getTerrain(), null, { timeout: 60000 }).catch(() => {})
     await page.waitForTimeout(1500)
   } else if (shot) await shot('time-swipe')
-  await panel(true)
-  await setBox(page, '#aerials-swipe', false)
-  await panel(false)
+  // Another time layer takes the swipe away, and the page's map shows the photo of the slider's year again.
+  await tick('herringyears'); await waitStatus(page, 'herringyears', 30000).catch(() => {})
   await page.waitForTimeout(800)
-  const s4 = await page.evaluate(() => ({ open: window.__time.swipe.isOpen(), box: !!document.querySelector('.swipe-map'), handle: !!document.querySelector('.swipe-handle') }))
-  const sw4 = await timeUi(page)
-  report(!s4.open && !s4.box && !s4.handle && sw4.layers.includes('aerials'), t('time swipe: unticking Swipe removes the second map and its line and puts the photos back on the slider'), JSON.stringify({ s4, layers: sw4.layers }))
+  const s5 = await camera(), sw5 = await timeUi(page), sv5 = await timeVis(page, PAGE_PHOTOS)
+  report(s5.pair === null && s5.boxes === 0 && !s5.handle && sw5.layers.includes('aerials') && sw5.layers.includes('herringyears') && (sv5['aerial-1932'] === 'visible' || sv5['aerial-1950'] === 'visible') && sv5['aerials-credit'] === 'none' && sw5.attrib.includes(TIME_CREDITS.aerials),
+    t('time photos swipe: ticking another time layer removes the two maps and the line, and the page’s map shows the photo of the slider’s year with its credit'), JSON.stringify({ s5, layers: sw5.layers, sv5 }))
 
   // ---- sensitive ecosystems: 1994-95 and 2002 are two pictures of the same ground, and a disturbed patch says so
   await tick('sei')
@@ -2346,8 +2353,8 @@ async function checkTime(page, requests, t, name, shot) {
   // both at no opacity for clicks. Later puts the line at the left edge and Earlier at the right edge. A line in between names both years and
   // lets both arrows work, a line moved to an edge moves the step, and a click finds the year drawn on its side of the line.
   const sw = () => page.evaluate(() => {
-    const S = window.__time.seiSwipe, m = window.__map
-    return { open: S.isOpen(), at: S.at(), maps: S.maps().map((o) => o.getStyle().layers.map((l) => l.id).join()), boxes: document.querySelectorAll('.swipe-map').length, edge: document.querySelector('.swipe-handle')?.dataset.edge ?? null,
+    const S = window.__time.pairSwipe, m = window.__map
+    return { open: window.__time.pairOf() === 'sei', at: S.at(), maps: S.maps().map((o) => o.getStyle().layers.map((l) => l.id).join()), boxes: document.querySelectorAll('.swipe-map').length, edge: document.querySelector('.swipe-handle')?.dataset.edge ?? null,
       prev: document.getElementById('time-prev').disabled, next: document.getElementById('time-next').disabled, year: document.getElementById('time-year').textContent, line: document.querySelector('#time-lines p')?.textContent,
       main: [m.getLayoutProperty('sei-1994-fill', 'visibility'), m.getLayoutProperty('sei-2002-fill', 'visibility'), JSON.stringify(m.getPaintProperty('sei-1994-fill', 'fill-opacity')), JSON.stringify(m.getPaintProperty('sei-2002-line', 'line-opacity') ?? 1)].join('|'),
       follow: S.maps().every((o) => o.getCenter().lng.toFixed(6) === m.getCenter().lng.toFixed(6) && o.getCenter().lat.toFixed(6) === m.getCenter().lat.toFixed(6) && o.getZoom().toFixed(4) === m.getZoom().toFixed(4)),
@@ -2370,7 +2377,7 @@ async function checkTime(page, requests, t, name, shot) {
   await keys('ArrowLeft', 25)
   const sidePoint = (layer, left) => page.evaluate(([layer, left]) => {
     document.querySelector('.maplibregl-popup')?.remove()
-    const m = window.__map, x0 = window.__time.seiSwipe.x()
+    const m = window.__map, x0 = window.__time.pairSwipe.x()
     for (let y = 150; y < innerHeight - 260; y += 10) for (let x = left ? 20 : x0 + 30; left ? x < x0 - 30 : x < innerWidth - 20; x += 10) {
       if (!document.elementFromPoint(x, y)?.classList.contains('maplibregl-canvas')) continue
       const box = [[x - 3, y - 3], [x + 3, y + 3]]
@@ -2392,20 +2399,21 @@ async function checkTime(page, requests, t, name, shot) {
   await tick('herringyears'); await waitStatus(page, 'herringyears', 30000).catch(() => {})
   const two2 = await parts(), k6 = await sw()
   report(tw1.axis.join() === '1994-95,2002' && two1.play && two1.speed && two1.track && two1.prev && tw1.year === '2002' && tw2.year === '1994-95' && tw3.year === '2002' && !two2.play && !two2.speed && !two2.track && two2.row, t('time two steps: with only the ecosystems on, the bar has Earlier and Later and no Play, speed or slider, and ticking herring brings them back, all in one row that fits'), JSON.stringify({ two1, axis: tw1.axis, years: [tw1.year, tw2.year, tw3.year], two2 }))
-  // With another layer on, the ecosystems follow the slider again with no swipe. The swipes of the photos and of the ecosystems are never open
-  // together: the photos' swipe keeps the ecosystems to one year, and once it is gone the ecosystems get theirs back.
+  // With another layer on, the ecosystems follow the slider again with no swipe. With the photos on as well neither has the swipe, and the one
+  // left alone gets it, so the map never has two lines.
   await tick('herringyears', false); await page.waitForTimeout(400)
   const k7 = await sw()
-  await tick('aerials'); await waitStatus(page, 'aerials', 30000).catch(() => {}); const k8 = await sw()
-  await panel(true); await setBox(page, '#aerials-swipe', true); await panel(false)
-  await page.waitForFunction(() => window.__time.swipe.isOpen(), null, { timeout: 10000 }).catch(() => {})
-  const k9 = await sw(), k9a = await page.evaluate(() => ({ photos: window.__time.swipe.isOpen(), handles: document.querySelectorAll('.swipe-handle').length, layers: window.__time.timeline.state().layers.join() }))
+  const lines = () => page.evaluate(() => ({ pair: window.__time.pairOf(), handles: document.querySelectorAll('.swipe-handle').length, boxes: document.querySelectorAll('.swipe-map').length, layers: window.__time.timeline.state().layers.join() }))
+  await tick('aerials'); await waitStatus(page, 'aerials', 30000).catch(() => {}); const k8 = await sw(), k8a = await lines()
+  await tick('sei', false); await page.waitForTimeout(600); const k9 = await lines()
+  await tick('sei'); await waitStatus(page, 'sei', 30000).catch(() => {}); await page.waitForTimeout(400); const k9b = await lines()
   await tick('aerials', false); await page.waitForTimeout(600)
-  const k10 = await sw(), k10a = await page.evaluate(() => ({ photos: window.__time.swipe.isOpen(), handles: document.querySelectorAll('.swipe-handle').length }))
+  const k10 = await sw(), k10a = await lines()
   // The page's map shows the year of the step (1994-95 here) at its usual opacity again.
   const restored = 'visible|none|["match",["get","class"],"NS",0.75,0.5]|1'
-  report(!k6.open && k6.boxes === 0 && k6.main === restored && k7.open && k7.boxes === 2 && !k8.open && k8.boxes === 0 && !k9.open && k9a.photos && k9a.handles === 1 && k9a.layers === 'sei' && k10.open && !k10a.photos && k10a.handles === 1 && k10.boxes === 2,
-    t('time ecosystems swipe: ticking another time layer closes it and gives the page’s map its ecosystems back, unticking it opens it again, and the photos’ swipe and the ecosystems’ swipe are never on the map together'), JSON.stringify({ k6: [k6.open, k6.boxes, k6.main], k7: [k7.open, k7.boxes], k8: [k8.open, k8.boxes, k8.main], k9: [k9.open, k9a], k10: [k10.open, k10a, k10.boxes], restored }))
+  report(!k6.open && k6.boxes === 0 && k6.main === restored && k7.open && k7.boxes === 2 && !k8.open && k8a.pair === null && k8a.handles === 0 && k8a.boxes === 0
+    && k9.pair === 'aerials' && k9.handles === 1 && k9.boxes === 2 && k9.layers === 'aerials' && k9b.pair === null && k9b.handles === 0 && k10.open && k10a.pair === 'sei' && k10a.handles === 1 && k10a.boxes === 2,
+    t('time ecosystems swipe: ticking another time layer closes it and gives the page’s map its ecosystems back, unticking it opens it again, and with the photos on as well neither has the swipe while the one left alone gets it, so the map never has two lines'), JSON.stringify({ k6: [k6.open, k6.boxes, k6.main], k7: [k7.open, k7.boxes], k8: [k8.open, k8a], k9, k9b, k10: [k10.open, k10a], restored }))
 
   // ---- everything off: the slider goes, and so do the credits
   for (const id of ['herringyears', 'aerials', 'sei', 'forestloss']) await tick(id, false)

@@ -6,7 +6,9 @@
 // show through the other. The maps over the page's map only draw, and the page's map keeps every click. They follow it on every move, with
 // the same centre, zoom, tilt, turn and height of the centre above the sea, and lift what they draw over the same 3D terrain when that is on,
 // so everything lines up.
-export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove }) {
+// `listeners` are map events ({ error, sourcedata }) the caller also wants from the maps over the page's map, so a source that fails there
+// is reported as it is on the page's map.
+export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove, listeners = {} }) {
   const root = map.getContainer()
   let sides = [], at = 0.5, range = [0.02, 0.98], label = ['', '']
   const handle = el('div', null, 'swipe-handle')
@@ -64,6 +66,7 @@ export function createSwipe({ map, MapClass, el, demTiles, exaggeration, onMove 
         center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
       })
       s.map.once('style.load', () => { s.styled = true; terrain() })
+      for (const [type, fn] of Object.entries(listeners)) s.map.on(type, fn)
       sides.push(s)
     }
     root.append(handle)
