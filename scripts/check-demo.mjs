@@ -693,6 +693,41 @@ function ruleTimeFiles(files) {
   }
   return out
 }
+// The layer manifest of Ask the map (data/manifest.json): one entry for each box, with what the chat may say and read. A file it names exists
+// and has the fields it lists, a live layer, one from the Canadian Hydrographic Service or one whose licence the map does not state is never
+// readable by the model, its texts have no em dash or semicolon, its records are https links, and each source it names is one the map adds.
+const BOX_INPUT = /<input[^>]*\bdata-(group|overlay|time)="([^"]+)"[^>]*>/g
+function ruleManifest(files) {
+  const out = []
+  const get = (p) => files.find((x) => x.path === p)
+  let m
+  try { m = JSON.parse(get('data/manifest.json')?.text || '') } catch { return ['data/manifest.json is missing or not JSON'] }
+  const layers = Array.isArray(m.layers) ? m.layers : []
+  const html = get('index.html')?.text || '', js = files.filter((x) => /^js\/.*\.js$/.test(x.path)).map((x) => x.text).join('\n')
+  const boxes = [...html.matchAll(BOX_INPUT)].map((x) => `input[data-${x[1]}="${x[2]}"]`)
+  const ids = new Set()
+  for (const l of layers) {
+    if (ids.has(l.id)) out.push(`two entries are ${l.id}`)
+    ids.add(l.id)
+    if (!boxes.includes(l.box)) out.push(`${l.id}: no box ${l.box} in the page`)
+    for (const k of ['title', 'is', 'isNot', 'kind', 'licence']) if (!l[k]) out.push(`${l.id}: no ${k}`)
+    for (const k of ['is', 'isNot']) if (/[—;]/.test(l[k] || '')) out.push(`${l.id}: its ${k} has an em dash or a semicolon`)
+    if (l.modelMayRead && (l.live || /Hydrographic|CHS|not stated/i.test(l.licence || ''))) out.push(`${l.id}: the model may read a live layer, one from the Canadian Hydrographic Service or one whose licence is not stated`)
+    for (const r of [l.record].flat()) if (!/^https:\/\//.test(r || '')) out.push(`${l.id}: a record that is not an https link`)
+    // A source added in a loop is named in the code with its year as a template, such as tl-sei-${v}.
+    for (const src of l.sources || []) if (!js.includes(src) && !js.includes(src.replace(/-\d{4}$/, '-${'))) out.push(`${l.id}: the map adds no source ${src}`)
+    const own = [l.file].flat().filter(Boolean), props = new Set()
+    for (const p of own) {
+      const f = get(p)
+      if (!f) { out.push(`${l.id}: no file ${p}`); continue }
+      if (!p.endsWith('.geojson')) continue // a picture has no fields
+      try { for (const x of JSON.parse(f.text).features || []) for (const k of Object.keys(x.properties || {})) props.add(k) } catch { out.push(`${l.id}: ${p} is not JSON`) }
+    }
+    if (own.length) for (const k of Object.keys(l.fields || {})) if (!props.has(k)) out.push(`${l.id}: the field ${k} is in none of its files`)
+  }
+  for (const b of boxes) if (!layers.some((l) => l.box === b)) out.push(`the box ${b} has no manifest entry`)
+  return out
+}
 // Credits: each layer has a paragraph that says what it is and carries its licence statement word for word, and each source on the map carries
 // its credit with its licence.
 function ruleTimeCredits(html, js) {
@@ -798,6 +833,12 @@ function selftest() {
   const tf = (name, features) => f(`data/${name}.geojson`, fc(features))
   const pointF = (props, c = [-123.4, 48.5]) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: props })
   const polyF = (props, b) => ({ type: 'Feature', geometry: sq(b), properties: props })
+  const manifestSet = (over = {}) => [
+    f('index.html', over.html ?? '<input type="checkbox" data-time="a">'),
+    f('js/x.js', "map.addSource('tl-a', {})"),
+    f('data/a.geojson', fc([{ type: 'Feature', geometry: { type: 'Point', coordinates: [-123.4, 48.5] }, properties: { year: 1990 } }])),
+    f('data/manifest.json', JSON.stringify({ version: 1, layers: [{ id: 'a', box: 'input[data-time="a"]', title: 'A', is: 'Records of a.', isNot: 'Not now.', kind: 'event', years: [1990, 1990], file: 'data/a.geojson', fields: { year: 'year' }, live: null, modelMayRead: true, record: 'https://example.org/a', licence: 'Open Government Licence – Canada', sources: ['tl-a'], ...over.layer }] })),
+  ]
   const timeSet = (over = {}) => [
     tf('herring-spawn-years', [pointF({ year: 1951, name: 'Boat Hrbr', spawns: 1, index_t: 11.1, no_index: 0, length_m: 91, method: 'Surface', ...over.herring })]),
     tf('herring-spawn-before-1951', [pointF({ name: 'Victoria Harbour', table: '193-3', year: 1937, records: 2, places: 2, length_m: 676, width_m: null, intensity: 5, first_day: 60, last_day: 74, date: null, r_m: 2200, ...over.early })]),
@@ -923,6 +964,10 @@ function selftest() {
     ['ruleTimeBoxes (slider shown at load)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { bar: '<section id="timebar" aria-label="Time slider"><label id="time-speed-box">Speed <select id="time-speed"><option value="1" selected>1x</option></select></label><input type="range" id="time-slider" aria-label="Year"><p id="time-paused" hidden>x</p></section>' }))], [f('x.html', timeHtml())]],
     ['ruleTimeBoxes (no speed box)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { bar: '<section id="timebar" hidden aria-label="Time slider"><input type="range" id="time-slider" aria-label="Year"><p id="time-paused" hidden>x</p></section>' }))], [f('x.html', timeHtml())]],
     ['ruleTimeBoxes (no sentence)', (files) => ruleTimeBoxes(files[0].text), [f('x.html', timeHtml(false, { sentence: 'Layers.' }))], [f('x.html', timeHtml())]],
+    ['ruleManifest (a box with no entry)', ruleManifest, manifestSet({ html: '<input type="checkbox" data-time="a"><input type="checkbox" data-overlay="b">' }), manifestSet()],
+    ['ruleManifest (a live layer the model may read)', ruleManifest, manifestSet({ layer: { live: 'api.example.org' } }), manifestSet()],
+    ['ruleManifest (a field in none of its files)', ruleManifest, manifestSet({ layer: { fields: { depth: 'm' } } }), manifestSet()],
+    ['ruleManifest (a semicolon)', ruleManifest, manifestSet({ layer: { isNot: 'Old; not now.' } }), manifestSet()],
     ['ruleTimeFiles (a herring year out of range)', ruleTimeFiles, timeSet({ herring: { year: 1940 } }), timeSet()],
     ['ruleTimeFiles (a herring section season from 1951)', ruleTimeFiles, timeSet({ early: { year: 1951 } }), timeSet()],
     ['ruleTimeFiles (a herring section season without records)', ruleTimeFiles, timeSet({ early: { records: 0 } }), timeSet()],
@@ -1091,6 +1136,7 @@ function checkTree() {
   const timeLayersJs = byPath['js/time-layers.js']?.text || '', timelineJs = byPath['js/timeline.js']?.text || ''
   report(...pair(ruleTimeBoxes(html), 'change over time: every layer has a box, all off by default, no Swipe box and a note that a line splits the map for the air photos, the time slider hidden at load, and the section sentence present'))
   report(...pair(ruleTimeFiles(files), `change over time: ${Object.keys(TIME_FILES).length} data files inside their boxes with only the fields the popups use, sensible years, no place named for a First Nation, disturbed patches in 2002, the 2014 mapping in the west only, and ${TIME_PICTURES.length} pictures under 1 MB each`))
+  report(...pair(ruleManifest(files), 'ask the map: the manifest has one entry for each box, its files have the fields it lists, the model may not read a live layer, one from the Canadian Hydrographic Service or one with no stated licence, and every source it names is on the map'))
   report(...pair(ruleTimeCredits(html, timeLayersJs), 'change over time: the credits say what each layer is and carry its licence statement word for word, and every source on the map carries its credit and licence'))
   report(...pair(ruleTimeControl(timelineJs), 'change over time: Play is off at load and under reduced motion, waits while the tab is hidden, and its readout is not read out while it plays'))
   report(...pair(ruleCurrentsCredit(html, overlaysJs), 'sea currents carry the Environment and Climate Change Canada credit on the map and say the model is experimental and not for navigation'))

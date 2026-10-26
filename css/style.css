@@ -199,6 +199,37 @@ button:focus-visible, summary:focus-visible, input:focus-visible, a:focus-visibl
 #credits a { color: var(--accent); }
 #credits-close { position: absolute; top: 8px; right: 8px; min-height: 40px; padding: 4px 12px; }
 
+/* Ask the map: a panel on the right, left of the map's zoom buttons, and a sheet at the bottom on a phone. While it is open on a wide
+   screen, the time bar moves into the room between it and the layers panel. */
+#chat {
+  position: fixed; z-index: 5; right: 64px; top: calc(var(--banner-h) + 8px); bottom: 40px;
+  width: min(380px, calc(100vw - 2 * var(--gutter)));
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
+  background: var(--ground); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 18px rgba(0, 0, 0, .25);
+}
+#chat[hidden] { display: none; }
+#chat h2 { margin: 0; font-size: 17px; padding-right: 80px; }
+#chat-close { position: absolute; top: 8px; right: 8px; min-height: 40px; padding: 4px 12px; }
+.chat-note { margin: 0; font-size: 12px; opacity: .85; }
+#chat-log { flex: 1; min-height: 0; overflow: auto; font-size: 14px; }
+.chat-q { margin: 10px 0 4px; font-weight: 600; }
+.chat-a p { margin: 0 0 6px; white-space: pre-line; }
+.chip { display: inline-block; margin: 0 2px; padding: 0 7px; min-height: 0; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink); font-size: 12px; line-height: 1.6; }
+button.chip { cursor: pointer; }
+.chip.did { border-color: var(--accent); }
+.chat-did { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+.chat-did button { min-height: 32px; padding: 2px 12px; }
+.chat-sources { margin: 4px 0 8px; padding-left: 18px; font-size: 12px; }
+.chat-sources a { color: var(--accent); }
+#chat-form { display: flex; gap: 8px; align-items: flex-end; }
+#chat-input { flex: 1; min-height: 44px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--ink); font: inherit; resize: vertical; }
+#chat-status { margin: 0; font-size: 12px; min-height: 1.2em; }
+/* Between the layers panel (316 px from the left) and the chat (460 px from the right), where there is room for it. */
+@media (min-width: 1100px) {
+  body.chat-open #timebar { left: calc((100vw - 144px) / 2); width: min(560px, calc(100vw - 792px)); }
+}
+
 .noscript { position: fixed; z-index: 6; inset: 50% 16px auto; margin: 0; text-align: center; }
 
 /* Map controls sit below the banner. */
@@ -236,6 +267,7 @@ body.night .maplibregl-ctrl-attrib:not(.maplibregl-compact) a { color: #b9d6e8; 
   #panel { width: auto; }
   #panel details[open] { width: min(300px, calc(100vw - 2 * var(--gutter))); }
   #credits { bottom: 36px; }
+  #chat { top: auto; left: var(--gutter); right: var(--gutter); width: auto; height: 70dvh; bottom: 36px; }
   #timebar { bottom: max(36px, calc(var(--attrib-h, 24px) + 10px)); padding: 6px 10px 4px; }
   #time-lines { max-height: 16vh; font-size: 12px; }
 }

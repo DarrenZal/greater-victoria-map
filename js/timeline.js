@@ -129,6 +129,9 @@ export function createTimeline({ $, motionQuery }) {
 
   return {
     register, unregister, go, setPlaying, refresh,
+    // Move to a year: the last step at or before it. False when no step is that early.
+    goTo: (year) => { const i = axis.findLastIndex((s) => s.t <= year); if (i < 0) return false; setPlaying(false); go(i); return true },
+    years: () => axis.map((s) => s.t),
     // the year the slider is on, or null when nothing is registered
     time: () => axis[at]?.t ?? null,
     state: () => ({ axis: axis.map((s) => s.label), at, playing, layers: [...layers.keys()], log, stepMs: STEP_MS / (Number(speed.value) || 1) }),

@@ -1,0 +1,878 @@
+{
+  "version": 1,
+  "generated": "2026-10-26",
+  "layers": [
+    {
+      "id": "pins",
+      "box": "input[data-group=\"pins\"]",
+      "group": "Places and events",
+      "title": "Example place",
+      "is": "One example pin, Bowker Creek in Oak Bay, with a summary that cites the 2012 Bowker Creek Blueprint. The pin marks one representative point on the creek, taken from OpenStreetMap.",
+      "isNot": "An example, not an event, and not the whole creek or its watershed. The map lists no events.",
+      "kind": "static",
+      "years": null,
+      "file": "data/pins.geojson",
+      "fields": {
+        "title": "Name of the place.",
+        "kind": "Type of pin: example-place, happening, learning-journey or partner-event. Only example-place is in the file.",
+        "summary": "A short text about the place.",
+        "date": "Date of the event, blank for an example place.",
+        "place_name": "Where the pin is, in words.",
+        "url": "A link for more information.",
+        "url_label": "The text of that link.",
+        "source_url": "A link to the source document for the figures in the summary.",
+        "status": "Only pins with status approved are shown."
+      },
+      "live": null,
+      "modelMayRead": false,
+      "record": "https://www.crd.ca/media/file/bowker-creek-blueprint-2011pdf",
+      "licence": "not stated",
+      "sources": []
+    },
+    {
+      "id": "watersheds",
+      "box": "input[data-group=\"watersheds\"]",
+      "group": "Water",
+      "title": "Watersheds (named creeks)",
+      "is": "43 named watersheds under 8,000 ha around Greater Victoria, as the Province's Freshwater Atlas draws them. Watersheds nest, so a click shows the smallest one.",
+      "isNot": "One provincial drawing of each watershed, not the answer, because other groups draw watersheds differently.",
+      "kind": "static",
+      "years": null,
+      "file": "data/watersheds.geojson",
+      "fields": {
+        "name": "Name of the watershed.",
+        "area_ha": "Area in hectares, as the Province draws it."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-named-watersheds",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "watersheds"
+      ]
+    },
+    {
+      "id": "water",
+      "box": "input[data-group=\"water\"]",
+      "group": "Water",
+      "title": "Creeks, lakes and wetlands",
+      "is": "Named creeks (578 segments), lakes of 1 ha or more (79) and wetlands of 0.5 ha or more (203) from the Province's Freshwater Atlas, in the demo box around Greater Victoria. Its Flow sub-box draws moving dashes on 124 joined creek lines to show which way they drain.",
+      "isNot": "Not every creek, because creeks in pipes may be missing or partly mapped, and the Flow dashes show direction, not how much water is flowing.",
+      "kind": "static",
+      "years": null,
+      "file": [
+        "data/streams.geojson",
+        "data/lakes.geojson",
+        "data/wetlands.geojson",
+        "data/streams-flow.geojson"
+      ],
+      "fields": {
+        "name": "Name of the creek or river, or of the lake or wetland (some lakes and wetlands have none).",
+        "order": "Stream order of a creek, where a higher number is a larger stream. Creeks only.",
+        "area_ha": "Area in hectares. Lakes and wetlands only."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": [
+        "https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-stream-network",
+        "https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-lakes",
+        "https://catalogue.data.gov.bc.ca/dataset/freshwater-atlas-wetlands"
+      ],
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "streams",
+        "streams-flow",
+        "lakes",
+        "wetlands"
+      ]
+    },
+    {
+      "id": "seafloor",
+      "box": "input[data-overlay=\"seafloor\"]",
+      "group": "Water",
+      "title": "Seafloor depth",
+      "is": "Depth below the sea in metres, over the area the map reaches. In Canadian waters it comes from the Canadian Hydrographic Service NONNA bathymetry, and elsewhere from NOAA's ETOPO1 grid.",
+      "isNot": "Not for navigation or any safety decision, and the NOAA part is too coarse to show small channels, reefs or shore depths.",
+      "kind": "static",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "nonna-geoserver.data.chs-shc.ca, s3.amazonaws.com",
+      "modelMayRead": false,
+      "record": "https://open.canada.ca/data/en/dataset/d3881c4c-650d-4070-bf9b-1e00aabf0a1d",
+      "licence": "CHS NONNA licence (Canadian waters). Elsewhere ETOPO1, U.S. National Oceanic and Atmospheric Administration, no licence named.",
+      "sources": [
+        "seafloor",
+        "nonna-100",
+        "nonna-10"
+      ]
+    },
+    {
+      "id": "protected",
+      "box": "input[data-overlay=\"protected\"]",
+      "group": "Marine life and protection",
+      "title": "Protected marine areas",
+      "is": "The marine zones of 22 protected areas in the area the map reaches, from the Canadian Protected and Conserved Areas Database (CPCAD). A popup gives the owner, the year established and whether the area is no-take, as reported to CPCAD.",
+      "isNot": "Approximate boundaries, not for navigation, and only the marine part of each area.",
+      "kind": "static",
+      "years": null,
+      "file": "data/marine-protected.geojson",
+      "fields": {
+        "name": "Name of the protected area.",
+        "type": "Kind of area, such as park, ecological reserve or migratory bird sanctuary.",
+        "owner": "The owner of the area.",
+        "year": "Year the area was established.",
+        "no_take": "CPCAD's Marine Resource Use code: 1 all of the area is no-take, 2 part of it, 3 none of it. Blank where it is not applicable or not reported."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://open.canada.ca/data/en/dataset/6c343726-1e92-451a-876a-76e17d398a1c",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "ov-protected"
+      ]
+    },
+    {
+      "id": "srkw",
+      "box": "input[data-overlay=\"srkw\"]",
+      "group": "Marine life and protection",
+      "title": "Southern Resident killer whale critical habitat",
+      "is": "One boundary that Fisheries and Oceans Canada maps as critical habitat for the Southern Resident killer whale population under the Species at Risk Act, cut at the west edge of the area the map reaches.",
+      "isNot": "A boundary for general guidance only, not a sighting and not where the whales are now.",
+      "kind": "static",
+      "years": null,
+      "file": "data/srkw-habitat.geojson",
+      "fields": {
+        "status": "Status of the mapped habitat, Final/Proposed in the file."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://open.canada.ca/data/en/dataset/db177a8c-5d7d-49eb-8290-31e6a45d786c",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "ov-srkw"
+      ]
+    },
+    {
+      "id": "rkw",
+      "box": "input[data-overlay=\"rkw\"]",
+      "group": "Marine life and protection",
+      "title": "Killer whale important area",
+      "is": "One area that experts drew by hand on paper maps in 2009 as important to Southern Resident killer whales from June to October, from a Fisheries and Oceans Canada layer for the Strait of Georgia ecoregion.",
+      "isNot": "A hand-drawn boundary with an approximate edge and no added management, not a sighting and not where the whales are now.",
+      "kind": "static",
+      "years": [
+        2009,
+        2009
+      ],
+      "file": "data/rkw-important-area.geojson",
+      "fields": {
+        "seasonal": "The season the area applies to, June to October in the file.",
+        "score": "The experts' importance rating for the population: H high, M medium or L low. The file has H."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://open.canada.ca/data/en/dataset/5db1e0ce-4515-49ac-891f-a0862c59bc01",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "ov-rkw"
+      ]
+    },
+    {
+      "id": "cetaceans",
+      "box": "input[data-overlay=\"cetaceans\"]",
+      "group": "Marine life and protection",
+      "title": "Whale and porpoise density (model)",
+      "is": "Modelled numbers of humpback whales, harbour porpoises and Dall's porpoises in 223 squares of up to 25 km2 in Canadian waters, made from ship surveys that ran from July to early September 2018. The species box picks which one is coloured.",
+      "isNot": "A model of summer 2018, not sightings and not where animals are now.",
+      "kind": "static",
+      "years": [
+        2018,
+        2018
+      ],
+      "file": "data/whale-density.geojson",
+      "fields": {
+        "km2": "Area of the square in km2, smaller where the coast cuts it.",
+        "humpback_n": "Nhat, the number of humpback whales the model predicts in the square.",
+        "humpback_cv": "The model's uncertainty (CV) for humpback whales. Higher means less certain.",
+        "harbour_n": "Nhat, the number of harbour porpoises the model predicts in the square.",
+        "harbour_cv": "The model's uncertainty (CV) for harbour porpoises. Higher means less certain.",
+        "dalls_n": "Nhat, the number of Dall's porpoises the model predicts in the square.",
+        "dalls_cv": "The model's uncertainty (CV) for Dall's porpoises. Higher means less certain."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://open.canada.ca/data/en/dataset/39546277-b33e-4f80-8a2d-3ca1ce5b1401",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "ov-cetaceans"
+      ]
+    },
+    {
+      "id": "kelp",
+      "box": "input[data-overlay=\"kelp\"]",
+      "group": "Marine life and protection",
+      "title": "Kelp beds",
+      "is": "1,118 kelp beds in the area the map reaches, from the Province's Coastal Resource Information Management System (CRIMS), a survey that began in 1979 and was only updated now and then.",
+      "isNot": "A legacy survey, not a current record, so a bed may have changed or gone.",
+      "kind": "static",
+      "years": null,
+      "file": "data/kelp.geojson",
+      "fields": {
+        "species": "Bull Kelp or Giant Kelp, blank for some beds.",
+        "density": "Density recorded, Low or High, blank for some beds."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/kelp-beds-coastal-resource-information-management-system-crims",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "ov-kelp"
+      ]
+    },
+    {
+      "id": "eelgrass",
+      "box": "input[data-overlay=\"eelgrass\"]",
+      "group": "Marine life and protection",
+      "title": "Eelgrass",
+      "is": "22 eelgrass beds in the area the map reaches, all mapped in 1998, from the Province's Coastal Resource Information Management System (CRIMS).",
+      "isNot": "An old survey, not a current record, so a bed may have changed or gone.",
+      "kind": "static",
+      "years": [
+        1998,
+        1998
+      ],
+      "file": "data/eelgrass.geojson",
+      "fields": {
+        "year": "Year the bed was mapped, 1998 for all of them."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/eelgrasses-coastal-resource-information-management-system-crims",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "ov-eelgrass"
+      ]
+    },
+    {
+      "id": "herring",
+      "box": "input[data-overlay=\"herring\"]",
+      "group": "Marine life and protection",
+      "title": "Herring spawn",
+      "is": "581 stretches of shore in the area the map reaches where herring spawn was recorded between 1937 and 1986, from the Province's Coastal Resource Information Management System (CRIMS).",
+      "isNot": "Old records, not this year's spawn and not where herring are now.",
+      "kind": "static",
+      "years": [
+        1937,
+        1986
+      ],
+      "file": "data/herring-spawn.geojson",
+      "fields": {
+        "magnitude": "Spawn magnitude recorded: Very Large, Large, Medium, Small or Very Small, blank for a few.",
+        "consistency": "How consistently spawning was recorded there: Consistent, Frequent or Inconsistent, blank for a few.",
+        "first_year": "First year of the records for that shore.",
+        "last_year": "Last year of the records for that shore."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/herring-spawn-coastal-resource-information-management-system-crims",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "ov-herring"
+      ]
+    },
+    {
+      "id": "seabirds",
+      "box": "input[data-overlay=\"seabirds\"]",
+      "group": "Marine life and protection",
+      "title": "Seabird colonies",
+      "is": "81 seabird nesting colonies in the area the map reaches, from the Province's Coastal Resource Information Management System (CRIMS), a survey that began in 1979.",
+      "isNot": "A legacy survey, so a colony may be out of date, and it shows no counts or species.",
+      "kind": "static",
+      "years": null,
+      "file": "data/seabird-colonies.geojson",
+      "fields": {
+        "name": "Location name of the colony, as the survey gives it."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/bird-colonies-coastal-resource-information-management-system-crims",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "ov-seabirds"
+      ]
+    },
+    {
+      "id": "parks",
+      "box": "input[data-group=\"parks\"]",
+      "group": "Land",
+      "title": "Parks and green spaces",
+      "is": "17 provincial parks and ecological reserves and 934 local and regional green spaces in the demo box around Greater Victoria, from the Province's BC Parks and Local and Regional Greenspaces datasets.",
+      "isNot": "Approximate boundaries, and parks run by the Capital Regional District are not on this map yet.",
+      "kind": "static",
+      "years": null,
+      "file": [
+        "data/bc-parks.geojson",
+        "data/greenspaces.geojson"
+      ],
+      "fields": {
+        "PROTECTED_LANDS_NAME": "Name of a provincial park or ecological reserve, as the Province publishes it.",
+        "PROTECTED_LANDS_DESIGNATION": "Provincial park or ecological reserve.",
+        "PARK_CLASS": "Park class (Class A or Class B), blank for ecological reserves.",
+        "name": "Name of a local or regional green space, blank for some.",
+        "type": "Local or Regional.",
+        "use": "Kind of use, such as Park, Green Space, Trail, Water Access or Athletic.",
+        "muni": "Municipality or provider the source names for the green space.",
+        "lic": "Which provider's licence statement the row carries: V City of Victoria, S District of Saanich, I Islands Trust, blank for none."
+      },
+      "live": null,
+      "modelMayRead": false,
+      "record": [
+        "https://catalogue.data.gov.bc.ca/dataset/bc-parks-ecological-reserves-and-protected-areas",
+        "https://catalogue.data.gov.bc.ca/dataset/local-and-regional-greenspaces"
+      ],
+      "licence": "Open Government Licence – British Columbia. Rows from three providers also carry Open Government Licence – City of Victoria, Open Government Licence – District of Saanich or Open Government Licence – Islands Trust.",
+      "sources": [
+        "bc-parks",
+        "greenspaces"
+      ]
+    },
+    {
+      "id": "terrain",
+      "box": "input[data-group=\"terrain\"]",
+      "group": "Land",
+      "title": "Terrain shading",
+      "is": "A hillshade drawn in the browser from AWS Terrain Tiles elevation data over the area the map reaches, on when the page opens. The 3D terrain box lifts the map from the same tiles.",
+      "isNot": "Shading for the hills, not a height measurement or a survey.",
+      "kind": "static",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "s3.amazonaws.com",
+      "modelMayRead": false,
+      "record": "https://registry.opendata.aws/terrain-tiles/",
+      "licence": "Canada terrain data: Open Government Licence – Canada. United States 3DEP, GMTED2010 and SRTM terrain data: courtesy of the U.S. Geological Survey. Global ETOPO1 terrain data: U.S. National Oceanic and Atmospheric Administration.",
+      "sources": [
+        "terrain"
+      ]
+    },
+    {
+      "id": "bec",
+      "box": "input[data-group=\"bec\"]",
+      "group": "Land",
+      "title": "Ecosystem zones (BEC)",
+      "is": "Five biogeoclimatic zone variants (Coastal Douglas-fir and Coastal Western Hemlock) around Greater Victoria, from the Province's BEC Map. A zone groups land by climate and the plants and ecosystems it supports.",
+      "isNot": "An orientation layer, not a survey or legal boundary.",
+      "kind": "static",
+      "years": null,
+      "file": "data/bec.geojson",
+      "fields": {
+        "ZONE_NAME": "Name of the biogeoclimatic zone, such as Coastal Western Hemlock.",
+        "SUBZONE_NAME": "Name of the subzone, such as Moist Maritime.",
+        "VARIANT_NAME": "Name of the variant, such as Submontane, blank for some.",
+        "BGC_LABEL": "Short label of the zone variant, such as CWH mm 1 or CDF mm."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/bec-map",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "bec"
+      ]
+    },
+    {
+      "id": "ecoregions",
+      "box": "input[data-overlay=\"ecoregions\"]",
+      "group": "Land",
+      "title": "Ecoregions",
+      "is": "One ecoregion, Puget lowland forests (biome Temperate Conifer Forests, realm Nearctic), clipped to the demo box from the RESOLVE Ecoregions 2017 map.",
+      "isNot": "A coarse outline from a simplified worldwide map, not a precise boundary.",
+      "kind": "static",
+      "years": null,
+      "file": "data/ecoregions.geojson",
+      "fields": {
+        "name": "Name of the ecoregion.",
+        "biome": "Biome of the ecoregion.",
+        "realm": "Realm of the ecoregion."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://ecoregions.appspot.com/",
+      "licence": "CC BY 4.0",
+      "sources": [
+        "ov-ecoregions"
+      ]
+    },
+    {
+      "id": "industry",
+      "box": "input[data-overlay=\"industry\"]",
+      "group": "Land",
+      "title": "Industry and waste sites",
+      "is": "18 sites in the demo box: 11 landfills and waste sites, 6 wastewater plants and pump stations and one power plant. Only records with an open licence are kept.",
+      "isNot": "A dot with no figures is a location, not an empty site.",
+      "kind": "static",
+      "years": null,
+      "file": "data/industry-waste.geojson",
+      "fields": {
+        "name": "Name of the site, blank where the source gives none.",
+        "kind": "landfill, wastewater or power.",
+        "type": "Type of site as the source publishes it. For wastewater it is the treatment level.",
+        "status": "Status of the site, blank for most.",
+        "src": "Which source the site comes from: odi (Statistics Canada), hydrowaste (HydroWASTE) or gppd (Global Power Plant Database).",
+        "facts": "Each reported figure with its basis, joined by ' | '. Blank where the source gives no figures.",
+        "note": "A note about the site's source or position.",
+        "note_url": "A link for that note.",
+        "listed_as": "The source's own spelling, where the map shows a corrected name."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": [
+        "https://www150.statcan.gc.ca/n1/pub/34-26-0003/342600032023001-eng.htm",
+        "https://www.hydrosheds.org/products/hydrowaste",
+        "https://datasets.wri.org/datasets/global-power-plant-database"
+      ],
+      "licence": "Open Government Licence – Canada (Statistics Canada, landfills and waste sites). CC BY 4.0 (HydroWASTE wastewater sites and the Global Power Plant Database).",
+      "sources": [
+        "ov-industry"
+      ]
+    },
+    {
+      "id": "muni",
+      "box": "input[data-group=\"muni\"]",
+      "group": "Land",
+      "title": "Municipal boundaries",
+      "is": "The 13 Capital Regional District municipalities as the Province's legally defined administrative areas.",
+      "isNot": "Legal boundaries that include adjacent water, simplified for the web, not survey boundaries.",
+      "kind": "static",
+      "years": null,
+      "file": "data/municipalities.geojson",
+      "fields": {
+        "name": "Name of the municipality."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/municipalities-legally-defined-administrative-areas-of-bc",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "municipalities"
+      ]
+    },
+    {
+      "id": "herringyears",
+      "box": "input[data-time=\"herringyears\"]",
+      "group": "Change over time",
+      "title": "Herring spawn by year, 1951 to 2026",
+      "is": "One circle for each place and herring season (July to June), 807 place-and-season records in the area the map reaches, sized by the spawn index of Fisheries and Oceans Canada. A year is the season that ends in it, so 1951 is the 1950/1951 season.",
+      "isNot": "Not where herring are now, and the index is a relative minimum measure, not a count of fish. One place named for a First Nation is left out, as in the other layers.",
+      "kind": "event",
+      "years": [
+        1951,
+        2026
+      ],
+      "file": "data/herring-spawn-years.geojson",
+      "fields": {
+        "year": "The herring season that ends in this year, July to June.",
+        "name": "Place name as Fisheries and Oceans Canada publishes it.",
+        "spawns": "Number of spawn records grouped into this place and season.",
+        "index_t": "Spawn index in tonnes, a relative index and a minimum estimate. Blank where no record had one.",
+        "no_index": "Number of those records that have no spawn index.",
+        "length_m": "Length of shore in metres along which spawn was recorded.",
+        "method": "How it was surveyed: Surface, Dive, Mixed or Incomplete."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://open.canada.ca/data/en/dataset/d892511c-d851-4f85-a0ec-708bc05d2810",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "tl-herringyears"
+      ]
+    },
+    {
+      "id": "aerials",
+      "box": "input[data-time=\"aerials\"]",
+      "group": "Change over time",
+      "title": "Air photos, 1932 and 1950",
+      "is": "Greyscale air photos from 1932 and 1950 of central Victoria, Oak Bay, Esquimalt and south Saanich, from the National Air Photo Library of Natural Resources Canada, made into map tiles that the map's own server holds.",
+      "isNot": "Not matched to each other, so the two years may not line up, and there is no open air photo of today.",
+      "kind": "snapshot",
+      "years": [
+        1932,
+        1950
+      ],
+      "file": null,
+      "fields": {},
+      "live": "map-api.regeneratevictoria.org",
+      "modelMayRead": false,
+      "record": "https://open.canada.ca/data/en/dataset/d8627209-bda2-436f-b22b-0eb19fdc6660",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "aerial-1932",
+        "aerial-1950",
+        "tl-aerials-credit"
+      ]
+    },
+    {
+      "id": "sei",
+      "box": "input[data-time=\"sei\"]",
+      "group": "Change over time",
+      "title": "Garry oak and other sensitive ecosystems, 1994-95 and 2002",
+      "is": "Polygons with woodland, herbaceous ground, coastal bluff or sparse vegetation from the Province's Sensitive Ecosystems Inventory, mapped in 1994-95 from air photos of 1992 and updated in 2002. The update marks 260 patches in red as disturbed since 1992, and woodland includes Garry oak, arbutus and Douglas-fir stands.",
+      "isNot": "Mapped then and mapped later, not a measure of every change, and the inventory has no Garry oak class.",
+      "kind": "snapshot",
+      "years": [
+        1994,
+        2002
+      ],
+      "file": [
+        "data/sei-garry-oak-1994-95.geojson",
+        "data/sei-garry-oak-2002.geojson"
+      ],
+      "fields": {
+        "class": "Class code of the polygon's main ecosystem: WD woodland, HT or HB herbaceous, CB coastal bluff, SV sparsely vegetated, BW broadleaf woodland, MF mature forest, SG older second growth forest, OF old forest, WN wetland, RI riparian, NS not sensitive. NS in the 2002 file is a patch disturbed since 1992.",
+        "sub": "Subclass code of the main ecosystem, such as ro rock outcrop, co coniferous, mx mixed, sh shrub, cl cliff, sd sand dunes, ms marsh or wm wet meadow. Blank for many.",
+        "also": "Class codes of the polygon's second and third ecosystems, joined by +. Blank where there are none.",
+        "dist": "2002 file only: the kind of disturbance, as the update records it."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/b00fd09f-ebe1-4b52-9717-6ef9c243d52e",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "tl-sei-1994",
+        "tl-sei-2002"
+      ]
+    },
+    {
+      "id": "sei2014",
+      "box": "input[data-time=\"sei2014\"]",
+      "group": "Change over time",
+      "title": "Garry oak ecosystems mapped in 2014 (west only)",
+      "is": "426 polygons of Garry oak ecosystems mapped from air photos of 2014 at a finer scale than the 1990s inventory, in Metchosin, Sooke and the land around them only, from the same Province inventory record.",
+      "isNot": "A different survey from the 1990s inventory, with other methods and scale, so not a measure of change and not on the time slider.",
+      "kind": "static",
+      "years": [
+        2014,
+        2014
+      ],
+      "file": "data/sei-garry-oak-2014.geojson",
+      "fields": {
+        "class": "Class code of the polygon's main ecosystem: WD woodland, HB herbaceous, SV sparsely vegetated, MF mature forest, NS not sensitive. In this file NS means the main ecosystem is not sensitive, not that it was disturbed.",
+        "sub": "Subclass code of the main ecosystem. Blank for many.",
+        "also": "Class codes of the polygon's second and third ecosystems, joined by +. Blank where there are none.",
+        "tenths": "The main ecosystem's share of the polygon, in tenths."
+      },
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://catalogue.data.gov.bc.ca/dataset/b00fd09f-ebe1-4b52-9717-6ef9c243d52e",
+      "licence": "Open Government Licence – British Columbia",
+      "sources": [
+        "tl-sei-2014"
+      ]
+    },
+    {
+      "id": "landcover",
+      "box": "input[data-time=\"landcover\"]",
+      "group": "Change over time",
+      "title": "Land cover, 2010, 2015 and 2020",
+      "is": "Natural Resources Canada's Land Cover of Canada in 30 m cells from Landsat images for 2010, 2015 and 2020, in the demo box only, in eleven classes, from forest to urban and built-up. It covers Canadian land only.",
+      "isNot": "A coarse national classification, so urban is coarse and changes over ten years are small at that size.",
+      "kind": "snapshot",
+      "years": [
+        2010,
+        2020
+      ],
+      "file": "data/landcover-2010-2020.png",
+      "fields": {},
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://open.canada.ca/data/en/dataset/11990a35-912e-4002-b197-d57dd88836d7",
+      "licence": "Open Government Licence – Canada",
+      "sources": [
+        "tl-landcover-credit"
+      ]
+    },
+    {
+      "id": "canopy",
+      "box": "input[data-time=\"canopy\"]",
+      "group": "Change over time",
+      "title": "Tree canopy from LiDAR, Victoria, 2013 to 2023",
+      "is": "The City of Victoria's tree canopy layers made from LiDAR flown in 2013, 2019 and 2023, drawn as one colour where each has a value, for the City of Victoria only. The City calls them a calculated best estimate of coverage and marks its 2023 file as a draft.",
+      "isNot": "Not measured change, because each survey was flown and processed on its own, and the map shows no values because their unit is not stated.",
+      "kind": "snapshot",
+      "years": [
+        2013,
+        2023
+      ],
+      "file": [
+        "data/canopy-2013.png",
+        "data/canopy-2019.png",
+        "data/canopy-2023.png"
+      ],
+      "fields": {},
+      "live": null,
+      "modelMayRead": true,
+      "record": [
+        "https://www.arcgis.com/home/item.html?id=c064dcd2d10b4d6092f069e7db89abbf",
+        "https://www.arcgis.com/home/item.html?id=ee10f28fcef8490e87da5e7f010701b5",
+        "https://www.arcgis.com/home/item.html?id=2f6665924f5747b69c07f103930ba77d"
+      ],
+      "licence": "Open Government Licence – City of Victoria",
+      "sources": [
+        "tl-canopy-credit"
+      ]
+    },
+    {
+      "id": "forestloss",
+      "box": "input[data-time=\"forestloss\"]",
+      "group": "Change over time",
+      "title": "Forest loss, 2001 to 2025",
+      "is": "Stands of trees removed, as seen in Landsat satellite images (30 m cells), from the University of Maryland's Global Forest Change version 1.13, clipped to the demo box. The slider shows the loss from 2001 up to its year.",
+      "isNot": "It sees forest clearing, not single street trees, and its makers say the years before 2011 were processed differently.",
+      "kind": "cumulative",
+      "years": [
+        2001,
+        2025
+      ],
+      "file": "data/forest-loss.png",
+      "fields": {},
+      "live": null,
+      "modelMayRead": true,
+      "record": "https://glad.earthengine.app/view/global-forest-change",
+      "licence": "CC BY 4.0",
+      "sources": [
+        "tl-forestloss-credit"
+      ]
+    },
+    {
+      "id": "radar",
+      "box": "input[data-overlay=\"radar\"]",
+      "group": "Live data",
+      "title": "Precipitation radar",
+      "is": "The newest ten frames of rain rate in millimetres per hour, six minutes apart, over the area the map reaches, from Environment and Climate Change Canada's GeoMet service. It loads when ticked.",
+      "isNot": "Recent frames only, not a forecast.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "geo.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://eccc-msc.github.io/open-data/msc-data/obs_radar/readme_radar_geomet_en/",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-radar-credit"
+      ]
+    },
+    {
+      "id": "currents",
+      "box": "input[data-overlay=\"currents\"]",
+      "group": "Live data",
+      "title": "Sea currents",
+      "is": "Modelled surface currents, hour by hour, from the Coastal Ice Ocean Prediction System for the Salish Sea (CIOPS-SalishSea) of Environment and Climate Change Canada: a 500 m grid and a 48-hour forecast with tides, drawn as moving particles.",
+      "isNot": "A model, not a measurement, drawn far faster than the real water, and not for navigation or any safety decision.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "geo.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://eccc-msc.github.io/open-data/msc-data/nwp_ciops/readme_ciops_en/",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-currents-credit"
+      ]
+    },
+    {
+      "id": "wind",
+      "box": "input[data-overlay=\"wind\"]",
+      "group": "Live data",
+      "title": "Wind",
+      "is": "Modelled wind 10 m above the surface, hour by hour, from the High Resolution Deterministic Prediction System (HRDPS, 2.5 km) of Environment and Climate Change Canada, drawn as moving particles.",
+      "isNot": "A drawing of a forecast, not a measurement, drawn far faster than the real air, and not for navigation or any safety decision.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "geo.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://eccc-msc.github.io/open-data/msc-data/nwp_hrdps/readme_hrdps_en/",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-wind-credit"
+      ]
+    },
+    {
+      "id": "temperature",
+      "box": "input[data-overlay=\"temperature\"]",
+      "group": "Live data",
+      "title": "Sea temperature",
+      "is": "The modelled temperature of the water 0.5 m below the surface, hour by hour, from the CIOPS-SalishSea model of Environment and Climate Change Canada, coloured on one scale from 6 to 20 degrees Celsius.",
+      "isNot": "A drawing of an experimental model, not a measurement, and not for navigation or any safety decision.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "geo.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://eccc-msc.github.io/open-data/msc-data/nwp_ciops/readme_ciops_en/",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-temperature-credit"
+      ]
+    },
+    {
+      "id": "salinity",
+      "box": "input[data-overlay=\"salinity\"]",
+      "group": "Live data",
+      "title": "Sea saltiness",
+      "is": "The modelled salt content of the water 0.5 m below the surface in practical salinity units (psu), hour by hour, from the CIOPS-SalishSea model of Environment and Climate Change Canada, coloured on one scale from 20 to 34 psu.",
+      "isNot": "A drawing of an experimental model, not a measurement, and not for navigation or any safety decision.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "geo.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://eccc-msc.github.io/open-data/msc-data/nwp_ciops/readme_ciops_en/",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-salinity-credit"
+      ]
+    },
+    {
+      "id": "tides",
+      "box": "input[data-overlay=\"tides\"]",
+      "group": "Live data",
+      "title": "Tides and tidal currents",
+      "is": "Predictions for two NOAA water level stations (Port Angeles and Friday Harbor) and five NOAA tidal current stations (Race Rocks, Discovery Island, Haro Strait, Trial Island and Cattle Point), and observed and predicted levels at the Canadian Hydrographic Service's Victoria Harbour gauge. Nothing is requested until a station is clicked.",
+      "isNot": "Predictions drawn from the services' numbers, not official NOAA material, and not for navigation.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "api.tidesandcurrents.noaa.gov, api-iwls.dfo-mpo.gc.ca",
+      "modelMayRead": false,
+      "record": [
+        "https://tidesandcurrents.noaa.gov/disclaimers.html",
+        "https://tides.gc.ca/en/licence-agreement"
+      ],
+      "licence": "NOAA/NOS/CO-OPS: information on government servers is in the public domain, with attribution asked. Victoria Harbour gauge: CHS licence agreement, dated 2023-08-14.",
+      "sources": [
+        "ov-tides"
+      ]
+    },
+    {
+      "id": "alerts",
+      "box": "input[data-overlay=\"alerts\"]",
+      "group": "Live data",
+      "title": "Weather alerts",
+      "is": "Weather alerts in effect for areas that touch the demo box, from Environment and Climate Change Canada, with the text shown exactly as issued.",
+      "isNot": "Not an alerting service and not for safety decisions, so use Environment Canada's own alerts.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "api.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://api.weather.gc.ca/collections/weather-alerts",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-alerts"
+      ]
+    },
+    {
+      "id": "aqhi",
+      "box": "input[data-overlay=\"aqhi\"]",
+      "group": "Live data",
+      "title": "Air quality (AQHI)",
+      "is": "The latest Air Quality Health Index reading from each Environment and Climate Change Canada station in the demo box, which are Victoria and Westshore.",
+      "isNot": "A health index from 1 to 10 and above, not a measurement of any pollutant.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "api.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://api.weather.gc.ca/collections/aqhi-observations-realtime",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-aqhi"
+      ]
+    },
+    {
+      "id": "conditions",
+      "box": "input[data-overlay=\"conditions\"]",
+      "group": "Live data",
+      "title": "Current conditions",
+      "is": "The newest weather report from each station in or near the demo box, none older than 3 hours, from Environment and Climate Change Canada and the bodies that run the stations.",
+      "isNot": "A few station reports of the last 3 hours, not a forecast.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "api.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://api.weather.gc.ca/collections/swob-realtime",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-conditions"
+      ]
+    },
+    {
+      "id": "water-gauges",
+      "box": "input[data-overlay=\"water\"]",
+      "group": "Live data",
+      "title": "River gauges",
+      "is": "The five active real-time river gauges nearest downtown Victoria, wherever they are, with their latest level and flow, from Environment and Climate Change Canada. On 2026-10-21 all five were 40 to 57 km away, outside the demo box.",
+      "isNot": "Not a gauge on any Greater Victoria creek, because none in the demo box reported in real time on 2026-10-21.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "api.weather.gc.ca",
+      "modelMayRead": false,
+      "record": "https://api.weather.gc.ca/collections/hydrometric-stations",
+      "licence": "Data Server End-use Licence of Environment and Climate Change Canada",
+      "sources": [
+        "ov-water"
+      ]
+    },
+    {
+      "id": "quakes",
+      "box": "input[data-overlay=\"quakes\"]",
+      "group": "Live data",
+      "title": "Earthquakes (7 days)",
+      "is": "Earthquakes of the last 7 days in the area the map reaches, from the U.S. Geological Survey's event catalogue, sized by magnitude.",
+      "isNot": "Not final, because early magnitudes and positions are revised.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "earthquake.usgs.gov",
+      "modelMayRead": false,
+      "record": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+      "licence": "U.S. Public Domain",
+      "sources": [
+        "ov-quakes"
+      ]
+    },
+    {
+      "id": "life",
+      "box": "input[data-overlay=\"life\"]",
+      "group": "Live data",
+      "title": "Life observations",
+      "is": "A sample of up to 300 occurrence records from GBIF in the demo box, dated in the last 12 months. Only records licensed CC0 or CC BY 4.0 are kept, and records withheld or generalised by their publisher are dropped.",
+      "isNot": "A sample, not every observation. Whales, dolphins and porpoises are left out, and positions are rounded to about 1 km.",
+      "kind": "live",
+      "years": null,
+      "file": null,
+      "fields": {},
+      "live": "api.gbif.org",
+      "modelMayRead": false,
+      "record": "https://www.gbif.org",
+      "licence": "CC0 or CC BY 4.0 per record",
+      "sources": [
+        "ov-life"
+      ]
+    }
+  ]
+}

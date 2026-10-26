@@ -113,7 +113,7 @@ const report = (pass, name, detail = '', force = false) => {
 // read from its own text: the sentences it passes to t() and report(), as written (a ${...} in one stands for anything), so the list cannot fall
 // behind the checks. A regex that matches none of them skips the group. If nothing matches at all, the run fails.
 const CHILDREN = {
-  checkViewport: ['checkLoadState', 'checkCurrents3d', 'checkToggles', 'checkFlowToggles', 'checkMarchDirection', 'checkTerrain', 'checkTerrain3d', 'checkOverlays', 'checkCurrents', 'checkWind', 'checkBlend', 'checkSea', 'checkTides', 'checkSeafloor', 'checkMarine', 'checkTime', 'checkPhonePopups', 'checkNight', 'checkPopups'],
+  checkViewport: ['checkLoadState', 'checkCurrents3d', 'checkToggles', 'checkFlowToggles', 'checkMarchDirection', 'checkTerrain', 'checkTerrain3d', 'checkOverlays', 'checkCurrents', 'checkWind', 'checkBlend', 'checkSea', 'checkTides', 'checkSeafloor', 'checkMarine', 'checkTime', 'checkChat', 'checkPhonePopups', 'checkNight', 'checkPopups'],
 }
 const SOURCE = ONLY ? await readFile(fileURLToPath(import.meta.url), 'utf8') : ''
 // What the name of a check starts with, for each group that is not run on both screen sizes. The others start with "desktop: " or "phone: ".
@@ -213,7 +213,7 @@ async function checkViewport(browser, base, name, vp, shots) {
     await run(checkCurrents3d, page, requests, t, shot)
 
     // The checks below run on the flat map. checkTerrain3d switches 3D terrain on and off again.
-    const flat = [checkToggles, checkFlowToggles, checkMarchDirection, checkTerrain, checkTerrain3d, checkOverlays, checkCurrents, checkWind, checkBlend, checkSea, checkTides, checkSeafloor, checkMarine, checkTime, checkPhonePopups, checkNight, checkPopups]
+    const flat = [checkToggles, checkFlowToggles, checkMarchDirection, checkTerrain, checkTerrain3d, checkOverlays, checkCurrents, checkWind, checkBlend, checkSea, checkTides, checkSeafloor, checkMarine, checkTime, checkChat, checkPhonePopups, checkNight, checkPopups]
     if (flat.some((fn) => wants(fn, `${name}: `))) {
       await guarded(t('turning 3D terrain off'), async () => {
         await setBox(page, '#terrain3d', false)
@@ -235,6 +235,7 @@ async function checkViewport(browser, base, name, vp, shots) {
     await run(checkSeafloor, page, requests, t, name, shot)
     await run(checkMarine, page, requests, t, name, shot)
     await run(checkTime, page, requests, t, name, shot)
+    await run(checkChat, page, requests, t, name, shot)
     await run(checkPhonePopups, page, t, name, shot)
     await run(checkNight, page, requests, t, name, shot)
     await run(checkPopups, page, t, name, vp, shots)
@@ -2459,6 +2460,75 @@ async function checkTime(page, requests, t, name, shot) {
     report(ph.rect[0] >= 8 && ph.rect[2] <= w - 8 && clear && !ph.overflowX, t('time: on a phone the slider fits the screen and does not cover the attribution button'), JSON.stringify({ rect: ph.rect, attrib: ph.attribRect, w }))
     await tick('herringyears', false)
   }
+}
+
+// Ask the map, against a stand-in chat service: the first answer asks for tools, the page runs them and sends their results back, and the
+// second answer cites what it used. Nothing reaches a model and nothing is spent.
+const CHAT_URL = 'https://map-api.regeneratevictoria.org/chat'
+const sse = (deltas) => deltas.map((d) => `data: ${JSON.stringify({ choices: [{ delta: d }] })}\n\n`).join('') + 'data: [DONE]\n\n'
+async function checkChat(page, requests, t, name, shot) {
+  const posts = []
+  let on = true
+  await page.route(CHAT_URL, async (route) => {
+    const req = route.request(), cors = { 'access-control-allow-origin': '*' }
+    if (req.method() === 'GET') return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ on }) })
+    const body = JSON.parse(req.postData() || '{}')
+    posts.push(body)
+    const first = body.messages.at(-1).role === 'user'
+    const calls = [
+      { name: 'show_layer', args: { layer: 'herringyears', on: true } },
+      { name: 'set_year', args: { year: 1960 } },
+      { name: 'query_features', args: { layer: 'herringyears', match: { field: 'year', op: 'eq', value: 1960 }, limit: 5 } },
+      { name: 'query_features', args: { layer: 'tides' } },
+      { name: 'highlight', args: { layer: 'herringyears', match: { field: 'year', op: 'eq', value: 1960 }, label: '1960' } },
+      { name: 'show_layer', args: { layer: 'no-such-layer', on: true } },
+    ]
+    const stream = first
+      ? sse(calls.map((c, i) => ({ tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } }] })))
+      : sse([{ content: 'In the 1960 season this map has spawn records [src:herringyears]. ' }, { content: 'One is here [feat:herringyears/0]. [src:nope]' }])
+    return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'text/event-stream' }, body: stream })
+  })
+  await page.evaluate(() => { for (const b of document.querySelectorAll('input[data-time]')) if (b.checked) b.click() })
+  await page.evaluate(() => window.__map.jumpTo({ center: [-123.45, 48.47], zoom: 10.5, pitch: 0 }))
+  await page.waitForTimeout(500)
+  const cam0 = await page.evaluate(() => window.__map.getCenter().toArray().map((v) => v.toFixed(4)).join())
+  await page.click('#chat-btn')
+  await page.waitForFunction(() => !document.getElementById('chat-input').disabled, null, { timeout: 15000 }).catch(() => {})
+  const opened = await page.evaluate(() => ({ shown: !document.getElementById('chat').hidden, expanded: document.getElementById('chat-btn').getAttribute('aria-expanded'), status: document.getElementById('chat-status').textContent }))
+  await page.fill('#chat-input', 'Where did herring spawn in 1960?')
+  await page.click('#chat-form button[type=submit]').catch(() => {})
+  await page.waitForFunction(() => document.querySelector('.chat-sources') || document.getElementById('chat-status').textContent && document.getElementById('chat-status').textContent !== 'Thinking…', null, { timeout: 60000 }).catch(() => {})
+  const after = await page.evaluate(() => {
+    const a = document.querySelector('.chat-a')
+    return {
+      text: a?.querySelector('p')?.textContent, chips: [...(a?.querySelectorAll('.chip:not(.did)') || [])].map((c) => c.textContent), did: [...(a?.querySelectorAll('.chip.did') || [])].map((c) => c.textContent),
+      sources: [...(a?.querySelectorAll('.chat-sources li') || [])].map((li) => [li.textContent, li.querySelector('a')?.href]), undo: !!a?.querySelector('.chat-did button'),
+      herring: document.querySelector('input[data-time=herringyears]').checked, year: window.__time.timeline.time(), hl: !!window.__map.getLayer('chat-hl-1-dot'), status: document.getElementById('chat-status').textContent,
+    }
+  })
+  const [p1, p2] = posts
+  const results = Object.fromEntries((p2?.messages || []).filter((m) => m.role === 'tool').map((m) => [m.tool_call_id, JSON.parse(m.content)]))
+  const q = results.call_2 || {}, tides = results.call_3 || {}, none = results.call_5 || {}
+  const fieldsOk = (q.features || []).every((f) => Object.keys(f).every((k) => ['id', 'centre', 'year', 'name', 'spawns', 'index_t', 'no_index', 'length_m', 'method'].includes(k)))
+  report(opened.shown && opened.expanded === 'true' && opened.status === '' && posts.length === 2 && p1.messages.length === 1 && p1.messages[0].role === 'user' && Array.isArray(p1.state?.layers) && p1.state.view?.length === 4
+    && p2.messages.filter((m) => m.role === 'tool').length === 6 && p2.messages.every((m) => m.role !== 'system')
+    && q.matched > 0 && q.returned <= 5 && fieldsOk && /may be turned on but not read/.test(tides.error || '') && /no layer no-such-layer/.test(none.error || ''),
+  t('ask the map: a question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, and an unknown layer is refused'), JSON.stringify({ opened, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none }))
+  report(after.herring && after.year === 1960 && after.hl && after.text?.startsWith('In the 1960 season this map has spawn records') && !/\[(src|feat):/.test(after.text) && !after.text.includes('nope')
+    && after.chips.length === 2 && after.sources.length === 1 && /^Herring spawn by year, 1951 to 2026\. Open Government Licence – Canada$/.test(after.sources[0][0]) && after.sources[0][1]?.startsWith('https://open.canada.ca/')
+    && after.did.some((c) => c.startsWith('Turned on Herring spawn by year')) && after.did.includes('Year set to 1960') && after.did.some((c) => c.startsWith('Outlined')) && after.undo && after.status === '',
+  t('ask the map: the answer turns on the layer, sets the year and outlines the records, each citation becomes a chip, an unknown key is dropped, and the source list takes its title, licence and link from the manifest'), JSON.stringify(after))
+  if (shot) await shot('chat')
+  await page.click('.chat-did button')
+  await page.waitForTimeout(800)
+  const undone = await page.evaluate(() => ({ herring: document.querySelector('input[data-time=herringyears]').checked, hl: !!window.__map.getLayer('chat-hl-1-dot'), cam: window.__map.getCenter().toArray().map((v) => v.toFixed(4)).join() }))
+  on = false
+  await page.click('#chat-close'); await page.click('#chat-btn')
+  await page.waitForFunction(() => document.getElementById('chat-status').textContent !== '', null, { timeout: 10000 }).catch(() => {})
+  const off = await page.evaluate(() => ({ status: document.getElementById('chat-status').textContent, disabled: document.getElementById('chat-input').disabled }))
+  report(!undone.herring && !undone.hl && undone.cam === cam0 && off.status === 'The chat is off just now.' && off.disabled, t('ask the map: Undo puts back the boxes, the view and the outlines, and a service that is off says so and takes no question'), JSON.stringify({ undone, cam0, off }))
+  await page.click('#chat-close')
+  await page.unroute(CHAT_URL)
 }
 
 async function checkOverlaysBlocked(browser, base) {

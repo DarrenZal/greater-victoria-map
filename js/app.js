@@ -4,6 +4,7 @@ import { Map, Popup, NavigationControl, ScaleControl, AttributionControl, setWor
 import { createOverlays } from './overlays.js'
 import { createTimeLayers } from './time-layers.js'
 import { createNight } from './night.js'
+import { createChat } from './chat.js'
 import { flowRestMs } from './overlays-data.js'
 
 // MapLibre 6.x ships ES modules only, so its worker is pointed at explicitly.
@@ -533,11 +534,29 @@ for (const id of ['pins', ...overlays.queryLayers, ...time.queryLayers, 'parks-b
   map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
 }
 
+// ---- Ask the map. The chat opens a feature's popup the way a click would: once the map has stopped moving, it clicks the feature's spot
+// (its point, or the middle of the view the chat moved to). 'idle' is no use here, because it never comes while the creek Flow runs.
+const chat = createChat({
+  map, $, el, time, motionQuery, maxBounds: MAX_BOUNDS,
+  showFeature: (l, f) => {
+    const box = document.querySelector(l.box)
+    if (box && !box.checked) box.click()
+    const c = f.geometry.type === 'Point' ? f.geometry.coordinates : null
+    const click = () => {
+      if (map.isMoving()) return setTimeout(click, 100)
+      const at = c || map.getCenter().toArray()
+      map.fire('click', { point: map.project(at), lngLat: { lng: at[0], lat: at[1] } })
+    }
+    setTimeout(click, 400)
+  },
+})
+
 // Test hook for scripts/browser-check.mjs. Harmless in production.
 if (new URLSearchParams(location.search).has('test')) {
   window.__map = map
   window.__overlays = overlays
   window.__time = time
+  window.__chat = chat
   // `step` is the position of the layer that is shown, read from the map, `layers` are the 14 layers and `log` is what flowLog holds.
   window.__flow = { sequence: FLOW_SEQUENCE, minZoom: FLOW_MIN_ZOOM, layers: FLOW_LAYERS, log: flowLog, running: () => flowFrameId !== 0, step: () => FLOW_LAYERS.findIndex((id) => map.getPaintProperty(id, 'line-opacity') > 0) }
   // map.loaded() and the 'idle' event never settle while the flow dashes animate,
