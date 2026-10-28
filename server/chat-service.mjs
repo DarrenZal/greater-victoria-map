@@ -6,21 +6,22 @@
 // counter of the rate limit, in memory, for an hour.
 //
 // Environment (on the server, from a file readable by root and the service only):
-//   OPENROUTER_API_KEY  the map's own key, with a credit limit set at OpenRouter
-//   CHAT_MODEL          the model, an OpenRouter id
+//   MODEL_API_KEY       the map's own key at the model provider (OPENROUTER_API_KEY is also read)
+//   CHAT_MODEL          the model, as the provider names it
 //   PORT                default 9030, on the loopback address only (Caddy passes /chat to it)
 //   ALLOWED_ORIGINS     the pages that may call it, comma separated (default https://darrenzal.github.io)
 //   MANIFEST_URL        the map's layer manifest (default the live site's data/manifest.json), read at start and every hour
 //   PER_HOUR            requests per address per hour (default 60, about 20 questions with their tool steps)
 //   PER_DAY             requests in total per day (default 1500)
 //   OFF_FILE            while this file exists the service answers 503 (default /etc/gv-chat/off)
-//   MODEL_URL           the model endpoint (default OpenRouter's). The checks point it at a stand-in.
+//   MODEL_URL           the model endpoint, OpenAI-compatible (default OpenRouter's). The checks point it at a stand-in. For Groq it is
+//                       https://api.groq.com/openai/v1/chat/completions, with Zero Data Retention on in the account's Data Controls.
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 
 const env = process.env
 const PORT = Number(env.PORT || 9030)
-const KEY = env.OPENROUTER_API_KEY || ''
+const KEY = env.MODEL_API_KEY || env.OPENROUTER_API_KEY || ''
 const MODEL = env.CHAT_MODEL || ''
 const MODEL_URL = env.MODEL_URL || 'https://openrouter.ai/api/v1/chat/completions'
 const ORIGINS = (env.ALLOWED_ORIGINS || 'https://darrenzal.github.io').split(',').map((s) => s.trim()).filter(Boolean)
@@ -28,6 +29,9 @@ const MANIFEST_URL = env.MANIFEST_URL || 'https://darrenzal.github.io/greater-vi
 const PER_HOUR = Number(env.PER_HOUR || 60)
 const PER_DAY = Number(env.PER_DAY || 1500)
 const OFF_FILE = env.OFF_FILE || '/etc/gv-chat/off'
+// OpenRouter routes to many providers, so it is told to use only those that do not keep or train on prompts. A single provider (Groq) does
+// not take that field, and its own setting (Zero Data Retention) does the same.
+export const extraFields = (url) => (new URL(url).host === 'openrouter.ai' ? { provider: { data_collection: 'deny' } } : {})
 const MAP_URL = 'https://darrenzal.github.io/greater-victoria-map/'
 
 // Limits on what a page may send.
@@ -166,14 +170,15 @@ export const server = createServer(async (req, res) => {
     headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json', 'http-referer': MAP_URL, 'x-title': 'Greater Victoria open map' },
     body: JSON.stringify({
       model: MODEL, stream: true, max_tokens: MAX_TOKENS, temperature: 0.2, tools: TOOLS, tool_choice: 'auto',
-      // Only providers that do not keep or train on prompts.
-      provider: { data_collection: 'deny' },
+      ...extraFields(MODEL_URL),
       messages: [{ role: 'system', content: instructions() + state }, ...body.messages.map(clean)],
     }),
     signal: AbortSignal.timeout(60000),
   }).catch((e) => ({ ok: false, status: 502, statusText: e.message }))
   if (!upstream.ok || !upstream.body) {
     console.log(`model: HTTP ${upstream.status}`) // the status only, never the body or the question
+    // A free plan has limits per minute and per day, so the provider's 429 is said as busy, not as broken.
+    if (upstream.status === 429) return send(res, 503, origin, { error: 'The chat is busy just now. Try again in a minute.' })
     return send(res, 502, origin, { error: 'The model did not answer just now. Try again later.' })
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...headers(origin) })
