@@ -17,8 +17,8 @@
 //   MODEL_URL           the model endpoint, OpenAI-compatible (default OpenRouter's). The checks point it at a stand-in. For Groq it is
 //                       https://api.groq.com/openai/v1/chat/completions, with Zero Data Retention on in the account's Data Controls.
 //   FALLBACK_URL, FALLBACK_KEY, FALLBACK_MODEL
-//                       a second OpenAI-compatible endpoint, its key and model, optional. When the first answers 429 (a free plan at its
-//                       limit), the call goes to the second at once instead of waiting.
+//                       a second OpenAI-compatible endpoint, its key and model, optional. When the first answers 429 or 413 (a free plan
+//                       at its limit, or a request larger than it allows), the call goes to the second at once instead of waiting.
 //   MODEL_STREAM, FALLBACK_STREAM
 //                       0 asks that endpoint for the whole answer at once, which the service then sends to the page as one chunk of the same
 //                       stream. TELUS's Gemma (vLLM) needs it: its streamed tool calls garble nested arguments (48.4284 came as 48.04284,
@@ -93,9 +93,11 @@ Rules:
 - Cite every fact from a layer as [src:<layer id>], or [feat:<layer id>/<feature id>] for one feature. Use only ids from the manifest and from the tools' results. Never write a credit, licence or link yourself. The page adds them from its records.
 - Say what a layer is not when it matters, from its manifest line. A record of herring spawn is not where herring are now, a model is not sightings, a legacy survey is not a current record, and a missing record is not proof of absence.
 - Never give a live position of a whale or any animal. The map has none.
-- Live layers (weather, sea, tides, gauges, earthquakes, life observations, seafloor depth): you may turn them on, but never state their values. Say the visitor can read them on the map.
+- Live layers (weather, sea, tides, gauges, earthquakes, life observations, seafloor depth): you may turn them on, but never state their values. Say that they can read them on the map.
 - Nothing about First Nations' territories, rights or positions. If asked, say this map has no such layer and that each Nation speaks for itself.
 - Turn on the layers you talk about and move the map to the place, so the visitor sees what you mean. Set the year when a time layer is involved.
+- Say only what your tool calls did. Never say you turned on a layer, moved the map or set a year unless you called that tool.
+- Speak to the visitor as you.
 - When you count, say what was counted and what was not.
 - Be brief: a few plain sentences. No headings. No em dashes or semicolons.
 
@@ -190,8 +192,9 @@ export const server = createServer(async (req, res) => {
   // most, while the page says it is thinking. A longer one is said as busy. With a second endpoint, the call goes there at once instead.
   let used = PRIMARY, upstream = await call(used)
   const second = fallback()
-  if (upstream.status === 429 && second) {
-    console.log('model: HTTP 429, asking the fallback')
+  // Groq's free plan answers 413 to one request larger than its tokens a minute (a long conversation with tool results), and 429 at its limit.
+  if ((upstream.status === 429 || upstream.status === 413) && second) {
+    console.log(`model: HTTP ${upstream.status}, asking the fallback`)
     used = second; upstream = await call(used)
   }
   for (let tries = 0; upstream.status === 429 && tries < RETRIES; tries++) {
@@ -217,11 +220,12 @@ export const server = createServer(async (req, res) => {
     let m
     try { m = (await upstream.json()).choices[0].message } catch { return send(res, 502, origin, { error: 'The model did not answer just now. Try again later.' }) }
     const tool_calls = (m.tool_calls || []).map((c, index) => ({ index, id: c.id, type: 'function', function: { name: c.function?.name || '', arguments: c.function?.arguments || '' } }))
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...headers(origin) })
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-chat-model': used.model, ...headers(origin) })
     res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: m.content || '', ...(tool_calls.length ? { tool_calls } : {}) } }] })}\n\n`)
     return res.end('data: [DONE]\n\n')
   }
-  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...headers(origin) })
+  // Which model answered, for the eval and the log. The privacy note names both.
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-chat-model': used.model, ...headers(origin) })
   try { for await (const chunk of upstream.body) res.write(chunk) } catch { /* the visitor left or the model stopped */ }
   res.end()
 })

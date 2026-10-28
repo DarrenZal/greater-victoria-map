@@ -40,11 +40,13 @@ async function askOne(item) {
 
 async function askIn(ctx, item) {
   const page = await ctx.newPage()
+  const models = [] // which model answered each call, from the service's x-chat-model
   page.setDefaultTimeout(90000)
   // The page's chat address goes to the local service, with the page's own origin, as Caddy would pass it.
   await page.route(CHAT_URL, async (route) => {
     const req = route.request()
     const r = await fetch(SERVICE, { method: req.method(), headers: { 'content-type': 'application/json', origin: BASE }, body: req.method() === 'POST' ? req.postData() : undefined })
+    if (r.headers.get('x-chat-model')) models.push(r.headers.get('x-chat-model'))
     await route.fulfill({ status: r.status, headers: { 'content-type': r.headers.get('content-type') || 'application/json' }, body: Buffer.from(await r.arrayBuffer()) })
   })
   await page.goto(`${BASE}/?test`)
@@ -69,6 +71,7 @@ async function askIn(ctx, item) {
     }
   })
   out.seconds = Math.round((Date.now() - t0) / 100) / 10
+  out.models = models
   return out
 }
 
@@ -98,13 +101,13 @@ for (const item of questions) {
   }
   const fails = grade(item, o)
   results.push({ id: item.id, q: item.q, pass: !fails.length, fails, ...o })
-  console.log(`${fails.length ? 'FAIL' : 'PASS'}  ${item.id}${fails.length ? `: ${fails.join(' | ')}` : ''}`)
+  console.log(`${fails.length ? 'FAIL' : 'PASS'}  ${item.id}${fails.length ? `: ${fails.join(' | ')}` : ''}  [${(o.models || []).join(', ')}]`)
   await sleep(PAUSE)
 }
 const passed = results.filter((r) => r.pass).length
 await writeFile(join(OUT, 'results.json'), JSON.stringify({ model: process.env.EVAL_MODEL || null, at: new Date().toISOString(), passed, total: results.length, results }, null, 1))
 const md = [`# Ask the map eval${process.env.EVAL_MODEL ? `: ${process.env.EVAL_MODEL}` : ''}`, '', `${passed} of ${results.length} passed the automatic grade.`, '']
-for (const r of results) md.push(`## ${r.pass ? 'PASS' : 'FAIL'} ${r.id}: ${r.q}`, '', r.shown || `(no answer${r.status ? `: ${r.status}` : ''})`, '', `- Did: ${r.did.join(', ') || 'nothing'}`, `- Tools: ${r.calls.map((c) => `${c.name} ${c.args}`).join(' · ') || 'none'}`, `- Ended with layers ${r.state.layers.join(', ') || 'none'}, year ${r.state.year ?? 'none'}, ${r.seconds ?? '?'} s`, ...(r.fails.length ? [`- Failed: ${r.fails.join(' | ')}`] : []), '')
+for (const r of results) md.push(`## ${r.pass ? 'PASS' : 'FAIL'} ${r.id}: ${r.q}`, '', r.shown || `(no answer${r.status ? `: ${r.status}` : ''})`, '', `- Did: ${r.did.join(', ') || 'nothing'}`, `- Tools: ${r.calls.map((c) => `${c.name} ${c.args}`).join(' · ') || 'none'}`, `- Ended with layers ${r.state.layers.join(', ') || 'none'}, year ${r.state.year ?? 'none'}, ${r.seconds ?? '?'} s`, `- Models: ${(r.models || []).join(', ') || 'none'}`, ...(r.fails.length ? [`- Failed: ${r.fails.join(' | ')}`] : []), '')
 await writeFile(join(OUT, 'results.md'), md.join('\n'))
 console.log(`\n${passed} of ${results.length} passed. Results in ${OUT}`)
 await browser.close()
