@@ -461,30 +461,44 @@
       "id": "herringyears",
       "box": "input[data-time=\"herringyears\"]",
       "group": "Change over time",
-      "title": "Herring spawn by year, 1951 to 2026",
-      "is": "One circle for each place and herring season (July to June), 807 place-and-season records in the area the map reaches, sized by the spawn index of Fisheries and Oceans Canada. A year is the season that ends in it, so 1951 is the 1950/1951 season.",
-      "isNot": "Not where herring are now, and the index is a relative minimum measure, not a count of fish. One place named for a First Nation is left out, as in the other layers.",
+      "title": "Herring spawn by year, 1932 to 2026",
+      "is": "One circle for each place and herring season (July to June), 807 place-and-season records in the area the map reaches, sized by the spawn index of Fisheries and Oceans Canada. A year is the season that ends in it, so 1951 is the 1950/1951 season. Before 1951, 21 seasons from a DFO report of 1989 (Hay, McCarter, Kronlund and Roy) give spawn by whole shore section: Victoria Harbour (1937 to 1950, 30 records), Saanich Inlet (16 records) and one record in Sidney Channel on 14 April 1932, each drawn as a large ring over the section.",
+      "isNot": "Not where herring are now, and the index is a relative minimum measure, not a count of fish. Before 1951 a ring is a whole shore section, not the place of a spawn, and DFO treats records before 1951 as unreliable for indexing. One place named for a First Nation is left out, as in the other layers.",
       "kind": "event",
       "years": [
-        1951,
+        1932,
         2026
       ],
-      "file": "data/herring-spawn-years.geojson",
+      "file": [
+        "data/herring-spawn-years.geojson",
+        "data/herring-spawn-before-1951.geojson"
+      ],
       "fields": {
         "year": "The herring season that ends in this year, July to June.",
-        "name": "Place name as Fisheries and Oceans Canada publishes it.",
+        "name": "Place name as Fisheries and Oceans Canada publishes it, or before 1951 the shore section.",
         "spawns": "Number of spawn records grouped into this place and season.",
         "index_t": "Spawn index in tonnes, a relative index and a minimum estimate. Blank where no record had one.",
         "no_index": "Number of those records that have no spawn index.",
-        "length_m": "Length of shore in metres along which spawn was recorded.",
-        "method": "How it was surveyed: Surface, Dive, Mixed or Incomplete."
+        "length_m": "Length of shore in metres along which spawn was recorded, in all for a section before 1951.",
+        "method": "How it was surveyed: Surface, Dive, Mixed or Incomplete.",
+        "records": "Before 1951: number of spawn records in the whole section that season.",
+        "places": "Before 1951: number of different spawning locations used in the section that season.",
+        "width_m": "Before 1951: average width of spawn in metres, blank before 1942.",
+        "intensity": "Before 1951: average spawn intensity, on five categories from 1 (very light) to 5 (very heavy).",
+        "first_day": "Before 1951: day of the year of the first spawn, 1 January being day 1.",
+        "last_day": "Before 1951: day of the year of the last spawn.",
+        "date": "Before 1951: the date of the one Sidney Channel record of 1932."
       },
       "live": null,
       "modelMayRead": true,
-      "record": "https://open.canada.ca/data/en/dataset/d892511c-d851-4f85-a0ec-708bc05d2810",
-      "licence": "Open Government Licence – Canada",
+      "record": [
+        "https://open.canada.ca/data/en/dataset/d892511c-d851-4f85-a0ec-708bc05d2810",
+        "https://publications.gc.ca/collections/collection_2026/mpo-dfo/fs97-4/Fs97-4-2019-5-eng.pdf"
+      ],
+      "licence": "Open Government Licence – Canada from 1951. Before 1951, figures copied from a 1989 DFO report under the Government of Canada's terms for non-commercial reproduction.",
       "sources": [
-        "tl-herringyears"
+        "tl-herringyears",
+        "tl-herringearly"
       ]
     },
     {
