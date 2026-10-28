@@ -31,6 +31,7 @@ const PER_DAY = Number(env.PER_DAY || 1500)
 const OFF_FILE = env.OFF_FILE || '/etc/gv-chat/off'
 // OpenRouter routes to many providers, so it is told to use only those that do not keep or train on prompts. A single provider (Groq) does
 // not take that field, and its own setting (Zero Data Retention) does the same.
+const RETRIES = 2, MAX_WAIT_S = Number(env.MAX_WAIT_S ?? 20)
 export const extraFields = (url) => (new URL(url).host === 'openrouter.ai' ? { provider: { data_collection: 'deny' } } : {})
 const MAP_URL = 'https://darrenzal.github.io/greater-victoria-map/'
 
@@ -165,7 +166,7 @@ export const server = createServer(async (req, res) => {
   if (bad) return send(res, 400, origin, { error: bad })
 
   const state = body.state ? `\n\nThe visitor's map now: ${JSON.stringify(body.state)}` : ''
-  const upstream = await fetch(MODEL_URL, {
+  const call = () => fetch(MODEL_URL, {
     method: 'POST',
     headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json', 'http-referer': MAP_URL, 'x-title': 'Greater Victoria open map' },
     body: JSON.stringify({
@@ -175,6 +176,16 @@ export const server = createServer(async (req, res) => {
     }),
     signal: AbortSignal.timeout(60000),
   }).catch((e) => ({ ok: false, status: 502, statusText: e.message }))
+  // A free plan allows few tokens a minute and says how long to wait (Groq: retry-after, in seconds). A short wait is waited out, twice at
+  // most, while the page says it is thinking. A longer one is said as busy.
+  let upstream = await call()
+  for (let tries = 0; upstream.status === 429 && tries < RETRIES; tries++) {
+    const after = upstream.headers?.get?.('retry-after'), wait = after ? Number(after) : NaN // no header: no wait
+    if (!(wait >= 0 && wait <= MAX_WAIT_S)) break
+    console.log(`model: HTTP 429, waiting ${wait} s`)
+    await new Promise((r) => setTimeout(r, wait * 1000 + 250))
+    upstream = await call()
+  }
   if (!upstream.ok || !upstream.body) {
     console.log(`model: HTTP ${upstream.status}`) // the status only, never the body or the question
     // A free plan has limits per minute and per day, so the provider's 429 is said as busy, not as broken.
