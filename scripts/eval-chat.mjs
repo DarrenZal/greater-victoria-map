@@ -34,7 +34,13 @@ const re = (s) => new RegExp(s, 'i')
 
 async function askOne(item) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } })
+  // A page that fails is closed too, or its map keeps drawing and slows every page after it.
+  try { return await askIn(ctx, item) } finally { await ctx.close() }
+}
+
+async function askIn(ctx, item) {
   const page = await ctx.newPage()
+  page.setDefaultTimeout(90000)
   // The page's chat address goes to the local service, with the page's own origin, as Caddy would pass it.
   await page.route(CHAT_URL, async (route) => {
     const req = route.request()
@@ -42,9 +48,9 @@ async function askOne(item) {
     await route.fulfill({ status: r.status, headers: { 'content-type': r.headers.get('content-type') || 'application/json' }, body: Buffer.from(await r.arrayBuffer()) })
   })
   await page.goto(`${BASE}/?test`)
-  await page.waitForFunction(() => window.__map?.isStyleLoaded() && window.__chat, null, { timeout: 30000 })
+  await page.waitForFunction(() => window.__map?.isStyleLoaded() && window.__chat, null, { timeout: 90000 })
   await page.click('#chat-btn')
-  await page.waitForFunction(() => !document.getElementById('chat-input').disabled || document.getElementById('chat-status').textContent, null, { timeout: 20000 })
+  await page.waitForFunction(() => !document.getElementById('chat-input').disabled || document.getElementById('chat-status').textContent, null, { timeout: 60000 })
   const t0 = Date.now()
   await page.evaluate((q) => window.__chat.ask(q), item.q)
   const out = await page.evaluate(() => {
@@ -63,7 +69,6 @@ async function askOne(item) {
     }
   })
   out.seconds = Math.round((Date.now() - t0) / 100) / 10
-  await ctx.close()
   return out
 }
 

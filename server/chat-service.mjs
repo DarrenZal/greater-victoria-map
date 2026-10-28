@@ -188,8 +188,13 @@ export const server = createServer(async (req, res) => {
   }
   if (!upstream.ok || !upstream.body) {
     console.log(`model: HTTP ${upstream.status}`) // the status only, never the body or the question
-    // A free plan has limits per minute and per day, so the provider's 429 is said as busy, not as broken.
-    if (upstream.status === 429) return send(res, 503, origin, { error: 'The chat is busy just now. Try again in a minute.' })
+    // A free plan has limits per minute and per day, so the provider's 429 is said as busy, not as broken. A long wait (Groq's free plan
+    // has 200,000 tokens a day, about 40 calls) is said in minutes or hours.
+    if (upstream.status === 429) {
+      const after = Number(upstream.headers?.get?.('retry-after')), min = Math.ceil(after / 60)
+      const when = !(after > 90) ? 'in a minute' : min < 120 ? `in about ${min} minutes` : `in about ${Math.round(min / 60)} hours`
+      return send(res, 503, origin, { error: after > 90 ? `The chat has used its share for now. Try again ${when}.` : 'The chat is busy just now. Try again in a minute.' })
+    }
     return send(res, 502, origin, { error: 'The model did not answer just now. Try again later.' })
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...headers(origin) })
