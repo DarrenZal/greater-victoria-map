@@ -2509,13 +2509,15 @@ async function checkChat(page, requests, t, name, shot) {
   const [p1, p2] = posts
   const results = Object.fromEntries((p2?.messages || []).filter((m) => m.role === 'tool').map((m) => [m.tool_call_id, JSON.parse(m.content)]))
   const q = results.call_2 || {}, tides = results.call_3 || {}, none = results.call_5 || {}
-  const fieldsOk = (q.features || []).every((f) => Object.keys(f).every((k) => ['id', 'centre', 'year', 'name', 'spawns', 'index_t', 'no_index', 'length_m', 'method'].includes(k)))
+  // The fields the manifest lists for the layer, its id and centre, and the file it came from when the layer has several (herring before 1951).
+  const herringEntry = JSON.parse(await readFile(join(ROOT, 'data/manifest.json'), 'utf8')).layers.find((l) => l.id === 'herringyears')
+  const fieldsOk = (q.features || []).every((f) => Object.keys(f).every((k) => ['id', 'centre', 'file', ...Object.keys(herringEntry.fields)].includes(k)))
   report(opened.shown && opened.expanded === 'true' && opened.status === '' && posts.length === 2 && p1.messages.length === 1 && p1.messages[0].role === 'user' && Array.isArray(p1.state?.layers) && p1.state.view?.length === 4
     && p2.messages.filter((m) => m.role === 'tool').length === 6 && p2.messages.every((m) => m.role !== 'system')
     && q.matched > 0 && q.returned <= 5 && fieldsOk && /may be turned on but not read/.test(tides.error || '') && /no layer no-such-layer/.test(none.error || ''),
   t('ask the map: a question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, and an unknown layer is refused'), JSON.stringify({ opened, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none }))
   report(after.herring && after.year === 1960 && after.hl && after.text?.startsWith('In the 1960 season this map has spawn records') && !/\[(src|feat):/.test(after.text) && !after.text.includes('nope')
-    && after.chips.length === 2 && after.sources.length === 1 && /^Herring spawn by year, 1951 to 2026\. Open Government Licence – Canada$/.test(after.sources[0][0]) && after.sources[0][1]?.startsWith('https://open.canada.ca/')
+    && after.chips.length === 2 && after.sources.length === 1 && after.sources[0][0] === `${herringEntry.title}, record 2. ${herringEntry.licence}` && after.sources[0][1]?.startsWith('https://open.canada.ca/')
     && after.did.some((c) => c.startsWith('Turned on Herring spawn by year')) && after.did.includes('Year set to 1960') && after.did.some((c) => c.startsWith('Outlined')) && after.undo && after.status === '',
   t('ask the map: the answer turns on the layer, sets the year and outlines the records, each citation becomes a chip, an unknown key is dropped, and the source list takes its title, licence and link from the manifest'), JSON.stringify(after))
   if (shot) await shot('chat')
