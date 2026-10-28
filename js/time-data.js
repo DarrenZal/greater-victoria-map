@@ -90,13 +90,59 @@ export function herringYearInfo(p) {
     source: `Source: Fisheries and Oceans Canada, Pacific Herring Spawn Index Data. The name is as DFO publishes it. ${OGL_CANADA_LINE}`,
   }
 }
-export function herringLine(year, count, first) {
+// `count` is the places of DFO's data that season and `sections` the shore sections of the 1989 report (seasons before 1951).
+export function herringLine(year, count, first, sections = 0) {
   if (year < first) return `Herring spawn: the records begin with the ${herringSeason(first)} season.`
+  if (sections) return `Herring spawn, ${herringSeason(year)} season: records for ${plural(sections, 'shore section', 'shore sections')}, with no places (DFO report of 1989).`
+  if (!count && year < HERRING_TABLES_FROM) return `Herring spawn, ${herringSeason(year)} season: no record. The yearly records begin with the ${herringSeason(HERRING_TABLES_FROM)} season.`
   if (!count) return `Herring spawn, ${herringSeason(year)} season: none recorded in the area this map reaches.`
   return `Herring spawn, ${herringSeason(year)} season: ${plural(count, 'place', 'places')}.`
 }
 // Circle size by the spawn index in tonnes (0.04 to 36,200 in the file, median about 150), on a square-root scale. No index: the smallest.
 export const herringRadius = () => ['interpolate', ['linear'], ['sqrt', ['coalesce', ['get', 'index_t'], 0]], 0, 3.5, 10, 6, 40, 11, 190, 24]
+
+// ---- herring spawn before 1951, by shore section (Hay, McCarter, Kronlund and Roy 1989)
+// DFO's spawn index data begin with the 1951 season. For earlier seasons a DFO report of 1989 gives each shore section's spawn records, with
+// no places, made into a file by scripts/make-herring-early.mjs. The map draws a ring over the section's spawning area. The report states
+// no licence. The Government of Canada's terms (https://www.canada.ca/en/transparency/terms.html) allow non-commercial reproduction with
+// the title, the author and the address of the version copied.
+export const HERRING_EARLY_FILE = 'data/herring-spawn-before-1951.geojson'
+export const HERRING_EARLY_REPORT = 'https://publications.gc.ca/collections/collection_2026/mpo-dfo/fs97-4/Fs97-4-2019-5-eng.pdf'
+export const HERRING_EARLY_TITLE = 'Spawning areas of British Columbia herring: a review, geographical analysis and classification. Volume V. Strait of Georgia'
+export const HERRING_EARLY_AUTHORS = 'D. E. Hay, P. B. McCarter, R. Kronlund and C. Roy'
+// The first year of the report's tables. Before it the report has one dated record, Sidney Channel in 1932.
+export const HERRING_TABLES_FROM = 1937
+export const HERRING_EARLY_CAVEAT = 'DFO treats spawn records before 1951 as unreliable for indexing and leaves them out of its stock assessments. These are survey records, not amounts of fish.'
+const HERRING_EARLY_WHERE = {
+  'Victoria Harbour': 'Portage Inlet and Esquimalt Harbour, where the report says this section spawns',
+  'Saanich Inlet': 'Saanich Inlet from Patricia Bay to Goldstream Flats, the two areas the report names',
+  'Sidney Channel': 'Sidney Channel at the position DFO lists for it',
+}
+// The report counts days from 1 January, day 1.
+const dayDate = (year, day) => new Date(Date.UTC(year, 0, day)).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })
+export function herringEarlyInfo(p) {
+  const year = Number.isInteger(p.year) ? p.year : null
+  const records = Number.isInteger(p.records) && p.records > 0 ? p.records : null
+  const dated = typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? new Date(`${p.date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : null
+  const days = year && Number.isInteger(p.first_day) && Number.isInteger(p.last_day) ? [dayDate(year, p.first_day), dayDate(year, p.last_day)] : null
+  return {
+    title: `${p.name}, whole shore section`,
+    tag: year ? `herring spawn, ${herringSeason(year)} season` : 'herring spawn',
+    lines: [
+      records ? `${plural(records, 'spawn record', 'spawn records')} this season${Number.isInteger(p.places) && p.places > 0 ? ` at ${plural(p.places, 'location', 'locations')}` : ''}${typeof p.length_m === 'number' && p.length_m > 0 ? `, along about ${fmt(p.length_m)} m of shore in all` : ''}.` : null,
+      dated ? `Recorded on ${dated}. The report's yearly tables begin in ${HERRING_TABLES_FROM}, and its notes give this one earlier record.` : null,
+      days ? (days[0] === days[1] ? `Spawn on about ${days[0]}.` : `Spawn between about ${days[0]} and ${days[1]}.`) : null,
+      typeof p.width_m === 'number' && p.width_m > 0 ? `Average width about ${fmt(p.width_m)} m.` : null,
+      typeof p.intensity === 'number' && p.intensity > 0 ? `Average intensity ${fmt(p.intensity, 1)}. Until 1968 surveyors rated spawn in five categories, from 1 (very light) to 5 (very heavy).` : null,
+      HERRING_EARLY_WHERE[p.name] ? `The report gives these figures for the whole section, not by place, so the ring covers ${HERRING_EARLY_WHERE[p.name]}. It does not show where the spawn was.` : null,
+      HERRING_EARLY_CAVEAT,
+    ].filter(Boolean),
+    source: `Source: ${HERRING_EARLY_AUTHORS}, ${HERRING_EARLY_TITLE}, Fisheries and Oceans Canada, 1989${p.table ? `, table ${p.table}` : ''}. The figures are copied from the version at publications.gc.ca.`,
+  }
+}
+// The ring's radius in pixels for its radius on the ground (`r_m`), so it covers the same shore at every zoom. At this latitude a pixel of
+// zoom 0 is about 51,860 m (512-pixel tiles).
+export const herringEarlyRadius = () => ['interpolate', ['exponential', 2], ['zoom'], 0, ['/', ['get', 'r_m'], 51860], 22, ['/', ['*', ['get', 'r_m'], 4194304], 51860]]
 
 // ---- aerial photos of Victoria, 1932 and 1950 (Natural Resources Canada, National Air Photo Library)
 // A time-enabled WMS of the federal datacube. The two mosaics are greyscale. The record says the photos of one year are "not necessarily

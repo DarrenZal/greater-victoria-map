@@ -7,6 +7,7 @@
 import {
   snapshotLine,
   HERRING_YEARS_FILE, HERRING_RECORD, herringSteps, herringSeason, herringYearInfo, herringLine, herringRadius,
+  HERRING_EARLY_FILE, HERRING_EARLY_REPORT, herringEarlyInfo, herringEarlyRadius,
   AERIAL_RECORD, AERIAL_YEARS, AERIAL_BOUNDS, aerialTileUrl,
   LANDCOVER_RECORD, LANDCOVER_YEARS, LANDCOVER_FILE, LANDCOVER_CORNERS, LANDCOVER_CLASSES, landcoverLut,
   SEI_RECORD, SEI_FILES, SEI_YEARS, SEI_KEY, SEI_CLASSES, seiColour, seiInfo,
@@ -20,6 +21,8 @@ const OGL_CANADA_LINK = '<a href="https://open.canada.ca/en/open-government-lice
 const OGL_BC_LINK = '<a href="https://www2.gov.bc.ca/gov/content?id=A519A56BC2BF44E4A008B33FCF527F61" target="_blank" rel="noopener">OGL &ndash; British Columbia</a>'
 const OGL_VICTORIA_LINK = '<a href="https://opendata.victoria.ca/pages/open-data-licence" target="_blank" rel="noopener">OGL &ndash; City of Victoria</a>'
 const HERRING_YEARS_ATTRIB = `Herring spawn by year: <a href="${HERRING_RECORD}" target="_blank" rel="noopener">Fisheries and Oceans Canada</a> (${OGL_CANADA_LINK})`
+// The report of 1989 states no licence, so its credit names the report and nothing else (see js/time-data.js).
+const HERRING_EARLY_ATTRIB = `Herring spawn before 1951: <a href="${HERRING_EARLY_REPORT}" target="_blank" rel="noopener">Hay, McCarter, Kronlund and Roy 1989, Fisheries and Oceans Canada</a>`
 const AERIAL_ATTRIB = `Air photos 1932 and 1950: <a href="${AERIAL_RECORD}" target="_blank" rel="noopener">National Air Photo Library, Natural Resources Canada</a> (${OGL_CANADA_LINK})`
 const LANDCOVER_ATTRIB = `Land cover: <a href="${LANDCOVER_RECORD}" target="_blank" rel="noopener">Natural Resources Canada</a> (${OGL_CANADA_LINK})`
 const SEI_ATTRIB = `Sensitive ecosystems: <a href="${SEI_RECORD}" target="_blank" rel="noopener">Province of British Columbia</a> (${OGL_BC_LINK})`
@@ -77,7 +80,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
 
   // ---- the layers. `ids` are hidden when the box is unticked. `kind` and `steps` are what each registers with the time control.
   const DEFS = {
-    herringyears: { label: 'Herring spawn by year', ids: ['herringyears-all', 'herringyears-dot'], ui: ['herringyears-note'], kind: 'event', load: loadHerring },
+    herringyears: { label: 'Herring spawn by year', ids: ['herringyears-section', 'herringyears-all', 'herringyears-dot'], ui: ['herringyears-note'], kind: 'event', load: loadHerring },
     aerials: { label: 'Air photos', ids: ['aerial-1932', 'aerial-1950', 'aerials-credit'], ui: ['aerials-note'], kind: 'snapshot', steps: AERIAL_YEARS, load: async () => ({ message: 'Greyscale air photos of central Victoria, Oak Bay, Esquimalt and south Saanich, from Natural Resources Canada.' }) },
     sei: { label: 'Sensitive ecosystems', ids: ['sei-1994-fill', 'sei-1994-line', 'sei-2002-fill', 'sei-2002-line'], ui: ['sei-key', 'sei-note'], kind: 'snapshot', steps: SEI_YEARS, load: loadSei },
     sei2014: { label: 'Garry oak ecosystems mapped in 2014', ids: ['sei2014-fill', 'sei2014-line'], ui: ['sei2014-note'], load: loadSei2014 },
@@ -88,11 +91,12 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
   const state = Object.fromEntries(Object.keys(DEFS).map((id) => [id, { on: false, loaded: false, loading: null }]))
 
   // What each layer shows for a step of the time control, and its line in the readout.
-  const herring = { counts: new Map(), first: null, steps: [] }
+  // `counts` are the places of DFO's data each season, and `sections` the shore sections of the 1989 report.
+  const herring = { counts: new Map(), sections: new Map(), first: null, steps: [] }
   const SHOW = {
     herringyears: {
-      show: (frame, t) => { map.setFilter('herringyears-dot', ['==', ['get', 'year'], t]) },
-      line: (frame, t) => herringLine(t, herring.counts.get(t) || 0, herring.first),
+      show: (frame, t) => { for (const id of ['herringyears-dot', 'herringyears-section']) map.setFilter(id, ['==', ['get', 'year'], t]) },
+      line: (frame, t) => herringLine(t, herring.counts.get(t) || 0, herring.first, herring.sections.get(t) || 0),
     },
     aerials: {
       show: (frame) => {
@@ -265,15 +269,17 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
 
   // ---- loading. Each file is fetched on the first tick only.
   async function loadHerring() {
-    const data = await json(HERRING_YEARS_FILE)
-    if (!Array.isArray(data.features) || !data.features.length) throw new Error('not a feature collection')
-    herring.counts.clear()
-    for (const f of data.features) herring.counts.set(f.properties.year, (herring.counts.get(f.properties.year) || 0) + 1)
-    herring.steps = herringSteps(data.features)
+    const [data, early] = await Promise.all([json(HERRING_YEARS_FILE), json(HERRING_EARLY_FILE)])
+    if (!Array.isArray(data.features) || !data.features.length || !Array.isArray(early.features) || !early.features.length) throw new Error('not a feature collection')
+    const count = (to, features) => { to.clear(); for (const f of features) to.set(f.properties.year, (to.get(f.properties.year) || 0) + 1) }
+    count(herring.counts, data.features)
+    count(herring.sections, early.features)
+    herring.steps = herringSteps([...early.features, ...data.features])
     herring.first = herring.steps[0].t
     map.getSource('tl-herringyears').setData(data)
-    const last = herring.steps.at(-1).t
-    return { message: `${plural(data.features.length, 'place and season', 'places and seasons')} with spawn recorded, from the ${herringSeason(herring.first)} season to ${herringSeason(last)}.` }
+    map.getSource('tl-herringearly').setData(early)
+    const from = herringSteps(data.features)[0].t, last = herring.steps.at(-1).t
+    return { message: `${plural(data.features.length, 'place and season', 'places and seasons')} with spawn recorded, from the ${herringSeason(from)} season to ${herringSeason(last)}, and ${plural(early.features.length, 'season', 'seasons')} of whole shore sections before that, from ${herringSeason(herring.first)}.` }
   }
   async function loadSei() {
     const [a, b] = await Promise.all([json(SEI_FILES[1994]), json(SEI_FILES[2002])])
@@ -451,6 +457,11 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     map.addLayer({ id: 'sei2014-fill', type: 'fill', source: 'tl-sei-2014', layout: hidden, paint: { 'fill-color': colour2014, 'fill-opacity': 0.5 } }, mid)
     map.addLayer({ id: 'sei2014-line', type: 'line', source: 'tl-sei-2014', layout: hidden, paint: { 'line-color': colour2014, 'line-width': 0.8, 'line-dasharray': [2, 1] } }, mid)
 
+    // Before 1951: a ring over a whole shore section, below the places of later seasons.
+    geo('tl-herringearly', HERRING_EARLY_ATTRIB)
+    map.addLayer({ id: 'herringyears-section', type: 'circle', source: 'tl-herringearly', layout: hidden, filter: ['==', ['get', 'year'], -1], paint: {
+      'circle-radius': herringEarlyRadius(), 'circle-color': '#e8590c', 'circle-opacity': 0.12, 'circle-stroke-width': 2, 'circle-stroke-color': '#e8590c', 'circle-stroke-opacity': 0.9,
+      'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } }, before)
     geo('tl-herringyears', HERRING_YEARS_ATTRIB)
     // Every place with spawn in any season, as a faint ring, so a season with few circles reads as fewer, not as an empty map.
     map.addLayer({ id: 'herringyears-all', type: 'circle', source: 'tl-herringyears', layout: hidden, paint: { 'circle-radius': 3.5, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-width': 1, 'circle-stroke-color': '#8a8f93' } }, before)
@@ -465,6 +476,7 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     let i
     if (layer === 'forestloss') i = lossInfo(f)
     else if (layer === 'herringyears-dot') i = herringYearInfo(p)
+    else if (layer === 'herringyears-section') i = herringEarlyInfo(p)
     else if (layer === 'sei-1994-fill') i = seiInfo(p, 1994)
     else if (layer === 'sei-2002-fill') i = seiInfo(p, 2002)
     else if (layer === 'sei2014-fill') i = seiInfo(p, 2014)
@@ -473,13 +485,14 @@ export function createTimeLayers({ map, $, el, link, motionQuery, MapClass, demT
     if (i.tag) box.append(el('span', i.tag, 'tag'))
     for (const l of i.lines) box.append(el('p', l))
     box.append(el('p', i.source, 'src'))
-    const href = { 'herringyears-dot': HERRING_RECORD, forestloss: LOSS_PAGE }[layer] || SEI_RECORD
-    const a = link(href, layer === 'herringyears-dot' ? 'The data on open.canada.ca' : layer === 'forestloss' ? 'Global Forest Change' : 'The inventory in the BC Data Catalogue')
+    const href = { 'herringyears-dot': HERRING_RECORD, 'herringyears-section': HERRING_EARLY_REPORT, forestloss: LOSS_PAGE }[layer] || SEI_RECORD
+    const a = link(href, { 'herringyears-dot': 'The data on open.canada.ca', 'herringyears-section': 'The report on publications.gc.ca', forestloss: 'Global Forest Change' }[layer] || 'The inventory in the BC Data Catalogue')
     if (a) { const d = el('p'); d.append(a); box.append(d) }
     return box
   }
-  // Points first, then the small areas, then the large ones. Forest loss is a picture, so it is found by its pixel (pixelPopup), after these.
-  const QUERY_LAYERS = ['herringyears-dot', 'sei-2002-fill', 'sei-1994-fill', 'sei2014-fill']
+  // Points first, then the small areas, then the large ones (the herring sections before 1951). Forest loss is a picture, so it is found by its
+  // pixel (pixelPopup), after these.
+  const QUERY_LAYERS = ['herringyears-dot', 'sei-2002-fill', 'sei-1994-fill', 'sei2014-fill', 'herringyears-section']
   // The popup of the forest loss under a click, or null.
   const pixelPopup = (lngLat) => { const y = lossAt(lngLat); return y ? popupFor(y, 'forestloss') : null }
 
