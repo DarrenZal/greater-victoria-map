@@ -16,6 +16,9 @@
 //   OFF_FILE            while this file exists the service answers 503 (default /etc/gv-chat/off)
 //   MODEL_URL           the model endpoint, OpenAI-compatible (default OpenRouter's). The checks point it at a stand-in. For Groq it is
 //                       https://api.groq.com/openai/v1/chat/completions, with Zero Data Retention on in the account's Data Controls.
+//   FALLBACK_URL, FALLBACK_KEY, FALLBACK_MODEL
+//                       a second OpenAI-compatible endpoint, its key and model, optional. When the first answers 429 (a free plan at its
+//                       limit), the call goes to the second at once instead of waiting.
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 
@@ -34,6 +37,9 @@ const OFF_FILE = env.OFF_FILE || '/etc/gv-chat/off'
 const RETRIES = 2, MAX_WAIT_S = Number(env.MAX_WAIT_S ?? 20)
 export const extraFields = (url) => (new URL(url).host === 'openrouter.ai' ? { provider: { data_collection: 'deny' } } : {})
 const MAP_URL = 'https://darrenzal.github.io/greater-victoria-map/'
+const PRIMARY = { url: MODEL_URL, key: KEY, model: MODEL }
+// Read at each call, so the checks can set it and take it away.
+const fallback = () => (env.FALLBACK_URL && env.FALLBACK_KEY && env.FALLBACK_MODEL ? { url: env.FALLBACK_URL, key: env.FALLBACK_KEY, model: env.FALLBACK_MODEL } : null)
 
 // Limits on what a page may send.
 const MAX_MESSAGES = 24, MAX_QUESTION = 600, MAX_TOTAL = 40000, MAX_TOKENS = 700
@@ -166,25 +172,30 @@ export const server = createServer(async (req, res) => {
   if (bad) return send(res, 400, origin, { error: bad })
 
   const state = body.state ? `\n\nThe visitor's map now: ${JSON.stringify(body.state)}` : ''
-  const call = () => fetch(MODEL_URL, {
+  const call = (p) => fetch(p.url, {
     method: 'POST',
-    headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json', 'http-referer': MAP_URL, 'x-title': 'Greater Victoria open map' },
+    headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json', 'http-referer': MAP_URL, 'x-title': 'Greater Victoria open map' },
     body: JSON.stringify({
-      model: MODEL, stream: true, max_tokens: MAX_TOKENS, temperature: 0.2, tools: TOOLS, tool_choice: 'auto',
-      ...extraFields(MODEL_URL),
+      model: p.model, stream: true, max_tokens: MAX_TOKENS, temperature: 0.2, tools: TOOLS, tool_choice: 'auto',
+      ...extraFields(p.url),
       messages: [{ role: 'system', content: instructions() + state }, ...body.messages.map(clean)],
     }),
     signal: AbortSignal.timeout(60000),
   }).catch((e) => ({ ok: false, status: 502, statusText: e.message }))
   // A free plan allows few tokens a minute and says how long to wait (Groq: retry-after, in seconds). A short wait is waited out, twice at
-  // most, while the page says it is thinking. A longer one is said as busy.
-  let upstream = await call()
+  // most, while the page says it is thinking. A longer one is said as busy. With a second endpoint, the call goes there at once instead.
+  let used = PRIMARY, upstream = await call(used)
+  const second = fallback()
+  if (upstream.status === 429 && second) {
+    console.log('model: HTTP 429, asking the fallback')
+    used = second; upstream = await call(used)
+  }
   for (let tries = 0; upstream.status === 429 && tries < RETRIES; tries++) {
     const after = upstream.headers?.get?.('retry-after'), wait = after ? Number(after) : NaN // no header: no wait
     if (!(wait >= 0 && wait <= MAX_WAIT_S)) break
     console.log(`model: HTTP 429, waiting ${wait} s`)
     await new Promise((r) => setTimeout(r, wait * 1000 + 250))
-    upstream = await call()
+    upstream = await call(used)
   }
   if (!upstream.ok || !upstream.body) {
     console.log(`model: HTTP ${upstream.status}`) // the status only, never the body or the question
