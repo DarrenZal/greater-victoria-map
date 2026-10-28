@@ -19,6 +19,10 @@
 //   FALLBACK_URL, FALLBACK_KEY, FALLBACK_MODEL
 //                       a second OpenAI-compatible endpoint, its key and model, optional. When the first answers 429 (a free plan at its
 //                       limit), the call goes to the second at once instead of waiting.
+//   MODEL_STREAM, FALLBACK_STREAM
+//                       0 asks that endpoint for the whole answer at once, which the service then sends to the page as one chunk of the same
+//                       stream. TELUS's Gemma (vLLM) needs it: its streamed tool calls garble nested arguments (48.4284 came as 48.04284,
+//                       and "name" as "<|\"|name<|\"|"), and its answers whole are right.
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 
@@ -37,9 +41,9 @@ const OFF_FILE = env.OFF_FILE || '/etc/gv-chat/off'
 const RETRIES = 2, MAX_WAIT_S = Number(env.MAX_WAIT_S ?? 20)
 export const extraFields = (url) => (new URL(url).host === 'openrouter.ai' ? { provider: { data_collection: 'deny' } } : {})
 const MAP_URL = 'https://darrenzal.github.io/greater-victoria-map/'
-const PRIMARY = { url: MODEL_URL, key: KEY, model: MODEL }
+const PRIMARY = { url: MODEL_URL, key: KEY, model: MODEL, stream: env.MODEL_STREAM !== '0' }
 // Read at each call, so the checks can set it and take it away.
-const fallback = () => (env.FALLBACK_URL && env.FALLBACK_KEY && env.FALLBACK_MODEL ? { url: env.FALLBACK_URL, key: env.FALLBACK_KEY, model: env.FALLBACK_MODEL } : null)
+const fallback = () => (env.FALLBACK_URL && env.FALLBACK_KEY && env.FALLBACK_MODEL ? { url: env.FALLBACK_URL, key: env.FALLBACK_KEY, model: env.FALLBACK_MODEL, stream: env.FALLBACK_STREAM !== '0' } : null)
 
 // Limits on what a page may send.
 const MAX_MESSAGES = 24, MAX_QUESTION = 600, MAX_TOTAL = 40000, MAX_TOKENS = 700
@@ -176,7 +180,7 @@ export const server = createServer(async (req, res) => {
     method: 'POST',
     headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json', 'http-referer': MAP_URL, 'x-title': 'Greater Victoria open map' },
     body: JSON.stringify({
-      model: p.model, stream: true, max_tokens: MAX_TOKENS, temperature: 0.2, tools: TOOLS, tool_choice: 'auto',
+      model: p.model, stream: p.stream, max_tokens: MAX_TOKENS, temperature: 0.2, tools: TOOLS, tool_choice: 'auto',
       ...extraFields(p.url),
       messages: [{ role: 'system', content: instructions() + state }, ...body.messages.map(clean)],
     }),
@@ -207,6 +211,15 @@ export const server = createServer(async (req, res) => {
       return send(res, 503, origin, { error: after > 90 ? `The chat has used its share for now. Try again ${when}.` : 'The chat is busy just now. Try again in a minute.' })
     }
     return send(res, 502, origin, { error: 'The model did not answer just now. Try again later.' })
+  }
+  if (!used.stream) {
+    // The whole answer, sent as one chunk of the stream the page reads: its text and its tool calls, and nothing else of the provider's.
+    let m
+    try { m = (await upstream.json()).choices[0].message } catch { return send(res, 502, origin, { error: 'The model did not answer just now. Try again later.' }) }
+    const tool_calls = (m.tool_calls || []).map((c, index) => ({ index, id: c.id, type: 'function', function: { name: c.function?.name || '', arguments: c.function?.arguments || '' } }))
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...headers(origin) })
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: m.content || '', ...(tool_calls.length ? { tool_calls } : {}) } }] })}\n\n`)
+    return res.end('data: [DONE]\n\n')
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...headers(origin) })
   try { for await (const chunk of upstream.body) res.write(chunk) } catch { /* the visitor left or the model stopped */ }
