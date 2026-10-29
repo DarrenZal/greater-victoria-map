@@ -462,7 +462,7 @@
       "box": "input[data-time=\"herringyears\"]",
       "group": "Change over time",
       "title": "Herring spawn by year, 1932 to 2026",
-      "is": "One circle for each place and herring season (July to June), 807 place-and-season records in the area the map reaches, sized by the spawn index of Fisheries and Oceans Canada. A year is the season that ends in it, so 1951 is the 1950/1951 season. Before 1951, 21 seasons from a DFO report of 1989 (Hay, McCarter, Kronlund and Roy) give spawn by whole shore section: Victoria Harbour (1937 to 1950, 30 records), Saanich Inlet (16 records) and one record in Sidney Channel on 14 April 1932, each drawn as a large ring over the section.",
+      "is": "One circle for each place and herring season (July to June), 807 circles in the area the map reaches, sized by the spawn index of Fisheries and Oceans Canada. A year is the season that ends in it, so 1951 is the 1950/1951 season. Before 1951, 21 rings from a DFO report of 1989 (Hay, McCarter, Kronlund and Roy) give spawn by whole shore section: Victoria Harbour (13 seasons from 1937 to 1950, 30 records), Saanich Inlet (7 seasons, 16 records) and one record in Sidney Channel on 14 April 1932, each drawn as a large ring over the section. A circle or ring is one place and season, not one spawn record. To count spawn records, add up spawns from 1951 and records before 1951.",
       "isNot": "Not where herring are now, and the index is a relative minimum measure, not a count of fish. Before 1951 a ring is a whole shore section, not the place of a spawn, and DFO treats records before 1951 as unreliable for indexing. One place named for a First Nation is left out, as in the other layers.",
       "kind": "event",
       "years": [

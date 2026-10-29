@@ -85,6 +85,11 @@ function grade(item, o) {
   for (const p of item.must || []) if (!re(p).test(o.shown || text)) fails.push(`does not say /${p}/`)
   for (const p of item.forbid || []) if (re(p).test(text)) fails.push(`says /${p}/`)
   if (/https?:\/\//.test(text)) fails.push('writes a link')
+  // An action the answer claims must be one of its tool calls. The page lists the real ones under the answer.
+  const called = (n) => o.calls.some((c) => c.name === n)
+  if (/\b(moved|zoomed|flew|flown|centred|centered)\b[^.]{0,30}\b(map|to)\b/i.test(text) && !called('fly_to')) fails.push('claims a move it did not make')
+  if (/\b(turned|switched) (on|off)\b|\bhave (now )?(turned|switched)\b/i.test(text) && !called('show_layer') && !called('clear')) fails.push('claims a layer change it did not make')
+  if (/\b(set|moved) the (year|slider)\b/i.test(text) && !called('set_year')) fails.push('claims a year it did not set')
   if (!text.trim()) fails.push(`no answer${o.status ? ` (${o.status})` : ''}`)
   return fails
 }

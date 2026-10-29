@@ -211,11 +211,15 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
   function render(box, text, cited) {
     box.replaceChildren()
     let last = 0
+    const chips = new Set() // a source or feature already cited in this answer gets no second chip
     for (const m of text.matchAll(CITE)) {
-      box.append(document.createTextNode(text.slice(last, m.index)))
+      const l = layer(m[2]), key = m[0]
+      const again = !l || chips.has(key) // a key the page cannot resolve is dropped, and so is a repeat
+      const before = text.slice(last, m.index)
+      box.append(document.createTextNode(again ? before.replace(/\s+$/, '') : before))
       last = m.index + m[0].length
-      const l = layer(m[2])
-      if (!l) continue // a key the page cannot resolve is dropped
+      if (again) continue
+      chips.add(key)
       cited.add(l.id)
       if (m[1] === 'feat' && m[3] != null) {
         const b = el('button', `${l.title} ${Number(m[3]) + 1}`, 'chip')
@@ -309,6 +313,8 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
   btn.addEventListener('click', () => open(panel.hidden))
   $('chat-close').addEventListener('click', () => open(false))
   addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) open(false) })
+  // Enter sends, as in other chats, and Shift+Enter starts a new line. A key that ends a composition (an IME) does not send.
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit() } })
   form.addEventListener('submit', (e) => {
     e.preventDefault()
     const q = input.value.trim()
