@@ -90,7 +90,9 @@ function grade(item, o) {
   if (/\b(moved|zoomed|flew|flown|centred|centered)\b[^.]{0,30}\b(map|to)\b/i.test(text) && !called('fly_to')) fails.push('claims a move it did not make')
   if (/\b(turned|switched) (on|off)\b|\bhave (now )?(turned|switched)\b/i.test(text) && !called('show_layer') && !called('clear')) fails.push('claims a layer change it did not make')
   if (/\b(set|moved) the (year|slider)\b/i.test(text) && !called('set_year')) fails.push('claims a year it did not set')
-  if (!text.trim()) fails.push(`no answer${o.status ? ` (${o.status})` : ''}`)
+  // The instructions ask the model not to describe its map actions at all, since the page lists them.
+  if (/\bI(?:'ve|’ve| have)? (?:now )?(?:turned|switched|moved|zoomed|set|outlined|highlighted|flown|centred|centered)\b/i.test(text)) fails.push('describes its map actions')
+  if (!text.trim() && !/^Done\.$/.test(o.shown)) fails.push(`no answer${o.status ? ` (${o.status})` : ''}`)
   return fails
 }
 

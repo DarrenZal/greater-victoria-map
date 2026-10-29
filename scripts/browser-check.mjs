@@ -2482,6 +2482,7 @@ async function checkChat(page, requests, t, name, shot) {
       { name: 'query_features', args: { layer: 'tides' } },
       { name: 'highlight', args: { layer: 'herringyears', match: { field: 'year', op: 'eq', value: 1960 }, label: '1960' } },
       { name: 'show_layer', args: { layer: 'no-such-layer', on: true } },
+      { name: 'fly_to', args: { feature: { layer: 'herringyears', id: '0' } } },
     ]
     const stream = first
       ? sse(calls.map((c, i) => ({ tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } }] })))
@@ -2512,14 +2513,14 @@ async function checkChat(page, requests, t, name, shot) {
   })
   const [p1, p2] = posts
   const results = Object.fromEntries((p2?.messages || []).filter((m) => m.role === 'tool').map((m) => [m.tool_call_id, JSON.parse(m.content)]))
-  const q = results.call_2 || {}, tides = results.call_3 || {}, none = results.call_5 || {}
+  const q = results.call_2 || {}, tides = results.call_3 || {}, none = results.call_5 || {}, toPoint = results.call_6 || {}
   // The fields the manifest lists for the layer, its id and centre, and the file it came from when the layer has several (herring before 1951).
   const herringEntry = JSON.parse(await readFile(join(ROOT, 'data/manifest.json'), 'utf8')).layers.find((l) => l.id === 'herringyears')
   const fieldsOk = (q.features || []).every((f) => Object.keys(f).every((k) => ['id', 'centre', 'file', ...Object.keys(herringEntry.fields)].includes(k)))
   report(opened.shown && opened.expanded === 'true' && opened.status === '' && shiftEnter && sentEarly === 0 && posts.length === 2 && p1.messages.length === 1 && p1.messages[0].role === 'user' && Array.isArray(p1.state?.layers) && p1.state.view?.length === 4
-    && p2.messages.filter((m) => m.role === 'tool').length === 6 && p2.messages.every((m) => m.role !== 'system')
+    && p2.messages.filter((m) => m.role === 'tool').length === 7 && toPoint.ok === true && p2.messages.every((m) => m.role !== 'system')
     && q.matched > 0 && q.returned <= 5 && fieldsOk && /may be turned on but not read/.test(tides.error || '') && /no layer no-such-layer/.test(none.error || ''),
-  t('ask the map: Enter sends a question and Shift+Enter does not, the question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, and an unknown layer is refused'), JSON.stringify({ opened, shiftEnter, sentEarly, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none }))
+  t('ask the map: Enter sends a question and Shift+Enter does not, the question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, an unknown layer is refused, and the map moves to a point feature'), JSON.stringify({ opened, shiftEnter, sentEarly, toPoint, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none }))
   report(after.herring && after.year === 1960 && after.hl && after.text?.startsWith('In the 1960 season this map has spawn records') && !/\[(src|feat):/.test(after.text) && !after.text.includes('nope') && after.text.includes('They are old records.')
     && after.chips.length === 2 && after.sources.length === 1 && after.sources[0][0] === `${herringEntry.title}, record 2. ${herringEntry.licence}` && after.sources[0][1]?.startsWith('https://open.canada.ca/')
     && after.did.some((c) => c.startsWith('Turned on Herring spawn by year')) && after.did.includes('Year set to 1960') && after.did.some((c) => c.startsWith('Outlined')) && after.undo && after.status === '',

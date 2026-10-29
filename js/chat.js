@@ -105,7 +105,14 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
   // ---- the tools. Each returns what goes back to the model, and a chip for the visitor when it changed the map.
   const need = (id) => { const l = layer(id); if (!l) throw new Error(`no layer ${id} on this map`); return l }
   const clampBox = ([w, s, e, n]) => [Math.max(w, maxBounds[0][0]), Math.max(s, maxBounds[0][1]), Math.min(e, maxBounds[1][0]), Math.min(n, maxBounds[1][1])]
-  const fly = (box) => { const [w, s, e, n] = clampBox(box); if (!(w < e && s < n)) throw new Error('that place is outside this map'); map.fitBounds([[w, s], [e, n]], { padding: 60, maxZoom: 16, animate: !motionQuery.matches }) }
+  // A point is a box of no size, so it is widened by about 500 m. A box left inside out by the clamp lies outside the map.
+  const fly = (box) => {
+    let [w, s, e, n] = clampBox(box)
+    if (!(w <= e && s <= n)) throw new Error('that place is outside this map')
+    if (e - w < 0.01) { w -= 0.005; e += 0.005 }
+    if (n - s < 0.01) { s -= 0.005; n += 0.005 }
+    map.fitBounds([[w, s], [e, n]], { padding: 60, maxZoom: 16, animate: !motionQuery.matches })
+  }
   const TOOLS = {
     async show_layer({ layer: id, on }) {
       const l = need(id), box = document.querySelector(l.box)
@@ -272,6 +279,8 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
           messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(out.result) })
         }
       }
+      // The model leaves out what it did to the map, so an answer that was only map actions has no text of its own.
+      if (!text.textContent.trim()) text.textContent = changed ? 'Done.' : 'No answer this time. Try asking another way.'
       if (cited.size) answer.append(sourcesOf(cited))
       if (changed) {
         const undo = el('button', 'Undo', 'small')
