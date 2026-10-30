@@ -2485,6 +2485,8 @@ async function checkChat(page, requests, t, name, shot) {
       { name: 'fly_to', args: { feature: { layer: 'herringyears', id: '0' } } },
       { name: 'query_features', args: { layer: 'herringyears', match: { field: 'name', op: 'eq', value: 'Victoria Harbour' } } },
       { name: 'query_features', args: { layer: 'parks', near: { lng: -123.41675, lat: 48.43336, radius_m: 5000 }, limit: 5 } },
+      { name: 'query_features', args: { layer: 'herringyears', match: { field: 'year', op: 'between', value: [1940, 1949] } } },
+      { name: 'query_features', args: { layer: 'herringyears' } },
     ]
     const stream = first
       ? sse(calls.map((c, i) => ({ tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } }] })))
@@ -2525,9 +2527,20 @@ async function checkChat(page, requests, t, name, shot) {
   const herringEntry = JSON.parse(await readFile(join(ROOT, 'data/manifest.json'), 'utf8')).layers.find((l) => l.id === 'herringyears')
   const fieldsOk = (q.features || []).every((f) => Object.keys(f).every((k) => ['id', 'centre', 'file', ...Object.keys(herringEntry.fields)].includes(k)))
   report(opened.shown && opened.expanded === 'true' && opened.status === '' && shiftEnter && sentEarly === 0 && posts.length === 2 && p1.messages.length === 1 && p1.messages[0].role === 'user' && Array.isArray(p1.state?.layers) && p1.state.view?.length === 4
-    && p2.messages.filter((m) => m.role === 'tool').length === 9 && toPoint.ok === true && gap && nearest && p2.messages.every((m) => m.role !== 'system')
+    && p2.messages.filter((m) => m.role === 'tool').length === 11 && toPoint.ok === true && gap && nearest && p2.messages.every((m) => m.role !== 'system')
     && q.matched > 0 && q.returned <= 5 && fieldsOk && /may be turned on but not read/.test(tides.error || '') && /no layer no-such-layer/.test(none.error || ''),
   t('ask the map: Enter sends a question and Shift+Enter does not, the question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, an unknown layer is refused, the map moves to a point feature, a read of a time layer lists the years with records and the years between with none, and a read near a point gives the nearest parks first with their distances'), JSON.stringify({ opened, shiftEnter, sentEarly, toPoint, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none, harbour: { matched: harbour.matched, years_with_records: harbour.years_with_records, years_without_records: harbour.years_without_records, from: harbour.from, to: harbour.to }, parks: { error: parks.error, matched: parks.matched, returned: parks.returned, near: (parks.features || []).map((f) => [f.name, f.muni, f.distance_m]) } }))
+  // The 1940s with no place named: each place gets its own years, and 1945 is missing only at Victoria Harbour. Saanich Inlet has a 1945 record,
+  // so one list for both places had no gap, and Gemma read it as Victoria Harbour's (every year of the 1940s).
+  const forties = results.call_9 || {}, fp = forties.years_by_place || [], at = (n) => fp.find((p) => p.place === n)
+  const perPlace = forties.matched === 14 && JSON.stringify(fp.filter((p) => p.years_without_records?.includes(1945)).map((p) => p.place)) === '["Victoria Harbour"]'
+    && JSON.stringify(at('Victoria Harbour')?.years_without_records) === '[1945]' && JSON.stringify(at('Saanich Inlet')?.years_with_records) === '[1945,1946,1947,1948,1949]'
+    && !('years_with_records' in forties) && !('years_without_records' in forties) && JSON.stringify(forties.all_places_together?.years_without_records) === '[]'
+  // With no match at all the read covers 102 places from 1932 to 2026. The first 10 get their own years, and it says 92 are left out.
+  const every = results.call_10 || {}
+  const capped = every.matched === 828 && every.places === 102 && every.years_by_place?.length === 10 && every.places_left_out === 92 && every.from === 1932 && every.to === 2026 && !('years_with_records' in every)
+  report(perPlace && capped, t('ask the map: a read of the 1940s with no place named gives each place its own years and finds 1945 missing only at Victoria Harbour, the years of all places together are named as such, and a read of every place gives its own years to 10 of the 102 and says 92 are left out'),
+    JSON.stringify({ forties: { matched: forties.matched, from: forties.from, to: forties.to, years_with_records: forties.years_with_records, years_without_records: forties.years_without_records, years_by_place: fp, all_places_together: forties.all_places_together }, every: { matched: every.matched, places: every.places, listed: every.years_by_place?.map((p) => p.place), places_left_out: every.places_left_out, from: every.from, to: every.to, years_with_records: every.years_with_records?.length } }))
   report(after.herring && after.year === 1960 && after.hl && after.text?.startsWith('In the 1960 season this map has spawn records') && !/\[(src|feat):/.test(after.text) && !after.text.includes('nope') && after.text.includes('They are old records.')
     && after.chips.length === 2 && after.sources.length === 1 && after.sources[0][0] === `${herringEntry.title}, record 2. ${herringEntry.licence}` && after.sources[0][1]?.startsWith('https://open.canada.ca/')
     && after.did.some((c) => c.startsWith('Turned on Herring spawn by year')) && after.did.includes('Year set to 1960') && after.did.some((c) => c.startsWith('Outlined')) && after.undo && after.status === '',

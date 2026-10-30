@@ -12,6 +12,7 @@ const MANIFEST_FILE = 'data/manifest.json'
 const MAX_ROUNDS = 4 // tool rounds per question
 const MAX_HIGHLIGHT = 500
 const MAX_QUERY = 50
+const MAX_PLACES = 10 // places given their own years in one read
 const CITE = /\[(src|feat):([a-z0-9-]+)(?:\/(\d+))?\]/g
 
 export function createChat({ map, $, el, time, maxBounds, showFeature, motionQuery }) {
@@ -164,12 +165,11 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
       const fs = await features(l)
       if (!fs) throw new Error(`${id} has no file to read`)
       const keep = Object.keys(l.fields || {}), test = matcher(l, match), max = Math.min(Number(limit) || 20, MAX_QUERY)
-      const hits = [], years = new Set()
+      const hits = []
       fs.forEach((f, i) => {
         if (!f.geometry || !test(f)) return
         const box = bboxOf(f.geometry), m = near ? metresToBox(near.lng, near.lat, box) : null
         if (near && m > near.radius_m) return
-        if (Number.isInteger(f.properties?.year)) years.add(f.properties.year)
         hits.push({ f, i, box, m })
       })
       // A read near a point gives the nearest first, each with its distance, so an answer about what is near a place names what is nearest
@@ -177,15 +177,39 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
       if (near) hits.sort((a, b) => a.m - b.m)
       const matched = hits.length
       const out = hits.slice(0, max).map(({ f, i, box, m }) => ({ id: i, ...([l.file].flat().length > 1 ? { file: f.file } : {}), ...Object.fromEntries(keep.map((k) => [k, f.properties?.[k] ?? null])), centre: [+((box[0] + box[2]) / 2).toFixed(5), +((box[1] + box[3]) / 2).toFixed(5)], ...(near ? { distance_m: Math.round(m) } : {}) }))
-      // An event layer also gets the years of every matched feature and the years between them with none, so an answer about which years
-      // reads them from the records and does not say "every year" across a gap. The span is the asked range when the match is a range of years.
+      // An event layer also gets the years of the matched features and the years between with none, so an answer about which years reads them
+      // from the records and does not say "every year" across a gap. The span is the asked range when the match is a range of years, otherwise
+      // the first to the last record. A read of several places gives each place its own years, since one place's record hides another's gap
+      // (Saanich Inlet has 1945 and Victoria Harbour has not), and names the years of all of them together as such. The places nearest the
+      // point come first, or else those with the most records, and only the first MAX_PLACES get their own years.
       let span = null
-      if (l.kind === 'event' && years.size) {
-        const ys = [...years].sort((a, b) => a - b), asked = match?.field === 'year' && match.op === 'between'
-        const [from, to] = asked ? match.value.map(Number) : [ys[0], ys.at(-1)]
-        const none = []
-        for (let y = from; y <= to && none.length <= 100; y++) if (!years.has(y)) none.push(y)
-        span = { years_with_records: ys, years_without_records: none, from, to }
+      if (l.kind === 'event') {
+        const asked = match?.field === 'year' && match.op === 'between' ? match.value.map(Number) : null
+        const yearsOf = (ys) => {
+          const [from, to] = asked || [Math.min(...ys), Math.max(...ys)], none = []
+          for (let y = from; y <= to && none.length <= 100; y++) if (!ys.has(y)) none.push(y)
+          return { from, to, years_with_records: [...ys].sort((a, b) => a - b), years_without_records: none }
+        }
+        const byPlace = new Map()
+        for (const { f } of hits) {
+          const y = f.properties?.year, place = f.properties?.name ?? null
+          if (!Number.isInteger(y)) continue
+          if (!byPlace.has(place)) byPlace.set(place, new Set())
+          byPlace.get(place).add(y)
+        }
+        const places = [...byPlace]
+        if (!near) places.sort((a, b) => b[1].size - a[1].size)
+        if (places.length === 1) span = { place: places[0][0], ...yearsOf(places[0][1]) }
+        else if (places.length) {
+          const { from, to, ...together } = yearsOf(new Set(places.flatMap(([, ys]) => [...ys])))
+          span = {
+            from, to, places: places.length,
+            years_by_place: places.slice(0, MAX_PLACES).map(([place, ys]) => ({ place, ...yearsOf(ys) })),
+            places_left_out: Math.max(0, places.length - MAX_PLACES),
+            all_places_together: together,
+            years_rule: 'Each place in years_by_place has its own years. all_places_together is the years with a record at any of these places, never the years of one place. Read a place left out by its name to get its years.',
+          }
+        }
       }
       return { result: { layer: id, matched, returned: out.length, features: out, ...(span || {}), near_rule: near ? 'near means the box around a feature is within radius_m of the point. The features come nearest first, and distance_m is from the point to that box.' : undefined } }
     },

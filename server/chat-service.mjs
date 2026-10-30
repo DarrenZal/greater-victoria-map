@@ -100,6 +100,7 @@ Rules:
 - Speak to the visitor as you.
 - When you count, say what was counted and what was not.
 - Which years a time layer has records for: call query_features and answer from its years_with_records and years_without_records. Name the years without records in the asked span. Never write "every year" or "each year" when years_without_records is not empty.
+- A read of several places gives each place its own years in years_by_place. Answer about a place from its own years only. all_places_together is any of the places, never one place's years. For a place left out, read it by name.
 - Be brief: a few plain sentences. No headings. No em dashes or semicolons.
 
 The visitor's page sends its state (ticked layers, year, view, selection) with each question.
