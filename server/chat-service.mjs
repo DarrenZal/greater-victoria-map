@@ -65,7 +65,7 @@ export const TOOLS = [
   fn('open_panel', 'Open the panel about one feature.', { layer: LAYER, id: { type: 'string' } }, ['layer', 'id']),
   fn('clear', 'Remove the outlines this chat has added.', {}),
   fn('describe_layer', 'What a layer is and is not, its years, fields, licence and record.', { layer: LAYER }, ['layer']),
-  fn('query_features', 'Read up to 50 features of a layer the model may read, filtered by a match and/or a distance from a point.', { layer: LAYER, match: MATCH, near: { type: 'object', properties: { lng: { type: 'number' }, lat: { type: 'number' }, radius_m: { type: 'number' } }, required: ['lng', 'lat', 'radius_m'] }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, ['layer']),
+  fn('query_features', 'Read up to 50 features of a layer the model may read, filtered by a match and/or a distance from a point. With a point, the nearest come first.', { layer: LAYER, match: MATCH, near: { type: 'object', properties: { lng: { type: 'number' }, lat: { type: 'number' }, radius_m: { type: 'number' } }, required: ['lng', 'lat', 'radius_m'] }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, ['layer']),
 ]
 
 // ---- the instructions, with the manifest in them.

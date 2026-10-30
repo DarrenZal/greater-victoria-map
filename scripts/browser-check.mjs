@@ -2484,6 +2484,7 @@ async function checkChat(page, requests, t, name, shot) {
       { name: 'show_layer', args: { layer: 'no-such-layer', on: true } },
       { name: 'fly_to', args: { feature: { layer: 'herringyears', id: '0' } } },
       { name: 'query_features', args: { layer: 'herringyears', match: { field: 'name', op: 'eq', value: 'Victoria Harbour' } } },
+      { name: 'query_features', args: { layer: 'parks', near: { lng: -123.41675, lat: 48.43336, radius_m: 5000 }, limit: 5 } },
     ]
     const stream = first
       ? sse(calls.map((c, i) => ({ tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } }] })))
@@ -2517,13 +2518,16 @@ async function checkChat(page, requests, t, name, shot) {
   const q = results.call_2 || {}, tides = results.call_3 || {}, none = results.call_5 || {}, toPoint = results.call_6 || {}, harbour = results.call_7 || {}
   // Victoria Harbour before 1951 has 13 seasons from 1937 to 1950, none in 1945, and the read says so from the records.
   const gap = harbour.matched === 13 && harbour.years_with_records?.length === 13 && JSON.stringify(harbour.years_without_records) === '[1945]' && harbour.from === 1937 && harbour.to === 1950
+  // Parks near the middle of Esquimalt: of the 280 within 5 km, the five nearest, all in Esquimalt, nearest first. In the file's order they were View Royal's.
+  const parks = results.call_8 || {}, pd = (parks.features || []).map((f) => f.distance_m)
+  const nearest = !parks.error && parks.matched === 280 && parks.returned === 5 && pd.every((d, i) => Number.isFinite(d) && (i === 0 || d >= pd[i - 1])) && parks.features.every((f) => f.muni === 'Esquimalt') && parks.features[0].name === 'E&N Rail Trail'
   // The fields the manifest lists for the layer, its id and centre, and the file it came from when the layer has several (herring before 1951).
   const herringEntry = JSON.parse(await readFile(join(ROOT, 'data/manifest.json'), 'utf8')).layers.find((l) => l.id === 'herringyears')
   const fieldsOk = (q.features || []).every((f) => Object.keys(f).every((k) => ['id', 'centre', 'file', ...Object.keys(herringEntry.fields)].includes(k)))
   report(opened.shown && opened.expanded === 'true' && opened.status === '' && shiftEnter && sentEarly === 0 && posts.length === 2 && p1.messages.length === 1 && p1.messages[0].role === 'user' && Array.isArray(p1.state?.layers) && p1.state.view?.length === 4
-    && p2.messages.filter((m) => m.role === 'tool').length === 8 && toPoint.ok === true && gap && p2.messages.every((m) => m.role !== 'system')
+    && p2.messages.filter((m) => m.role === 'tool').length === 9 && toPoint.ok === true && gap && nearest && p2.messages.every((m) => m.role !== 'system')
     && q.matched > 0 && q.returned <= 5 && fieldsOk && /may be turned on but not read/.test(tides.error || '') && /no layer no-such-layer/.test(none.error || ''),
-  t('ask the map: Enter sends a question and Shift+Enter does not, the question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, an unknown layer is refused, the map moves to a point feature, and a read of a time layer lists the years with records and the years between with none'), JSON.stringify({ opened, shiftEnter, sentEarly, toPoint, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none, harbour: { matched: harbour.matched, years_with_records: harbour.years_with_records, years_without_records: harbour.years_without_records, from: harbour.from, to: harbour.to } }))
+  t('ask the map: Enter sends a question and Shift+Enter does not, the question goes to the chat service with the map’s state, the page runs the tools it asks for and sends their results back, a read returns at most the limit and only the manifest’s fields, a live layer is never read, an unknown layer is refused, the map moves to a point feature, a read of a time layer lists the years with records and the years between with none, and a read near a point gives the nearest parks first with their distances'), JSON.stringify({ opened, shiftEnter, sentEarly, toPoint, posts: posts.length, q: { matched: q.matched, returned: q.returned, fieldsOk }, tides, none, harbour: { matched: harbour.matched, years_with_records: harbour.years_with_records, years_without_records: harbour.years_without_records, from: harbour.from, to: harbour.to }, parks: { error: parks.error, matched: parks.matched, returned: parks.returned, near: (parks.features || []).map((f) => [f.name, f.muni, f.distance_m]) } }))
   report(after.herring && after.year === 1960 && after.hl && after.text?.startsWith('In the 1960 season this map has spawn records') && !/\[(src|feat):/.test(after.text) && !after.text.includes('nope') && after.text.includes('They are old records.')
     && after.chips.length === 2 && after.sources.length === 1 && after.sources[0][0] === `${herringEntry.title}, record 2. ${herringEntry.licence}` && after.sources[0][1]?.startsWith('https://open.canada.ca/')
     && after.did.some((c) => c.startsWith('Turned on Herring spawn by year')) && after.did.includes('Year set to 1960') && after.did.some((c) => c.startsWith('Outlined')) && after.undo && after.status === '',

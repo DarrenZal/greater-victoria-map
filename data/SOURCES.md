@@ -59,7 +59,7 @@ The 75 Capital Regional District rows that would otherwise be on the map include
 mapshaper data/greenspaces.geojson -filter 'lic!="V"' -o data/greenspaces.geojson format=geojson precision=0.00001
 ```
 
-**Open decision: the 532 rows with no provider statement.** Either read each municipality's open data terms, or ship only rows with an explicit OGL statement by adding `-filter 'lic!=null'` the same way. That would leave 402 rows (156 Victoria, 245 Saanich and 1 Islands Trust). Until then they are kept on the Province's licence alone.
+**Open decision: the 532 rows with no provider statement.** Either read each municipality's open data terms, or ship only rows with an explicit OGL statement by adding `-filter 'lic!=null'` the same way. That would leave 402 rows (156 Victoria, 245 Saanich and 1 Islands Trust). Until then they are kept on the Province's licence alone. Since 2026-10-30 Ask the map may read the parks, these rows included, to name the parks near a place. It reads the same rows the map shows, under the same licences.
 
 The page shows each kept provider's statement in the credits panel and, word for word, in the popup of any park from that provider. The on-map attribution line carries the Province's statement and a short form of the provider list.
 

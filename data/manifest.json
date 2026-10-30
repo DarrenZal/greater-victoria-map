@@ -326,7 +326,7 @@
         "lic": "Which provider's licence statement the row carries: V City of Victoria, S District of Saanich, I Islands Trust, blank for none."
       },
       "live": null,
-      "modelMayRead": false,
+      "modelMayRead": true,
       "record": [
         "https://catalogue.data.gov.bc.ca/dataset/bc-parks-ecological-reserves-and-protected-areas",
         "https://catalogue.data.gov.bc.ca/dataset/local-and-regional-greenspaces"

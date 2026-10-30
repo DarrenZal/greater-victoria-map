@@ -164,16 +164,19 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
       const fs = await features(l)
       if (!fs) throw new Error(`${id} has no file to read`)
       const keep = Object.keys(l.fields || {}), test = matcher(l, match), max = Math.min(Number(limit) || 20, MAX_QUERY)
-      const out = [], years = new Set()
-      let matched = 0
+      const hits = [], years = new Set()
       fs.forEach((f, i) => {
         if (!f.geometry || !test(f)) return
-        const box = bboxOf(f.geometry)
-        if (near && metresToBox(near.lng, near.lat, box) > near.radius_m) return
-        matched++
+        const box = bboxOf(f.geometry), m = near ? metresToBox(near.lng, near.lat, box) : null
+        if (near && m > near.radius_m) return
         if (Number.isInteger(f.properties?.year)) years.add(f.properties.year)
-        if (out.length < max) out.push({ id: i, ...([l.file].flat().length > 1 ? { file: f.file } : {}), ...Object.fromEntries(keep.map((k) => [k, f.properties?.[k] ?? null])), centre: [+((box[0] + box[2]) / 2).toFixed(5), +((box[1] + box[3]) / 2).toFixed(5)] })
+        hits.push({ f, i, box, m })
       })
+      // A read near a point gives the nearest first, each with its distance, so an answer about what is near a place names what is nearest
+      // and not what comes first in the file.
+      if (near) hits.sort((a, b) => a.m - b.m)
+      const matched = hits.length
+      const out = hits.slice(0, max).map(({ f, i, box, m }) => ({ id: i, ...([l.file].flat().length > 1 ? { file: f.file } : {}), ...Object.fromEntries(keep.map((k) => [k, f.properties?.[k] ?? null])), centre: [+((box[0] + box[2]) / 2).toFixed(5), +((box[1] + box[3]) / 2).toFixed(5)], ...(near ? { distance_m: Math.round(m) } : {}) }))
       // An event layer also gets the years of every matched feature and the years between them with none, so an answer about which years
       // reads them from the records and does not say "every year" across a gap. The span is the asked range when the match is a range of years.
       let span = null
@@ -184,7 +187,7 @@ export function createChat({ map, $, el, time, maxBounds, showFeature, motionQue
         for (let y = from; y <= to && none.length <= 100; y++) if (!years.has(y)) none.push(y)
         span = { years_with_records: ys, years_without_records: none, from, to }
       }
-      return { result: { layer: id, matched, returned: out.length, features: out, ...(span || {}), near_rule: near ? 'near means the box around a feature is within radius_m of the point' : undefined } }
+      return { result: { layer: id, matched, returned: out.length, features: out, ...(span || {}), near_rule: near ? 'near means the box around a feature is within radius_m of the point. The features come nearest first, and distance_m is from the point to that box.' : undefined } }
     },
   }
 
