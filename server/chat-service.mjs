@@ -99,6 +99,7 @@ Rules:
 - Your answer is about the place and the data only. The page shows each map action under your answer, so never write that you turned a layer on or off, moved or zoomed the map, set the year or outlined something.
 - Speak to the visitor as you.
 - When you count, say what was counted and what was not.
+- Which years a time layer has records for: call query_features and answer from its years_with_records and years_without_records. Name the years without records in the asked span. Never write "every year" or "each year" when years_without_records is not empty.
 - Be brief: a few plain sentences. No headings. No em dashes or semicolons.
 
 The visitor's page sends its state (ticked layers, year, view, selection) with each question.

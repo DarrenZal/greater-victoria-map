@@ -103,8 +103,9 @@ for (const item of questions) {
   let o
   for (let attempt = 0; attempt < 2; attempt++) {
     try { o = await askOne(item) } catch (e) { o = { raw: '', shown: '', did: [], sources: [], calls: [], results: [], status: `harness: ${e.message}`, state: { layers: [], year: null }, cited: [] } }
-    if (!/busy/i.test(o.status)) break
-    await sleep(60000) // a free plan at its limit: wait a minute once
+    const busy = /busy/i.test(o.status), unloaded = o.status.startsWith('harness:')
+    if (!busy && !unloaded) break
+    await sleep(busy ? 60000 : 5000) // a free plan at its limit: wait a minute once. A page that did not load: try once more
   }
   const fails = grade(item, o)
   results.push({ id: item.id, q: item.q, pass: !fails.length, fails, ...o })
