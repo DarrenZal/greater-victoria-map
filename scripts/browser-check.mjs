@@ -117,7 +117,7 @@ const CHILDREN = {
 }
 const SOURCE = ONLY ? await readFile(fileURLToPath(import.meta.url), 'utf8') : ''
 // What the name of a check starts with, for each group that is not run on both screen sizes. The others start with "desktop: " or "phone: ".
-const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
+const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkVesselRuleEnd: ['vessel rule end: '], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
 const VIEWPORTS = ['desktop: ', 'phone: ']
 const mayReport = (fn, prefixes = PREFIXES[fn] || VIEWPORTS) => {
   const at = SOURCE.search(new RegExp(`^(?:async )?function ${fn}\\(`, 'm'))
@@ -154,6 +154,7 @@ export async function runBrowserChecks() {
     }
     if (!device) {
       if (wants(checkReducedMotion)) await guarded(checkReducedMotion.name, () => checkReducedMotion(browser, base))
+      if (wants(checkVesselRuleEnd)) await guarded(checkVesselRuleEnd.name, () => checkVesselRuleEnd(browser, base))
       if (wants(checkBasemapDown)) await guarded(checkBasemapDown.name, () => checkBasemapDown(browser, base, shots))
       if (wants(checkOverlaysBlocked)) await guarded(checkOverlaysBlocked.name, () => checkOverlaysBlocked(browser, base))
       if (wants(checkGeomet)) await guarded(checkGeomet.name, () => checkGeomet(browser, base))
@@ -177,9 +178,11 @@ const contextOptions = (browser, vp, reducedMotion) => ({
   ...(vp.device || {}), viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, reducedMotion,
   ...(BROWSER === 'chromium' && !vp.device ? { userAgent: userAgent(browser) } : {}),
 })
-async function openPage(browser, base, vp, { blockTiles = false, reducedMotion = 'no-preference' } = {}) {
+// `time` starts the page's clock at that moment, and it runs on from there.
+async function openPage(browser, base, vp, { blockTiles = false, reducedMotion = 'no-preference', time } = {}) {
   const ctx = await browser.newContext(contextOptions(browser, vp, reducedMotion))
   const page = await ctx.newPage()
+  if (time !== undefined) await page.clock.install({ time })
   const problems = [], warnings = [], requests = []
   page.on('request', (r) => requests.push(r.url()))
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console error: ' + m.text().slice(0, 200)); else if (m.type() === 'warning') warnings.push(m.text().slice(0, 160)) })
@@ -2998,6 +3001,52 @@ async function checkNight(page, requests, t, name, shot) {
 }
 
 // Reduced motion: Flow is off and disabled, nothing animates, and the page follows the setting live.
+// The vessel distances on either side of the end of their 1,000 m period, with the page's clock set: at noon on May 31, 2027 in British
+// Columbia the panel notes, a popup and the credits give the sentence alone, and from midnight that night each adds that the period is over.
+async function checkVesselRuleEnd(browser, base) {
+  const t = (s) => `vessel rule end: ${s}`
+  const OVER = 'The 1,000 m period of June 1, 2026 to May 31, 2027 is over. Check the current rules.'
+  const read = async (time) => {
+    const { ctx, page, problems } = await openPage(browser, base, { width: 1280, height: 800 }, { time })
+    try {
+      await setBox(page, '#flow', false)
+      await setBox(page, 'input[data-overlay=srkw]', true)
+      await waitStatus(page, 'srkw').catch(() => {})
+      await page.evaluate(() => window.__map.jumpTo({ center: [-123.3, 48.45], zoom: 9.6, pitch: 0, bearing: 0 }))
+      await page.waitForFunction(() => !window.__map.isMoving() && window.__map.areTilesLoaded(), null, { timeout: 40000 }).catch(() => {})
+      await page.waitForTimeout(1500)
+      // The place nearest the middle of the screen where the critical habitat is drawn, as a visitor would click.
+      const at = await page.evaluate(() => {
+        const m = window.__map
+        let best = null
+        for (let y = 140; y < innerHeight - 110; y += 14) for (let x = 40; x < innerWidth - 60; x += 14) {
+          if (!m.queryRenderedFeatures([[x - 8, y - 8], [x + 8, y + 8]], { layers: ['srkw-fill'] }).length) continue
+          const d = Math.hypot(x - innerWidth / 2, y - innerHeight / 2)
+          if (!best || d < best.d) best = { d, at: [x, y] }
+        }
+        return best?.at ?? null
+      })
+      if (at) {
+        await page.mouse.click(at[0], at[1])
+        await page.waitForFunction(() => !!document.querySelector('.maplibregl-popup-content'), null, { timeout: 8000 }).catch(() => {})
+      }
+      const seen = await page.evaluate(() => ({
+        now: Date.now(),
+        notes: ['srkw-note', 'rkw-note', 'cetaceans-note'].map((id) => document.getElementById(id).textContent),
+        credits: [...document.querySelectorAll('#credits p')].map((p) => p.textContent).filter((x) => x.includes('Vessels must stay at least 1,000 m')),
+        popup: document.querySelector('.maplibregl-popup-content')?.innerText.replace(/\n+/g, ' | ') ?? null,
+      }))
+      return { ...seen, problems }
+    } finally { await ctx.close() }
+  }
+  const before = await read(new Date('2027-05-31T19:00:00Z')), after = await read(new Date('2027-06-01T07:00:00Z'))
+  const has = (x) => x.includes(WHALE_RULES_TEXT) && x.includes(OVER), lacks = (x) => x.includes(WHALE_RULES_TEXT) && !x.includes(OVER)
+  const detail = (r) => JSON.stringify({ now: new Date(r.now).toISOString(), notes: r.notes.map((n) => n.slice(-160)), credits: r.credits.map((c) => c.slice(-200)), popup: r.popup?.slice(-300), problems: r.problems })
+  report(before.notes.every(lacks) && before.credits.length === 3 && before.credits.every(lacks) && !!before.popup && lacks(before.popup), t('at noon on May 31, 2027 the panel notes, the popup of the critical habitat and the three credits give the vessel distances alone'), detail(before))
+  report(after.notes.every(has) && after.credits.length === 3 && after.credits.every(has) && !!after.popup && has(after.popup) && after.popup.indexOf(OVER) > after.popup.indexOf(WHALE_RULES_TEXT), t('from midnight at the end of May 31, 2027 in British Columbia each of them adds that the 1,000 m period is over'), detail(after))
+  report(before.problems.length === 0 && after.problems.length === 0, t('the page loads with its clock set to either time without an error'), [...before.problems, ...after.problems].join(' | '))
+}
+
 async function checkReducedMotion(browser, base) {
   const { ctx, page, problems } = await openPage(browser, base, { width: 1280, height: 800 }, { reducedMotion: 'reduce' })
   const get = () => page.evaluate(() => {

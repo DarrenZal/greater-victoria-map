@@ -1143,6 +1143,11 @@ export const MARINE_FILES = {
 // Interim Order, in force from June 1, 2026 to May 31, 2027). The 200 m and 100 m rules are the Marine Mammal Regulations,
 // Schedule VI (read 2026-10-22). The bulletin lists exceptions, for example for vessels in transit.
 export const WHALE_RULES = 'Vessels must stay at least 1,000 m from Southern Resident killer whales from June 1, 2026 to May 31, 2027, at least 200 m from all other killer whales and at least 100 m from all other whales, dolphins and porpoises. Some exceptions apply.'
+// The 1,000 m period ends with May 31, 2027 in British Columbia, at 07:00 UTC on June 1 (Pacific daylight time). After that the page still gives
+// the sentence as it was read, and adds that its 1,000 m period is over, without saying what the rules are now.
+export const WHALE_RULES_END = Date.UTC(2027, 5, 1, 7)
+export const WHALE_RULES_OVER = 'The 1,000 m period of June 1, 2026 to May 31, 2027 is over. Check the current rules.'
+export const whaleRules = (now = Date.now()) => (now < WHALE_RULES_END ? WHALE_RULES : `${WHALE_RULES} ${WHALE_RULES_OVER}`)
 export const WHALE_RULE_LINKS = [
   { href: 'https://tc.canada.ca/en/marine-transportation/marine-safety/ship-safety-bulletins/protecting-killer-whales-waters-southern-british-columbia-2026-ssb-no-08-2026', label: 'Transport Canada Ship Safety Bulletin 08/2026 (the 1,000 m rule)' },
   { href: 'https://laws-lois.justice.gc.ca/eng/regulations/SOR-93-56/FullText.html', label: 'Marine Mammal Regulations, Schedule VI (the 200 m and 100 m rules)' },

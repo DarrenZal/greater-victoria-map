@@ -21,7 +21,7 @@ import {
   IWLS_SPACING_MS, iwlsUrls, normaliseIwls,
   depthExpression,
   NONNA_MAX_ZOOM, NONNA_CLOSE_ZOOM, NONNA_TICKS, nonnaTileUrl, nonnaGradient, NONNA_NOTICE, IWLS_NOTICE, NONNA_LICENCE_URL, IWLS_LICENCE_URL,
-  MARINE_FILES, WHALE_RULES, WHALE_RULE_LINKS, OGL_CANADA_LINE, CETACEANS, cetaceanCells, densityBreaks, densityExpression, DENSITY_COLOURS, stepGradient, fmt2,
+  MARINE_FILES, WHALE_RULES, WHALE_RULES_OVER, whaleRules, WHALE_RULE_LINKS, OGL_CANADA_LINE, CETACEANS, cetaceanCells, densityBreaks, densityExpression, DENSITY_COLOURS, stepGradient, fmt2,
   protectedInfo, srkwInfo, rkwInfo, cetaceanInfo, kelpInfo, eelgrassInfo, herringInfo, seabirdInfo, marineMessage,
   NIGHT_SEA,
 } from './overlays-data.js'
@@ -259,9 +259,11 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   }
   $('cetaceans-species').addEventListener('change', (e) => { if (CETACEANS[e.target.value]) { cet.key = e.target.value; showCetacean() } })
   $('protected-note').textContent = 'Only the marine parts of protected areas. The land of a park is in Parks and green spaces. Boundaries are approximate. Click an area for its owner, its year and whether it is a no-take area. Not for navigation.'
-  $('srkw-note').textContent = `The area Canada has mapped as critical habitat for Southern Resident killer whales. It is a boundary, not a sighting, and is for general guidance only. ${WHALE_RULES}`
-  $('rkw-note').textContent = `The area experts drew by hand in 2009 as important to Southern Resident killer whales from June to October. It is a boundary, not a sighting, and carries no added management. ${WHALE_RULES}`
-  $('cetaceans-note').textContent = `A model of summer 2018 ship surveys, not where animals are now. Each square is 5 km across (25 km²). Darker means more animals predicted per 100 km². Canadian waters only. ${WHALE_RULES}`
+  $('srkw-note').textContent = `The area Canada has mapped as critical habitat for Southern Resident killer whales. It is a boundary, not a sighting, and is for general guidance only. ${whaleRules()}`
+  $('rkw-note').textContent = `The area experts drew by hand in 2009 as important to Southern Resident killer whales from June to October. It is a boundary, not a sighting, and carries no added management. ${whaleRules()}`
+  $('cetaceans-note').textContent = `A model of summer 2018 ship surveys, not where animals are now. Each square is 5 km across (25 km²). Darker means more animals predicted per 100 km². Canadian waters only. ${whaleRules()}`
+  // The credits give the sentence in the page itself, so after its 1,000 m period they say that too.
+  if (whaleRules() !== WHALE_RULES) for (const p of document.querySelectorAll('#credits p')) if (p.textContent.includes(WHALE_RULES)) p.append(` ${WHALE_RULES_OVER}`)
 
   // ---- weather alerts
   async function loadAlerts(signal) {
@@ -1119,7 +1121,7 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       sections.forEach((i, k) => { if (k) box.append(el('hr')); addInfo({ ...i, lines: i.lines.filter((l) => l !== WHALE_RULES), source: i.source.replace(` ${OGL_CANADA_LINE}`, '') }) })
       box.append(el('hr'))
       if (whales) {
-        box.append(el('p', WHALE_RULES))
+        box.append(el('p', whaleRules()))
         for (const l of WHALE_RULE_LINKS) more(l.href, l.label)
       }
       box.append(el('p', OGL_CANADA_LINE, 'src'))
