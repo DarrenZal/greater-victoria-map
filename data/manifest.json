@@ -112,7 +112,7 @@
       "box": "input[data-overlay=\"protected\"]",
       "group": "Marine life and protection",
       "title": "Protected marine areas",
-      "is": "The marine zones of 22 protected areas in the area the map reaches, from the Canadian Protected and Conserved Areas Database (CPCAD). A popup gives the owner, the year established and whether the area is no-take, as reported to CPCAD.",
+      "is": "The 22 marine zones of 20 protected areas in the area the map reaches, from the Canadian Protected and Conserved Areas Database (CPCAD). Gulf Islands National Park Reserve has three of them. A popup gives the owner, the year established and whether the area is no-take, as reported to CPCAD.",
       "isNot": "Approximate boundaries, not for navigation, and only the marine part of each area.",
       "kind": "static",
       "years": null,
