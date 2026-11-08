@@ -11,7 +11,7 @@ import {
   DEMO_BOX, REGION, DOWNTOWN, collection, pacificTime, distanceKm,
   radarCapabilitiesUrl, radarTimes, radarGeometry, radarFrameUrl, radarLegendUrl,
   alertsUrl, normaliseAlerts, aqhiUrl, normaliseAqhi, quakesUrl, normaliseQuakes,
-  conditionsUrl, normaliseConditions, waterStationsUrl, waterReadingUrl, nearestGauges, gaugeFeature,
+  conditionsUrl, normaliseConditions, waterStationsUrl, waterReadingUrl, nearestGauges, gaugeLayer,
   lifeUrls, normaliseLife,
   PLAY_HOURS, hourWindow, currentsCapabilitiesUrl, currentsTimes, currentsUrl, currentsGrid, windCapabilitiesUrl, windTimes, windUrl, windGrid,
   GEOMET_SLOW_LINE, GEOMET_RETRY_LINE, geometGet, geometWhy,
@@ -324,16 +324,11 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
     const gauges = nearestGauges(await json(waterStationsUrl(), signal))
     if (!gauges.length) throw new Error('no active real-time gauges found')
     // Each gauge is asked once, and one that gives no reading stays on the map as missing, with when it was asked.
-    const features = await Promise.all(gauges.map(async (g) => {
-      const asked = Date.now()
-      return gaugeFeature(g, await json(waterReadingUrl(g.number), signal).catch(() => null), asked)
+    const answers = await Promise.all(gauges.map(async (g) => {
+      const askedAt = Date.now()
+      return { askedAt, reply: await json(waterReadingUrl(g.number), signal).catch(() => null) }
     }))
-    if (features.every((f) => f.properties.state === 'missing')) throw new Error('no readings')
-    const inside = features.some((f) => f.geometry.coordinates[0] >= DEMO_BOX[0] && f.geometry.coordinates[0] <= DEMO_BOX[2] && f.geometry.coordinates[1] >= DEMO_BOX[1] && f.geometry.coordinates[1] <= DEMO_BOX[3])
-    const ds = features.map((f) => f.properties.km)
-    const count = (state) => features.filter((f) => f.properties.state === state).length
-    const part = [count('stale') ? ` ${plural(count('stale'), 'reading is', 'readings are')} more than 3 hours old.` : '', count('missing') ? ` ${plural(count('missing'), 'gauge has', 'gauges have')} no reading just now.` : ''].join('')
-    return { data: collection(features), message: `${plural(features.length, 'gauge', 'gauges')}, ${Math.min(...ds)} to ${Math.max(...ds)} km in a straight line from downtown Victoria${inside ? '' : ', all outside the demo box'}.${part}` }
+    return gaugeLayer(gauges, answers)
   }
 
   // ---- life observations: a bounded sample from GBIF
@@ -991,9 +986,9 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       'circle-radius': 5, 'circle-color': '#3d8f4f', 'circle-opacity': 0.6, 'circle-stroke-width': 1, 'circle-stroke-color': '#ffffff' } }, before)
 
     src('ov-water', ECCC_ATTRIB)
-    // A current reading is a full dot, a stale one grey, and a gauge with no reading an empty ring. The popup says which in words.
+    // A current reading is a full dot, a stale or unchecked one grey, and a gauge with no reading an empty ring. The popup says which in words.
     map.addLayer({ id: 'water-dot', type: 'circle', source: 'ov-water', layout: hidden, paint: {
-      'circle-radius': 8, 'circle-color': ['match', ['get', 'state'], 'current', '#0b6fa4', 'stale', '#8d99a3', '#ffffff'],
+      'circle-radius': 8, 'circle-color': ['match', ['get', 'state'], 'current', '#0b6fa4', 'stale', '#8d99a3', 'unchecked', '#8d99a3', '#ffffff'],
       'circle-stroke-width': 2.5, 'circle-stroke-color': ['match', ['get', 'state'], 'missing', '#0b6fa4', '#ffffff'] } }, before)
 
     src('ov-conditions', ECCC_ATTRIB)
@@ -1064,8 +1059,10 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
         p.level_symbol ? `ECCC symbol for the level: ${p.level_symbol}.` : null,
         p.discharge != null ? `Flow ${fmtNum(p.discharge, 3)} m³/s.` : null,
         p.discharge_symbol ? `ECCC symbol for the flow: ${p.discharge_symbol}.` : null,
-        p.when && p.state !== 'missing' ? `Measured ${pacificTime(p.when)}. The map asked ${pacificTime(p.asked)}.` : `The map asked ${pacificTime(p.asked)}.`,
+        [p.when && p.state !== 'missing' ? `Measured ${pacificTime(p.when)}.` : null, p.asked ? `The map asked ${pacificTime(p.asked)}.` : 'When the map asked is not known.'].filter(Boolean).join(' '),
         p.state === 'stale' ? 'This reading was more than 3 hours old when the map asked, so it may not be the level or flow now.' : null,
+        p.unchecked === 'measured after asked' ? 'It was measured after the map asked, so one of the clocks is wrong and its age is not known.' : null,
+        p.unchecked === 'no asked time' ? 'Its age is not known, because when the map asked is not known.' : null,
         p.state !== 'missing' ? 'Preliminary: Environment Canada sends real-time readings automatically, with limited checking.' : null,
         `Distance is a straight line. Station ${p.number}.`,
       ], `${ECCC}${p.contributor ? ` Contributor: ${p.contributor}.` : ''}`)

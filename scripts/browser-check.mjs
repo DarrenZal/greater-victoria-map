@@ -3094,6 +3094,24 @@ async function checkGaugeStates(browser, base) {
     const other = problems.filter((x) => !x.includes('STATION_NUMBER=08HA068') && !/Failed to load resource/.test(x))
     report(other.length === 0, t('apart from the request made to fail, the page has no error'), other.join(' | '))
   } finally { await ctx.close() }
+  // Every reading request fails: the five gauges still show, as empty rings, and the status line says none gave a reading.
+  const all = await openPage(browser, base, { width: 1280, height: 800 }, { time: new Date(readings[0].askedAt) })
+  try {
+    await all.page.route('https://api.weather.gc.ca/collections/hydrometric-stations/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(stations.body) }))
+    await all.page.route('https://api.weather.gc.ca/collections/hydrometric-realtime/**', (r) => r.abort())
+    await setBox(all.page, '#flow', false)
+    await setBox(all.page, 'input[data-overlay=water]', true)
+    await waitStatus(all.page, 'water').catch(() => {})
+    const st = await statusOf(all.page, 'water')
+    // What is drawn, with the five gauges in view: each dot once, however many tiles it falls on.
+    await all.page.evaluate(() => window.__map.fitBounds([[-124.2, 48.6], [-123.6, 48.95]], { duration: 0, padding: 80 }))
+    await all.page.waitForFunction(() => { const m = window.__map; return !m.isMoving() && new Set(m.queryRenderedFeatures({ layers: ['water-dot'] }).map((f) => f.properties.number)).size >= 5 }, null, { timeout: 20000 }).catch(() => {})
+    const drawn = await all.page.evaluate(() => {
+      const m = window.__map, f = [...new Map(m.queryRenderedFeatures({ layers: ['water-dot'] }).map((x) => [x.properties.number, x])).values()]
+      return { n: f.length, states: [...new Set(f.map((x) => x.properties.state))], numbers: f.some((x) => x.properties.level != null || x.properties.discharge != null), vis: m.getLayoutProperty('water-dot', 'visibility') }
+    })
+    report(st.state === 'empty' && st.text === '5 gauges, 40 to 57 km in a straight line from downtown Victoria, all outside the demo box. None gave a reading just now. 5 requests to Environment Canada failed.' && drawn.n === 5 && drawn.states.join() === 'missing' && !drawn.numbers && drawn.vis === 'visible', t('when every reading request fails the five gauges still show as missing, with no level or flow, and the status line says none gave a reading'), JSON.stringify({ st, drawn }))
+  } finally { await all.ctx.close() }
 }
 
 async function checkReducedMotion(browser, base) {

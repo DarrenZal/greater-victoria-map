@@ -198,7 +198,7 @@ export function nearestGauges(d, count = 5, from = DOWNTOWN) {
   for (const f of must(d)) {
     const p = f.properties || {}, c = point(f.geometry)
     if (!c || p.REAL_TIME !== 1 || p.STATUS_EN !== 'Active' || !/^[0-9A-Z]{7}$/.test(String(p.STATION_NUMBER))) continue
-    rows.push({ number: p.STATION_NUMBER, name: str(p.STATION_NAME, 90) || p.STATION_NUMBER, contributor: str(p.CONTRIBUTOR_EN, 60), datum: str(p.VERTICAL_DATUM, 60), coords: c, km: distanceKm(from, c) })
+    rows.push({ number: p.STATION_NUMBER, name: str(p.STATION_NAME, 90) || p.STATION_NUMBER, contributor: str(p.CONTRIBUTOR_EN, 60), datum: p.VERTICAL_DATUM ?? null, coords: c, km: distanceKm(from, c) })
   }
   return rows.sort((a, b) => a.km - b.km).slice(0, count)
 }
@@ -206,30 +206,63 @@ export function nearestGauges(d, count = 5, from = DOWNTOWN) {
 // says its real-time data "are normally posted (in graphical form) within two hours of observation" and "are preliminary and have been
 // transmitted automatically with limited verification and review for quality assurance" (its disclaimer, page modified 2026-09-11). So
 // every reading is preliminary, and one measured more than 3 hours before the map asked is stale: it may not be the level or flow now.
-// A gauge that gives no reading is kept, as missing, so its place still shows. The symbols of a reading are kept word for word and nothing
-// is read into them: the datamart's description of its symbol column says "Future use", and none of 1,433 stations had one on 2026-11-07.
+// A reading whose age cannot be worked out is unchecked, never current: one measured after the map asked (the clocks disagree, and no
+// allowance is made for that) or one with no time of asking that parses. A gauge that gives no reading is kept, as missing, so its place
+// still shows. The station's datum, a reading's symbols and its time are kept as the source gave them, and nothing is read into a symbol:
+// the datamart's description of its symbol column says "Future use", and none of 1,433 stations had one on 2026-11-07.
 export const GAUGE_STALE_MS = 3 * 3600e3
+const asGiven = (v) => (v === undefined ? null : v)
 export function gaugeReading(gauge, reply, askedAt) {
   const p = reply?.features?.[0]?.properties
   const measuredAt = p ? iso(p.DATETIME) : null
-  const value = (v, unit, symbol) => (num(v) == null ? null : { value: num(v), unit, symbol: str(symbol, 80) })
+  const asked = typeof askedAt === 'number' ? askedAt : typeof askedAt === 'string' ? Date.parse(askedAt) : NaN
+  const value = (v, unit, symbol) => (num(v) == null ? null : { value: num(v), unit, symbol: asGiven(symbol) })
   const level = value(p?.LEVEL, 'm', p?.LEVEL_SYMBOL_EN), discharge = value(p?.DISCHARGE, 'm³/s', p?.DISCHARGE_SYMBOL_EN)
   const missing = !reply ? 'no answer' : !p ? 'no record' : !measuredAt ? 'no time' : !level && !discharge ? 'no value' : null
+  const age = asked - Date.parse(measuredAt)
+  const unchecked = missing ? null : !Number.isFinite(asked) ? 'no asked time' : age < 0 ? 'measured after asked' : null
   return {
-    station: gauge.number, name: gauge.name, contributor: gauge.contributor, datum: gauge.datum ?? null, coords: gauge.coords, km: Math.round(gauge.km),
-    state: missing ? 'missing' : askedAt - Date.parse(measuredAt) > GAUGE_STALE_MS ? 'stale' : 'current', missing,
-    measuredAt, askedAt: new Date(askedAt).toISOString(), level: missing ? null : level, discharge: missing ? null : discharge, preliminary: true,
+    station: gauge.number, name: gauge.name, contributor: gauge.contributor, datum: asGiven(gauge.datum), coords: gauge.coords, km: Math.round(gauge.km),
+    state: missing ? 'missing' : unchecked ? 'unchecked' : age > GAUGE_STALE_MS ? 'stale' : 'current', missing, unchecked,
+    measuredAt, measuredAtAsGiven: asGiven(p?.DATETIME), askedAt: Number.isFinite(asked) ? new Date(asked).toISOString() : null,
+    level: missing ? null : level, discharge: missing ? null : discharge, preliminary: true,
     source: `https://wateroffice.ec.gc.ca/report/real_time_e.html?stn=${encodeURIComponent(gauge.number)}`,
   }
+}
+// Text as the popup shows it: spaces tidied, and a long one cut and said to be cut. The record keeps it whole.
+const shownText = (v, max) => {
+  if (typeof v !== 'string' || !v.trim()) return null
+  const t = v.trim().replace(/\s+/g, ' ')
+  return t.length > max ? `${t.slice(0, max)}… (shortened)` : t
 }
 // The same as a map feature, flat, because MapLibre gives nested properties back as text.
 export function gaugeFeature(gauge, reply, askedAt = Date.now()) {
   const r = gaugeReading(gauge, reply, askedAt)
   return feature(r.coords, {
-    name: r.name, number: r.station, contributor: r.contributor, datum: r.datum, km: r.km, label: `${r.km} km`, state: r.state, missing: r.missing,
-    when: r.measuredAt, asked: r.askedAt, level: r.level?.value ?? null, level_symbol: r.level?.symbol ?? null,
-    discharge: r.discharge?.value ?? null, discharge_symbol: r.discharge?.symbol ?? null,
+    name: r.name, number: r.station, contributor: r.contributor, datum: shownText(r.datum, 60), km: r.km, label: `${r.km} km`, state: r.state, missing: r.missing,
+    unchecked: r.unchecked, when: r.measuredAt, asked: r.askedAt, level: r.level?.value ?? null, level_symbol: shownText(r.level?.symbol, 80),
+    discharge: r.discharge?.value ?? null, discharge_symbol: shownText(r.discharge?.symbol, 80),
   })
+}
+// The layer from the gauges asked and what each gave, [{ reply, askedAt }] in the same order. Every gauge stays, so even when none gives a
+// reading the map shows where they are and why, and the status line says so. Nothing is filled in for a reading that is not there.
+export function gaugeLayer(gauges, answers) {
+  const features = gauges.map((g, i) => gaugeFeature(g, answers[i]?.reply ?? null, answers[i]?.askedAt))
+  const count = (key, v) => features.filter((f) => f.properties[key] === v).length
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`
+  const ds = features.map((f) => f.properties.km)
+  const inside = features.some(({ geometry: { coordinates: [x, y] } }) => x >= DEMO_BOX[0] && x <= DEMO_BOX[2] && y >= DEMO_BOX[1] && y <= DEMO_BOX[3])
+  const where = `${n(features.length, 'gauge', 'gauges')}, ${Math.min(...ds)} to ${Math.max(...ds)} km in a straight line from downtown Victoria${inside ? '' : ', all outside the demo box'}.`
+  if (count('state', 'missing') === features.length) {
+    const why = [count('missing', 'no answer') ? ` ${n(count('missing', 'no answer'), 'request', 'requests')} to Environment Canada failed.` : '', count('missing', 'no record') ? ` ${n(count('missing', 'no record'), 'gauge has', 'gauges have')} no record in the last 30 days.` : '', count('missing', 'no value') + count('missing', 'no time') ? ` ${n(count('missing', 'no value') + count('missing', 'no time'), 'record has', 'records have')} no level and flow, or no time.` : ''].join('')
+    return { data: collection(features), state: 'empty', message: `${where} None gave a reading just now.${why}` }
+  }
+  const part = [
+    count('state', 'stale') ? ` ${n(count('state', 'stale'), 'reading is', 'readings are')} more than 3 hours old.` : '',
+    count('state', 'unchecked') ? ` ${n(count('state', 'unchecked'), 'reading has', 'readings have')} an age that could not be worked out.` : '',
+    count('state', 'missing') ? ` ${n(count('state', 'missing'), 'gauge has', 'gauges have')} no reading just now.` : '',
+  ].join('')
+  return { data: collection(features), message: `${where}${part}` }
 }
 
 // ---- life observations (GBIF)
