@@ -1,0 +1,352 @@
+[
+ {
+  "url": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA003&limit=1&sortby=-DATETIME",
+  "askedAt": "2026-11-08T00:19:50.217Z",
+  "status": 200,
+  "body": {
+   "type": "FeatureCollection",
+   "features": [
+    {
+     "type": "Feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       -123.67133,
+       48.72929
+      ]
+     },
+     "properties": {
+      "IDENTIFIER": "08HA003.2026-11-07T23:10:00Z",
+      "STATION_NUMBER": "08HA003",
+      "STATION_NAME": "KOKSILAH RIVER AT COWICHAN STATION",
+      "PROV_TERR_STATE_LOC": "BC",
+      "DATETIME": "2026-11-07T23:10:00Z",
+      "DATETIME_LST": "2026-11-07T15:10:00-08:00",
+      "LEVEL": 0.636,
+      "DISCHARGE": 1.5,
+      "LEVEL_SYMBOL_EN": null,
+      "LEVEL_SYMBOL_FR": null,
+      "DISCHARGE_SYMBOL_EN": null,
+      "DISCHARGE_SYMBOL_FR": null
+     },
+     "id": "08HA003.2026-11-07T23:10:00Z"
+    }
+   ],
+   "numberMatched": 8823,
+   "numberReturned": 1,
+   "links": [
+    {
+     "type": "application/geo+json",
+     "rel": "self",
+     "title": "This document as GeoJSON",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA003&limit=1&sortby=-DATETIME"
+    },
+    {
+     "rel": "alternate",
+     "type": "application/ld+json",
+     "title": "This document as RDF (JSON-LD)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=jsonld&STATION_NUMBER=08HA003&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "text/html",
+     "rel": "alternate",
+     "title": "This document as HTML",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=html&STATION_NUMBER=08HA003&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/geo+json",
+     "rel": "next",
+     "title": "Items (next)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?offset=1&STATION_NUMBER=08HA003&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/json",
+     "title": "Hydrometric Data - Real-time",
+     "rel": "collection",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime"
+    }
+   ],
+   "timeStamp": "2026-11-08T00:19:50.419221Z"
+  }
+ },
+ {
+  "url": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA011&limit=1&sortby=-DATETIME",
+  "askedAt": "2026-11-08T00:19:50.322Z",
+  "status": 200,
+  "body": {
+   "type": "FeatureCollection",
+   "features": [
+    {
+     "type": "Feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       -123.71447,
+       48.77308
+      ]
+     },
+     "properties": {
+      "IDENTIFIER": "08HA011.2026-11-07T23:20:00Z",
+      "STATION_NUMBER": "08HA011",
+      "STATION_NAME": "COWICHAN RIVER NEAR DUNCAN",
+      "PROV_TERR_STATE_LOC": "BC",
+      "DATETIME": "2026-11-07T23:20:00Z",
+      "DATETIME_LST": "2026-11-07T15:20:00-08:00",
+      "LEVEL": 0.319,
+      "DISCHARGE": 7.83,
+      "LEVEL_SYMBOL_EN": null,
+      "LEVEL_SYMBOL_FR": null,
+      "DISCHARGE_SYMBOL_EN": null,
+      "DISCHARGE_SYMBOL_FR": null
+     },
+     "id": "08HA011.2026-11-07T23:20:00Z"
+    }
+   ],
+   "numberMatched": 8822,
+   "numberReturned": 1,
+   "links": [
+    {
+     "type": "application/geo+json",
+     "rel": "self",
+     "title": "This document as GeoJSON",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA011&limit=1&sortby=-DATETIME"
+    },
+    {
+     "rel": "alternate",
+     "type": "application/ld+json",
+     "title": "This document as RDF (JSON-LD)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=jsonld&STATION_NUMBER=08HA011&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "text/html",
+     "rel": "alternate",
+     "title": "This document as HTML",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=html&STATION_NUMBER=08HA011&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/geo+json",
+     "rel": "next",
+     "title": "Items (next)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?offset=1&STATION_NUMBER=08HA011&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/json",
+     "title": "Hydrometric Data - Real-time",
+     "rel": "collection",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime"
+    }
+   ],
+   "timeStamp": "2026-11-08T00:19:50.521217Z"
+  }
+ },
+ {
+  "url": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA016&limit=1&sortby=-DATETIME",
+  "askedAt": "2026-11-08T00:19:50.419Z",
+  "status": 200,
+  "body": {
+   "type": "FeatureCollection",
+   "features": [
+    {
+     "type": "Feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       -123.72547,
+       48.78922
+      ]
+     },
+     "properties": {
+      "IDENTIFIER": "08HA016.2026-11-07T23:10:00Z",
+      "STATION_NUMBER": "08HA016",
+      "STATION_NAME": "BINGS CREEK NEAR THE MOUTH",
+      "PROV_TERR_STATE_LOC": "BC",
+      "DATETIME": "2026-11-07T23:10:00Z",
+      "DATETIME_LST": "2026-11-07T15:10:00-08:00",
+      "LEVEL": 1.396,
+      "DISCHARGE": 0.028,
+      "LEVEL_SYMBOL_EN": null,
+      "LEVEL_SYMBOL_FR": null,
+      "DISCHARGE_SYMBOL_EN": null,
+      "DISCHARGE_SYMBOL_FR": null
+     },
+     "id": "08HA016.2026-11-07T23:10:00Z"
+    }
+   ],
+   "numberMatched": 8823,
+   "numberReturned": 1,
+   "links": [
+    {
+     "type": "application/geo+json",
+     "rel": "self",
+     "title": "This document as GeoJSON",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA016&limit=1&sortby=-DATETIME"
+    },
+    {
+     "rel": "alternate",
+     "type": "application/ld+json",
+     "title": "This document as RDF (JSON-LD)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=jsonld&STATION_NUMBER=08HA016&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "text/html",
+     "rel": "alternate",
+     "title": "This document as HTML",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=html&STATION_NUMBER=08HA016&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/geo+json",
+     "rel": "next",
+     "title": "Items (next)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?offset=1&STATION_NUMBER=08HA016&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/json",
+     "title": "Hydrometric Data - Real-time",
+     "rel": "collection",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime"
+    }
+   ],
+   "timeStamp": "2026-11-08T00:19:50.646585Z"
+  }
+ },
+ {
+  "url": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA001&limit=1&sortby=-DATETIME",
+  "askedAt": "2026-11-08T00:19:50.538Z",
+  "status": 200,
+  "body": {
+   "type": "FeatureCollection",
+   "features": [
+    {
+     "type": "Feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       -123.70464,
+       48.87836
+      ]
+     },
+     "properties": {
+      "IDENTIFIER": "08HA001.2026-11-07T23:10:00Z",
+      "STATION_NUMBER": "08HA001",
+      "STATION_NAME": "CHEMAINUS RIVER NEAR WESTHOLME",
+      "PROV_TERR_STATE_LOC": "BC",
+      "DATETIME": "2026-11-07T23:10:00Z",
+      "DATETIME_LST": "2026-11-07T15:10:00-08:00",
+      "LEVEL": 0.928,
+      "DISCHARGE": 11.6,
+      "LEVEL_SYMBOL_EN": null,
+      "LEVEL_SYMBOL_FR": null,
+      "DISCHARGE_SYMBOL_EN": null,
+      "DISCHARGE_SYMBOL_FR": null
+     },
+     "id": "08HA001.2026-11-07T23:10:00Z"
+    }
+   ],
+   "numberMatched": 8823,
+   "numberReturned": 1,
+   "links": [
+    {
+     "type": "application/geo+json",
+     "rel": "self",
+     "title": "This document as GeoJSON",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA001&limit=1&sortby=-DATETIME"
+    },
+    {
+     "rel": "alternate",
+     "type": "application/ld+json",
+     "title": "This document as RDF (JSON-LD)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=jsonld&STATION_NUMBER=08HA001&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "text/html",
+     "rel": "alternate",
+     "title": "This document as HTML",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=html&STATION_NUMBER=08HA001&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/geo+json",
+     "rel": "next",
+     "title": "Items (next)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?offset=1&STATION_NUMBER=08HA001&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/json",
+     "title": "Hydrometric Data - Real-time",
+     "rel": "collection",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime"
+    }
+   ],
+   "timeStamp": "2026-11-08T00:19:50.735474Z"
+  }
+ },
+ {
+  "url": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA068&limit=1&sortby=-DATETIME",
+  "askedAt": "2026-11-08T00:19:50.628Z",
+  "status": 200,
+  "body": {
+   "type": "FeatureCollection",
+   "features": [
+    {
+     "type": "Feature",
+     "geometry": {
+      "type": "Point",
+      "coordinates": [
+       -124.10572,
+       48.57835
+      ]
+     },
+     "properties": {
+      "IDENTIFIER": "08HA068.2026-11-07T23:10:00Z",
+      "STATION_NUMBER": "08HA068",
+      "STATION_NAME": "GARBAGE CREEK NEAR THE MOUTH",
+      "PROV_TERR_STATE_LOC": "BC",
+      "DATETIME": "2026-11-07T23:10:00Z",
+      "DATETIME_LST": "2026-11-07T15:10:00-08:00",
+      "LEVEL": 0.385,
+      "DISCHARGE": 0.109,
+      "LEVEL_SYMBOL_EN": null,
+      "LEVEL_SYMBOL_FR": null,
+      "DISCHARGE_SYMBOL_EN": null,
+      "DISCHARGE_SYMBOL_FR": null
+     },
+     "id": "08HA068.2026-11-07T23:10:00Z"
+    }
+   ],
+   "numberMatched": 8823,
+   "numberReturned": 1,
+   "links": [
+    {
+     "type": "application/geo+json",
+     "rel": "self",
+     "title": "This document as GeoJSON",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&STATION_NUMBER=08HA068&limit=1&sortby=-DATETIME"
+    },
+    {
+     "rel": "alternate",
+     "type": "application/ld+json",
+     "title": "This document as RDF (JSON-LD)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=jsonld&STATION_NUMBER=08HA068&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "text/html",
+     "rel": "alternate",
+     "title": "This document as HTML",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=html&STATION_NUMBER=08HA068&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/geo+json",
+     "rel": "next",
+     "title": "Items (next)",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?offset=1&STATION_NUMBER=08HA068&limit=1&sortby=-DATETIME"
+    },
+    {
+     "type": "application/json",
+     "title": "Hydrometric Data - Real-time",
+     "rel": "collection",
+     "href": "https://api.weather.gc.ca/collections/hydrometric-realtime"
+    }
+   ],
+   "timeStamp": "2026-11-08T00:19:50.833790Z"
+  }
+ }
+]

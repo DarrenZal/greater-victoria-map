@@ -1,0 +1,36 @@
+{
+ "url": "https://api.weather.gc.ca/collections/hydrometric-realtime/items?f=json&datetime=2026-11-07T23:10:00Z&limit=3000",
+ "askedAt": "2026-11-08T00:20:27Z",
+ "status": 200,
+ "excerpt": "One record of the 1,433 in that reply, kept as it came: a level and no flow.",
+ "body": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "type": "Feature",
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -125.94025,
+      59.33597
+     ]
+    },
+    "properties": {
+     "IDENTIFIER": "10BE007.2026-11-07T23:10:00Z",
+     "STATION_NUMBER": "10BE007",
+     "STATION_NAME": "TROUT RIVER AT KILOMETRE 783.7 ALASKA HIGHWAY",
+     "PROV_TERR_STATE_LOC": "BC",
+     "DATETIME": "2026-11-07T23:10:00Z",
+     "DATETIME_LST": "2026-11-07T15:10:00-08:00",
+     "LEVEL": 2.114,
+     "DISCHARGE": null,
+     "LEVEL_SYMBOL_EN": null,
+     "LEVEL_SYMBOL_FR": null,
+     "DISCHARGE_SYMBOL_EN": null,
+     "DISCHARGE_SYMBOL_FR": null
+    },
+    "id": "10BE007.2026-11-07T23:10:00Z"
+   }
+  ]
+ }
+}

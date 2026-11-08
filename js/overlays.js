@@ -323,12 +323,16 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
   async function loadWater(signal) {
     const gauges = nearestGauges(await json(waterStationsUrl(), signal))
     if (!gauges.length) throw new Error('no active real-time gauges found')
-    const got = await Promise.allSettled(gauges.map(async (g) => gaugeFeature(g, await json(waterReadingUrl(g.number), signal))))
-    const features = got.filter((r) => r.status === 'fulfilled' && r.value).map((r) => r.value)
-    if (!features.length) throw new Error('no readings')
+    // Each gauge is asked once, and one that gives no reading stays on the map as missing, with when it was asked.
+    const features = await Promise.all(gauges.map(async (g) => {
+      const asked = Date.now()
+      return gaugeFeature(g, await json(waterReadingUrl(g.number), signal).catch(() => null), asked)
+    }))
+    if (features.every((f) => f.properties.state === 'missing')) throw new Error('no readings')
     const inside = features.some((f) => f.geometry.coordinates[0] >= DEMO_BOX[0] && f.geometry.coordinates[0] <= DEMO_BOX[2] && f.geometry.coordinates[1] >= DEMO_BOX[1] && f.geometry.coordinates[1] <= DEMO_BOX[3])
     const ds = features.map((f) => f.properties.km)
-    const part = features.length < gauges.length ? ` ${features.length} of ${gauges.length} gauges answered.` : ''
+    const count = (state) => features.filter((f) => f.properties.state === state).length
+    const part = [count('stale') ? ` ${plural(count('stale'), 'reading is', 'readings are')} more than 3 hours old.` : '', count('missing') ? ` ${plural(count('missing'), 'gauge has', 'gauges have')} no reading just now.` : ''].join('')
     return { data: collection(features), message: `${plural(features.length, 'gauge', 'gauges')}, ${Math.min(...ds)} to ${Math.max(...ds)} km in a straight line from downtown Victoria${inside ? '' : ', all outside the demo box'}.${part}` }
   }
 
@@ -987,7 +991,10 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       'circle-radius': 5, 'circle-color': '#3d8f4f', 'circle-opacity': 0.6, 'circle-stroke-width': 1, 'circle-stroke-color': '#ffffff' } }, before)
 
     src('ov-water', ECCC_ATTRIB)
-    map.addLayer({ id: 'water-dot', type: 'circle', source: 'ov-water', layout: hidden, paint: { 'circle-radius': 8, 'circle-color': '#0b6fa4', 'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff' } }, before)
+    // A current reading is a full dot, a stale one grey, and a gauge with no reading an empty ring. The popup says which in words.
+    map.addLayer({ id: 'water-dot', type: 'circle', source: 'ov-water', layout: hidden, paint: {
+      'circle-radius': 8, 'circle-color': ['match', ['get', 'state'], 'current', '#0b6fa4', 'stale', '#8d99a3', '#ffffff'],
+      'circle-stroke-width': 2.5, 'circle-stroke-color': ['match', ['get', 'state'], 'missing', '#0b6fa4', '#ffffff'] } }, before)
 
     src('ov-conditions', ECCC_ATTRIB)
     map.addLayer({ id: 'conditions-dot', type: 'circle', source: 'ov-conditions', layout: hidden, paint: { 'circle-radius': 12, 'circle-color': '#f4efe2', 'circle-stroke-width': 2, 'circle-stroke-color': '#7a6a3a' } }, before)
@@ -1050,10 +1057,16 @@ export function createOverlays({ map, $, el, link, basemap, motionQuery, addProt
       const provider = p.provider && p.provider !== 'MSC' ? ` and ${p.provider}` : ''
       add(p.name, 'weather station', lines, `Data Source: Environment and Climate Change Canada${provider}.`)
     } else if (layer === 'water-dot') {
+      const missing = { 'no answer': 'No reading could be loaded just now.', 'no record': 'The service has no reading for this station in its last 30 days.', 'no time': 'Its latest record has no time, so it is not shown.', 'no value': 'Its latest record has no level and no flow.' }
       add(p.name, `river gauge, ${p.km} km from downtown Victoria`, [
-        p.level != null ? `Level ${fmtNum(p.level, 3)} m.` : null,
+        p.state === 'missing' ? missing[p.missing] : null,
+        p.level != null ? `Level ${fmtNum(p.level, 3)} m${p.datum ? `, above the station’s ${p.datum.toLowerCase()}` : ''}.` : null,
+        p.level_symbol ? `ECCC symbol for the level: ${p.level_symbol}.` : null,
         p.discharge != null ? `Flow ${fmtNum(p.discharge, 3)} m³/s.` : null,
-        `Latest reading ${pacificTime(p.when)}.`,
+        p.discharge_symbol ? `ECCC symbol for the flow: ${p.discharge_symbol}.` : null,
+        p.when && p.state !== 'missing' ? `Measured ${pacificTime(p.when)}. The map asked ${pacificTime(p.asked)}.` : `The map asked ${pacificTime(p.asked)}.`,
+        p.state === 'stale' ? 'This reading was more than 3 hours old when the map asked, so it may not be the level or flow now.' : null,
+        p.state !== 'missing' ? 'Preliminary: Environment Canada sends real-time readings automatically, with limited checking.' : null,
         `Distance is a straight line. Station ${p.number}.`,
       ], `${ECCC}${p.contributor ? ` Contributor: ${p.contributor}.` : ''}`)
       more(`https://wateroffice.ec.gc.ca/report/real_time_e.html?stn=${encodeURIComponent(p.number)}`, 'This station on Water Office')

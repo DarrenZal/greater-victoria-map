@@ -1,0 +1,1047 @@
+{
+ "url": "https://api.weather.gc.ca/collections/hydrometric-stations/items?f=json&bbox=-124.4,47.9,-122.7,49.1&limit=200&STATUS_EN=Active",
+ "askedAt": "2026-11-08T00:19:49.784Z",
+ "status": 200,
+ "body": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "CHEMAINUS RIVER NEAR WESTHOLME",
+     "IDENTIFIER": "08HA001",
+     "STATION_NUMBER": "08HA001",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "WATER SURVEY OF CANADA (DOE) (CANADA)",
+     "CONTRIBUTOR_FR": "RELEVES HYDROLOGIQUES DU CANADA (MDE) (CANADA)",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 1,
+     "DRAINAGE_AREA_GROSS": 351.20001220703125,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA001&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA001"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA001"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA001",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA001",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA001"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for CHEMAINUS RIVER NEAR WESTHOLME (08HA001)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA001"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -123.70464324951172,
+      48.878360748291016
+     ]
+    },
+    "id": "08HA001"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "COWICHAN RIVER AT LAKE COWICHAN",
+     "IDENTIFIER": "08HA002",
+     "STATION_NUMBER": "08HA002",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "PRIVATE",
+     "CONTRIBUTOR_FR": "SECTEUR PRIVE",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 592.9000244140625,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA002&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA002"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA002"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA002",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA002",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA002"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for COWICHAN RIVER AT LAKE COWICHAN (08HA002)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA002"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.05304718017578,
+      48.82590866088867
+     ]
+    },
+    "id": "08HA002"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "KOKSILAH RIVER AT COWICHAN STATION",
+     "IDENTIFIER": "08HA003",
+     "STATION_NUMBER": "08HA003",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "WATER SURVEY OF CANADA (DOE) (CANADA)",
+     "CONTRIBUTOR_FR": "RELEVES HYDROLOGIQUES DU CANADA (MDE) (CANADA)",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 1,
+     "DRAINAGE_AREA_GROSS": 229.1999969482422,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA003&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA003"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA003"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA003",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA003",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA003"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for KOKSILAH RIVER AT COWICHAN STATION (08HA003)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA003"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -123.67133331298828,
+      48.72929000854492
+     ]
+    },
+    "id": "08HA003"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "COWICHAN LAKE NEAR LAKE COWICHAN",
+     "IDENTIFIER": "08HA009",
+     "STATION_NUMBER": "08HA009",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "PRIVATE",
+     "CONTRIBUTOR_FR": "SECTEUR PRIVE",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 587.5999755859375,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA009&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA009"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA009"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA009",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA009",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA009"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for COWICHAN LAKE NEAR LAKE COWICHAN (08HA009)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA009"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.06153106689452,
+      48.82440185546875
+     ]
+    },
+    "id": "08HA009"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "SAN JUAN RIVER NEAR PORT RENFREW",
+     "IDENTIFIER": "08HA010",
+     "STATION_NUMBER": "08HA010",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "B.C. MINISTRY OF ENVIRONMENT",
+     "CONTRIBUTOR_FR": "MINISTERE DE L'ENVIRONNEMENT DE LA COLOMBIE-BRITAN",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 577.9000244140625,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA010&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA010"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA010"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA010",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA010",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA010"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for SAN JUAN RIVER NEAR PORT RENFREW (08HA010)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA010"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.3113784790039,
+      48.57622909545898
+     ]
+    },
+    "id": "08HA010"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "COWICHAN RIVER NEAR DUNCAN",
+     "IDENTIFIER": "08HA011",
+     "STATION_NUMBER": "08HA011",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "WATER SURVEY OF CANADA (DOE) (CANADA)",
+     "CONTRIBUTOR_FR": "RELEVES HYDROLOGIQUES DU CANADA (MDE) (CANADA)",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 825.7000122070312,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA011&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA011"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA011"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA011",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA011",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA011"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for COWICHAN RIVER NEAR DUNCAN (08HA011)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA011"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -123.71446990966795,
+      48.77307891845703
+     ]
+    },
+    "id": "08HA011"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "BINGS CREEK NEAR THE MOUTH",
+     "IDENTIFIER": "08HA016",
+     "STATION_NUMBER": "08HA016",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "WATER SURVEY OF CANADA (DOE) (CANADA)",
+     "CONTRIBUTOR_FR": "RELEVES HYDROLOGIQUES DU CANADA (MDE) (CANADA)",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 18.239999771118164,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA016&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA016"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA016"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA016",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA016",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA016"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for BINGS CREEK NEAR THE MOUTH (08HA016)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA016"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -123.72547149658205,
+      48.78921890258789
+     ]
+    },
+    "id": "08HA016"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "GARBAGE CREEK NEAR THE MOUTH",
+     "IDENTIFIER": "08HA068",
+     "STATION_NUMBER": "08HA068",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "B.C. MINISTRY OF ENVIRONMENT",
+     "CONTRIBUTOR_FR": "MINISTERE DE L'ENVIRONNEMENT DE LA COLOMBIE-BRITAN",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 1,
+     "DRAINAGE_AREA_GROSS": 2.299999952316284,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA068&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA068"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA068"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA068",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA068",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA068"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for GARBAGE CREEK NEAR THE MOUTH (08HA068)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA068"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.10572052001952,
+      48.57835006713867
+     ]
+    },
+    "id": "08HA068"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "RENFREW CREEK NEAR PORT RENFREW",
+     "IDENTIFIER": "08HA069",
+     "STATION_NUMBER": "08HA069",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "B.C. MINISTRY OF ENVIRONMENT",
+     "CONTRIBUTOR_FR": "MINISTERE DE L'ENVIRONNEMENT DE LA COLOMBIE-BRITAN",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 10.1899995803833,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA069&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA069"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA069"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA069",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA069",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA069"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for RENFREW CREEK NEAR PORT RENFREW (08HA069)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA069"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.29171752929688,
+      48.636749267578125
+     ]
+    },
+    "id": "08HA069"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "HARRIS CREEK NEAR LAKE COWICHAN",
+     "IDENTIFIER": "08HA070",
+     "STATION_NUMBER": "08HA070",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "B.C. MINISTRY OF ENVIRONMENT",
+     "CONTRIBUTOR_FR": "MINISTERE DE L'ENVIRONNEMENT DE LA COLOMBIE-BRITAN",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 27.940000534057617,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA070&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA070"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA070"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA070",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA070",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA070"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for HARRIS CREEK NEAR LAKE COWICHAN (08HA070)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA070"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.2260513305664,
+      48.71937942504883
+     ]
+    },
+    "id": "08HA070"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "COTTONWOOD CREEK HEADWATERS",
+     "IDENTIFIER": "08HA072",
+     "STATION_NUMBER": "08HA072",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "B.C. MINISTRY OF ENVIRONMENT",
+     "CONTRIBUTOR_FR": "MINISTERE DE L'ENVIRONNEMENT DE LA COLOMBIE-BRITAN",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 13.039999961853027,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HA072&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HA072"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HA072"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HA072",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HA072",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HA072"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for COTTONWOOD CREEK HEADWATERS (08HA072)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HA072"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.249267578125,
+      48.93352127075195
+     ]
+    },
+    "id": "08HA072"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "NANAIMO RIVER NEAR CASSIDY",
+     "IDENTIFIER": "08HB034",
+     "STATION_NUMBER": "08HB034",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "PRIVATE",
+     "CONTRIBUTOR_FR": "SECTEUR PRIVE",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 675.2999877929688,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HB034&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HB034"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HB034"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HB034",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HB034",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HB034"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for NANAIMO RIVER NEAR CASSIDY (08HB034)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HB034"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -123.8869400024414,
+      49.06861114501953
+     ]
+    },
+    "id": "08HB034"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "JUMP CREEK AT THE MOUTH",
+     "IDENTIFIER": "08HB041",
+     "STATION_NUMBER": "08HB041",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "PRIVATE",
+     "CONTRIBUTOR_FR": "SECTEUR PRIVE",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 59.5,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HB041&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HB041"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HB041"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HB041",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HB041",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HB041"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for JUMP CREEK AT THE MOUTH (08HB041)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HB041"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.1868133544922,
+      49.02497100830078
+     ]
+    },
+    "id": "08HB041"
+   },
+   {
+    "type": "Feature",
+    "properties": {
+     "STATION_NAME": "SOUTH NANAIMO RIVER NEAR JUNCTION",
+     "IDENTIFIER": "08HB092",
+     "STATION_NUMBER": "08HB092",
+     "PROV_TERR_STATE_LOC": "BC",
+     "STATUS_EN": "Active",
+     "STATUS_FR": "En service",
+     "CONTRIBUTOR_EN": "PRIVATE",
+     "CONTRIBUTOR_FR": "SECTEUR PRIVE",
+     "VERTICAL_DATUM": "ASSUMED DATUM",
+     "REAL_TIME": 1,
+     "RHBN": 0,
+     "DRAINAGE_AREA_GROSS": 206.3000030517578,
+     "DRAINAGE_AREA_EFFECT": null
+    },
+    "links": [
+     {
+      "type": "text/html",
+      "rel": "related",
+      "title": "Station Information for SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?STATION_NUMBER=08HB092&f=html"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Daily Mean of Water Level or Discharge for SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-daily-mean/items?STATION_NUMBER=08HB092"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Monthly Mean of Water Level or Discharge for SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-monthly-mean/items?STATION_NUMBER=08HB092"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Station Information for SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_e.html?stn=08HB092",
+      "hreflang": "en-CA"
+     },
+     {
+      "type": "text/html",
+      "rel": "alternate",
+      "title": "Informations pour la station SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://wateroffice.ec.gc.ca/report/historical_f.html?stn=08HB092",
+      "hreflang": "fr-CA"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Instantaneous Water Level or Discharge for SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-peaks/items?STATION_NUMBER=08HB092"
+     },
+     {
+      "type": "application/json",
+      "rel": "related",
+      "title": "Annual Maximum and Minimum Daily Water Level or Discharge for SOUTH NANAIMO RIVER NEAR JUNCTION (08HB092)",
+      "href": "https://api.weather.gc.ca/collections/hydrometric-annual-statistics/items?STATION_NUMBER=08HB092"
+     }
+    ],
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      -124.12628936767578,
+      49.06016159057617
+     ]
+    },
+    "id": "08HB092"
+   }
+  ],
+  "numberMatched": 14,
+  "numberReturned": 14,
+  "links": [
+   {
+    "type": "application/geo+json",
+    "rel": "self",
+    "title": "This document as GeoJSON",
+    "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?f=json&bbox=-124.4,47.9,-122.7,49.1&limit=200&STATUS_EN=Active"
+   },
+   {
+    "rel": "alternate",
+    "type": "application/ld+json",
+    "title": "This document as RDF (JSON-LD)",
+    "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?f=jsonld&bbox=-124.4,47.9,-122.7,49.1&limit=200&STATUS_EN=Active"
+   },
+   {
+    "type": "text/html",
+    "rel": "alternate",
+    "title": "This document as HTML",
+    "href": "https://api.weather.gc.ca/collections/hydrometric-stations/items?f=html&bbox=-124.4,47.9,-122.7,49.1&limit=200&STATUS_EN=Active"
+   },
+   {
+    "type": "application/json",
+    "title": "Hydrometric Data - Monitoring Stations",
+    "rel": "collection",
+    "href": "https://api.weather.gc.ca/collections/hydrometric-stations"
+   }
+  ],
+  "timeStamp": "2026-11-08T00:19:50.300334Z"
+ }
+}

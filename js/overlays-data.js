@@ -198,15 +198,38 @@ export function nearestGauges(d, count = 5, from = DOWNTOWN) {
   for (const f of must(d)) {
     const p = f.properties || {}, c = point(f.geometry)
     if (!c || p.REAL_TIME !== 1 || p.STATUS_EN !== 'Active' || !/^[0-9A-Z]{7}$/.test(String(p.STATION_NUMBER))) continue
-    rows.push({ number: p.STATION_NUMBER, name: str(p.STATION_NAME, 90) || p.STATION_NUMBER, contributor: str(p.CONTRIBUTOR_EN, 60), coords: c, km: distanceKm(from, c) })
+    rows.push({ number: p.STATION_NUMBER, name: str(p.STATION_NAME, 90) || p.STATION_NUMBER, contributor: str(p.CONTRIBUTOR_EN, 60), datum: str(p.VERTICAL_DATUM, 60), coords: c, km: distanceKm(from, c) })
   }
   return rows.sort((a, b) => a.km - b.km).slice(0, count)
 }
-export function gaugeFeature(gauge, reading) {
-  const p = reading?.features?.[0]?.properties
-  const level = num(p?.LEVEL), discharge = num(p?.DISCHARGE), when = p ? iso(p.DATETIME) : null
-  if (!when || (level == null && discharge == null)) return null
-  return feature(gauge.coords, { name: gauge.name, number: gauge.number, contributor: gauge.contributor, km: Math.round(gauge.km), label: `${Math.round(gauge.km)} km`, level, discharge, when })
+// One gauge's latest reading, as the map shows it and as scripts/fixtures/water-gauges-2026-11-08 gives it to the Atlas. ECCC's Water Office
+// says its real-time data "are normally posted (in graphical form) within two hours of observation" and "are preliminary and have been
+// transmitted automatically with limited verification and review for quality assurance" (its disclaimer, page modified 2026-09-11). So
+// every reading is preliminary, and one measured more than 3 hours before the map asked is stale: it may not be the level or flow now.
+// A gauge that gives no reading is kept, as missing, so its place still shows. The symbols of a reading are kept word for word and nothing
+// is read into them: the datamart's description of its symbol column says "Future use", and none of 1,433 stations had one on 2026-11-07.
+export const GAUGE_STALE_MS = 3 * 3600e3
+export function gaugeReading(gauge, reply, askedAt) {
+  const p = reply?.features?.[0]?.properties
+  const measuredAt = p ? iso(p.DATETIME) : null
+  const value = (v, unit, symbol) => (num(v) == null ? null : { value: num(v), unit, symbol: str(symbol, 80) })
+  const level = value(p?.LEVEL, 'm', p?.LEVEL_SYMBOL_EN), discharge = value(p?.DISCHARGE, 'm³/s', p?.DISCHARGE_SYMBOL_EN)
+  const missing = !reply ? 'no answer' : !p ? 'no record' : !measuredAt ? 'no time' : !level && !discharge ? 'no value' : null
+  return {
+    station: gauge.number, name: gauge.name, contributor: gauge.contributor, datum: gauge.datum ?? null, coords: gauge.coords, km: Math.round(gauge.km),
+    state: missing ? 'missing' : askedAt - Date.parse(measuredAt) > GAUGE_STALE_MS ? 'stale' : 'current', missing,
+    measuredAt, askedAt: new Date(askedAt).toISOString(), level: missing ? null : level, discharge: missing ? null : discharge, preliminary: true,
+    source: `https://wateroffice.ec.gc.ca/report/real_time_e.html?stn=${encodeURIComponent(gauge.number)}`,
+  }
+}
+// The same as a map feature, flat, because MapLibre gives nested properties back as text.
+export function gaugeFeature(gauge, reply, askedAt = Date.now()) {
+  const r = gaugeReading(gauge, reply, askedAt)
+  return feature(r.coords, {
+    name: r.name, number: r.station, contributor: r.contributor, datum: r.datum, km: r.km, label: `${r.km} km`, state: r.state, missing: r.missing,
+    when: r.measuredAt, asked: r.askedAt, level: r.level?.value ?? null, level_symbol: r.level?.symbol ?? null,
+    discharge: r.discharge?.value ?? null, discharge_symbol: r.discharge?.symbol ?? null,
+  })
 }
 
 // ---- life observations (GBIF)

@@ -117,7 +117,7 @@ const CHILDREN = {
 }
 const SOURCE = ONLY ? await readFile(fileURLToPath(import.meta.url), 'utf8') : ''
 // What the name of a check starts with, for each group that is not run on both screen sizes. The others start with "desktop: " or "phone: ".
-const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkVesselRuleEnd: ['vessel rule end: '], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
+const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkVesselRuleEnd: ['vessel rule end: '], checkGaugeStates: ['gauge states: '], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
 const VIEWPORTS = ['desktop: ', 'phone: ']
 const mayReport = (fn, prefixes = PREFIXES[fn] || VIEWPORTS) => {
   const at = SOURCE.search(new RegExp(`^(?:async )?function ${fn}\\(`, 'm'))
@@ -155,6 +155,7 @@ export async function runBrowserChecks() {
     if (!device) {
       if (wants(checkReducedMotion)) await guarded(checkReducedMotion.name, () => checkReducedMotion(browser, base))
       if (wants(checkVesselRuleEnd)) await guarded(checkVesselRuleEnd.name, () => checkVesselRuleEnd(browser, base))
+      if (wants(checkGaugeStates)) await guarded(checkGaugeStates.name, () => checkGaugeStates(browser, base))
       if (wants(checkBasemapDown)) await guarded(checkBasemapDown.name, () => checkBasemapDown(browser, base, shots))
       if (wants(checkOverlaysBlocked)) await guarded(checkOverlaysBlocked.name, () => checkOverlaysBlocked(browser, base))
       if (wants(checkGeomet)) await guarded(checkGeomet.name, () => checkGeomet(browser, base))
@@ -3045,6 +3046,54 @@ async function checkVesselRuleEnd(browser, base) {
   report(before.notes.every(lacks) && before.credits.length === 3 && before.credits.every(lacks) && !!before.popup && lacks(before.popup), t('at noon on May 31, 2027 the panel notes, the popup of the critical habitat and the three credits give the vessel distances alone'), detail(before))
   report(after.notes.every(has) && after.credits.length === 3 && after.credits.every(has) && !!after.popup && has(after.popup) && after.popup.indexOf(OVER) > after.popup.indexOf(WHALE_RULES_TEXT), t('from midnight at the end of May 31, 2027 in British Columbia each of them adds that the 1,000 m period is over'), detail(after))
   report(before.problems.length === 0 && after.problems.length === 0, t('the page loads with its clock set to either time without an error'), [...before.problems, ...after.problems].join(' | '))
+}
+
+// River gauges from the recorded replies of scripts/fixtures/water-gauges-2026-11-08, with the page's clock at the time they were asked: two
+// gauges as recorded (current), one measured five hours before (stale), one with no record and one whose request fails (both missing). Each
+// gauge's dot and popup say which, and the status line counts them.
+async function checkGaugeStates(browser, base) {
+  const t = (s) => `gauge states: ${s}`
+  const GF = join(ROOT, 'scripts/fixtures/water-gauges-2026-11-08')
+  const stations = JSON.parse(await readFile(join(GF, 'stations.json'), 'utf8')), readings = JSON.parse(await readFile(join(GF, 'readings.json'), 'utf8'))
+  const recorded = (n) => readings.find((r) => r.body.features[0].properties.STATION_NUMBER === n).body
+  const earlier = (n, h) => { const b = structuredClone(recorded(n)), p = b.features[0].properties; p.DATETIME = new Date(Date.parse(p.DATETIME) - h * 3600e3).toISOString().replace('.000Z', 'Z'); return b }
+  const replies = { '08HA003': recorded('08HA003'), '08HA011': recorded('08HA011'), '08HA016': earlier('08HA016', 5), '08HA001': { type: 'FeatureCollection', features: [] }, '08HA068': null }
+  const { ctx, page, problems } = await openPage(browser, base, { width: 1280, height: 800 }, { time: new Date(readings[0].askedAt) })
+  try {
+    const ok = (body) => ({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) })
+    await page.route('https://api.weather.gc.ca/collections/hydrometric-stations/**', (r) => r.fulfill(ok(stations.body)))
+    await page.route('https://api.weather.gc.ca/collections/hydrometric-realtime/**', (r) => {
+      const n = new URL(r.request().url()).searchParams.get('STATION_NUMBER')
+      return replies[n] === null ? r.abort() : r.fulfill(ok(replies[n]))
+    })
+    await setBox(page, '#flow', false)
+    await setBox(page, 'input[data-overlay=water]', true)
+    await waitStatus(page, 'water').catch(() => {})
+    const status = await statusOf(page, 'water')
+    const gauges = Object.fromEntries(stations.body.features.map((f) => [f.properties.STATION_NUMBER, f.geometry.coordinates]))
+    const seen = {}
+    for (const n of Object.keys(replies)) {
+      await page.evaluate((c) => { document.querySelector('.maplibregl-popup')?.remove(); window.__map.jumpTo({ center: c, zoom: 13, pitch: 0, bearing: 0 }) }, gauges[n])
+      await page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 })
+      // The dot is drawn once the map has the tiles of the new view, so wait for it rather than for a set time.
+      await page.waitForFunction((c) => { const m = window.__map, q = m.project(c); return m.queryRenderedFeatures([[q.x - 4, q.y - 4], [q.x + 4, q.y + 4]], { layers: ['water-dot'] }).length > 0 }, gauges[n], { timeout: 20000 }).catch(() => {})
+      const at = await page.evaluate((c) => { const q = window.__map.project(c); return [q.x, q.y] }, gauges[n])
+      const state = await page.evaluate(([x, y]) => [...new Set(window.__map.queryRenderedFeatures([[x - 4, y - 4], [x + 4, y + 4]], { layers: ['water-dot'] }).map((f) => f.properties.state))], at) // a dot on a tile edge comes back once per tile
+      await page.mouse.click(at[0], at[1])
+      await page.waitForFunction(() => !!document.querySelector('.maplibregl-popup-content'), null, { timeout: 8000 }).catch(() => {})
+      seen[n] = { state, ...(await page.evaluate(() => { const c = document.querySelector('.maplibregl-popup-content'); return { text: c?.innerText.replace(/\n+/g, ' | ') ?? '', links: [...(c?.querySelectorAll('a') || [])].map((a) => a.href) } })) }
+    }
+    const has = (n, ...xs) => xs.every((x) => seen[n].text.includes(x)), lacks = (n, ...xs) => xs.every((x) => !seen[n].text.includes(x))
+    const PRELIM = 'Preliminary: Environment Canada sends real-time readings automatically, with limited checking.'
+    const STALE = 'This reading was more than 3 hours old when the map asked, so it may not be the level or flow now.'
+    report(/^5 gauges, 40 to 57 km in a straight line from downtown Victoria, all outside the demo box\. 1 reading is more than 3 hours old\. 2 gauges have no reading just now\.$/.test(status.text), t('the status line says how many readings are stale and how many gauges have none'), status.text)
+    report(seen['08HA003'].state.join() === 'current' && has('08HA003', 'Level 0.636 m, above the station’s assumed datum.', 'Flow 1.5 m³/s.', 'Measured ', 'The map asked ', PRELIM) && lacks('08HA003', STALE) && seen['08HA011'].state.join() === 'current', t('a current reading gives the level above its assumed datum, the flow, when it was measured and asked, and that it is preliminary'), JSON.stringify([seen['08HA003'], seen['08HA011'].state]))
+    report(seen['08HA016'].state.join() === 'stale' && has('08HA016', STALE, PRELIM, 'Measured '), t('a reading measured more than 3 hours before it was asked is grey and says it may not be the level or flow now'), JSON.stringify(seen['08HA016']))
+    report(seen['08HA001'].state.join() === 'missing' && has('08HA001', 'The service has no reading for this station in its last 30 days.', 'The map asked ') && lacks('08HA001', 'Measured ', 'Level ', PRELIM) && seen['08HA068'].state.join() === 'missing' && has('08HA068', 'No reading could be loaded just now.') && lacks('08HA068', 'Measured ', 'Level '), t('a gauge with no record and one whose request failed stay on the map as empty rings and say which'), JSON.stringify([seen['08HA001'], seen['08HA068']]))
+    report(Object.entries(seen).every(([n, s]) => s.links.includes(`https://wateroffice.ec.gc.ca/report/real_time_e.html?stn=${n}`) && s.text.includes(`Station ${n}.`)), t('every gauge popup, missing or not, links its own Water Office page'), JSON.stringify(Object.fromEntries(Object.entries(seen).map(([n, s]) => [n, s.links]))))
+    const other = problems.filter((x) => !x.includes('STATION_NUMBER=08HA068') && !/Failed to load resource/.test(x))
+    report(other.length === 0, t('apart from the request made to fail, the page has no error'), other.join(' | '))
+  } finally { await ctx.close() }
 }
 
 async function checkReducedMotion(browser, base) {
