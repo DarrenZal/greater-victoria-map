@@ -215,7 +215,8 @@ const asGiven = (v) => (v === undefined ? null : v)
 export function gaugeReading(gauge, reply, askedAt) {
   const p = reply?.features?.[0]?.properties
   const measuredAt = p ? iso(p.DATETIME) : null
-  const asked = typeof askedAt === 'number' ? askedAt : typeof askedAt === 'string' ? Date.parse(askedAt) : NaN
+  // Through a Date, so a number no Date can hold (beyond ±8.64e15 ms) is no time too, rather than throwing when it is written out.
+  const asked = new Date(typeof askedAt === 'number' ? askedAt : typeof askedAt === 'string' ? Date.parse(askedAt) : NaN).getTime()
   const value = (v, unit, symbol) => (num(v) == null ? null : { value: num(v), unit, symbol: asGiven(symbol) })
   const level = value(p?.LEVEL, 'm', p?.LEVEL_SYMBOL_EN), discharge = value(p?.DISCHARGE, 'm³/s', p?.DISCHARGE_SYMBOL_EN)
   const missing = !reply ? 'no answer' : !p ? 'no record' : !measuredAt ? 'no time' : !level && !discharge ? 'no value' : null
