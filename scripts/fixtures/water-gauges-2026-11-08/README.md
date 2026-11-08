@@ -1,6 +1,6 @@
 # River gauges: fixture and reading contract
 
-Replies of Environment and Climate Change Canada's hydrometric collections as the map asked them on 2026-11-08, cases made from them, and the record the map's [`gaugeReading`](../../../js/overlays-data.js) gives for each. It is for any reader of the same gauges, the Salish Sea Atlas first. [check-demo.mjs](../../check-demo.mjs) fails if the code and these cases drift apart, and [browser-check.mjs](../../browser-check.mjs) (`--only "gauge states"`) draws them on the map.
+Replies of Environment and Climate Change Canada's hydrometric collections as the map asked them on 2026-11-08, cases made from them, and the record the map's [`gaugeReading`](../../../js/overlays-data.js) gives for each. It is for any reader of the same gauges. [check-demo.mjs](../../check-demo.mjs) fails if the code and these cases drift apart, and [browser-check.mjs](../../browser-check.mjs) (`--only "gauge states"`) draws them on the map.
 
 ## The record
 
@@ -20,7 +20,7 @@ One per gauge asked, including a gauge that gave no reading.
 
 ## Rules
 
-- R1. Stale: measured more than 3 hours (10,800,000 ms) before it was asked. Exactly 3 hours is still current. A reading measured after it was asked, by even 1 ms, is `unchecked` and never current. No allowance is made for clocks that disagree, because no allowance could be read from a source. So is a reading whose time of asking does not parse. The Water Office disclaimer says these data "are normally posted (in graphical form) within two hours of observation", so 3 hours is an hour past that. The Atlas's own rule is also 3 hours.
+- R1. Stale: measured more than 3 hours (10,800,000 ms) before it was asked. Exactly 3 hours is still current. A reading measured after it was asked, by even 1 ms, is `unchecked` and never current. No allowance is made for clocks that disagree, because no allowance could be read from a source. So is a reading whose time of asking does not parse. The Water Office disclaimer says these data "are normally posted (in graphical form) within two hours of observation", so 3 hours is an hour past that.
 - R2. Every reading is preliminary. The same disclaimer says: "The data are preliminary and have been transmitted automatically with limited verification and review for quality assurance. Subsequent quality assurance and verification procedures may result in differences between what is currently displayed and what will become the official record."
 - R3. A symbol (`LEVEL_SYMBOL_EN`, `DISCHARGE_SYMBOL_EN`) is kept whole in the record and never interpreted. The map's popup tidies its spaces and cuts one longer than 80 characters, saying "(shortened)". It does the same for a datum longer than 60. MSC's description of the datamart's symbol column says "Future use", and none of the 1,433 stations in one reply for 23:10 UTC on 2026-11-07 had one. The `symbol-kept` case uses a made-up symbol for that reason.
 - R4. A level is in metres above the station's own datum ("ASSUMED DATUM"). So two stations' levels are never compared, and a level is never compared with a tide height or chart datum.
@@ -54,32 +54,6 @@ There are 6 recorded cases: the 5 replies and the level-only record. The other 1
 
 The expected records were written by the map's `gaugeReading` and checked by hand. They are a drift check of this code, not an independent oracle. The checks of a padded or long datum, and of the layer with some or all gauges missing, are in check-demo.mjs.
 
-## For the Atlas
-
-The Atlas's adapter at origin/main 69ba399 already does R1, R2 and R5. In [gateway/observations.mjs](https://github.com/BioregionalKnowledgeCommons/salish-sea-atlas/blob/main/gateway/observations.mjs), `normalizeCanadianWater` gives the Water Office link, `observedAt` and `sourceFetchedAt`, and `provisional: true`. `observationReadingStatus` in site/shared/observation-state.js gives stale after 3 hours, `empty` and `time-unknown`. Three changes would meet this contract. Each is the Atlas owner's to make or not:
-
-- A1. Keep `LEVEL_SYMBOL_EN` and `DISCHARGE_SYMBOL_EN` word for word on each measurement when they are not null. It drops them now.
-- A2. Keep a station that gives no reading, as missing, with its reason.
-  - Now the five Canadian stations are asked inside one `Promise.all`, so one failed request makes the whole source `unavailable` and hides all five.
-  - A station whose reply has no record is left out without a word.
-  - A missing station needs a position. The Atlas could take it from stations.json at this pin, or ask `hydrometric-stations`.
-- A3. Carry `VERTICAL_DATUM`. Its label "Water level (station datum)" fits, and the datum here is "ASSUMED DATUM".
-
-To test, run its normaliser over each case's `input.reply`, with `askedAt` as now. The station comes from `stationFrom`. Then compare its states and values with `expected`, which checks agreement with this code, not correctness. The states map like this:
-
-| This contract | Atlas state |
-|---|---|
-| `current` | `available` |
-| `stale` | `stale` |
-| `missing` `no value` | `empty` |
-| `missing` `no time` | `time-unknown` |
-| `unchecked` (either reason) | `time-unknown` |
-| `missing` `no record`, `missing` `no answer` | none yet (A2) |
-
-Not asked:
-- Asking for 08HA016, 08HA001 and 08HA068 too. Its list is 08HA002, 08HA003, 08HA011, 08HB034 and 08MH024. Changing it changes the readings lane's identity hash, so it is the owner's call.
-- Any edit to Atlas UI, or to its pins of other layers.
-
 ## Do not infer
 
 - Calibration, or that a reading will stand. ECCC calls these readings preliminary, with limited verification.
@@ -94,4 +68,4 @@ Not asked:
 - No real-time ECCC gauge in Greater Victoria. Other gauges (the CRD's or a town's) were not looked for, since finding them would be new collection.
 - No real symbol has been seen, and the meaning of its values was not found.
 - The datamart's CSV gives each reading a QA/QC flag: "1 = preliminary, 2 = reviewed, 3 = checked, 4 = approved". The API gives no such flag, so nothing here uses it.
-- US gauges are not in this contract. The Atlas has its own USGS adapter.
+- US gauges are not in this contract.
