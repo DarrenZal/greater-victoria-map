@@ -265,7 +265,11 @@ body.night .maplibregl-ctrl-attrib:not(.maplibregl-compact) a { color: #b9d6e8; 
 @media (max-width: 640px) {
   :root { --gutter: 16px; }
   #panel { width: auto; }
-  #panel details[open] { width: min(300px, calc(100vw - 2 * var(--gutter))); }
+  /* The map's zoom and compass buttons keep a column of their own on the right, 47 px: MapLibre's 29 px buttons 10 px from the edge, and the
+     toolbar's 8 px gap. With Layers closed the buttons above the map wrap before it, and the open Layers panel stops short of it. With Layers
+     open the toolbar keeps its full width, so the two buttons below the panel stay on one row. */
+  #toolbar:has(#panel-details:not([open])) { max-width: calc(100vw - var(--gutter) - 47px); }
+  #panel details[open] { width: min(300px, calc(100vw - var(--gutter) - 47px)); }
   #credits { bottom: 36px; }
   #chat { top: auto; left: var(--gutter); right: var(--gutter); width: auto; height: 70dvh; bottom: 36px; }
   #timebar { bottom: max(36px, calc(var(--attrib-h, 24px) + 10px)); padding: 6px 10px 4px; }
