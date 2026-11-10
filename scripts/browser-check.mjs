@@ -117,7 +117,7 @@ const CHILDREN = {
 }
 const SOURCE = ONLY ? await readFile(fileURLToPath(import.meta.url), 'utf8') : ''
 // What the name of a check starts with, for each group that is not run on both screen sizes. The others start with "desktop: " or "phone: ".
-const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkVesselRuleEnd: ['vessel rule end: '], checkGaugeStates: ['gauge states: '], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
+const PREFIXES = { checkReducedMotion: [''], checkBasemapDown: [''], checkVesselRuleEnd: ['vessel rule end: '], checkGaugeStates: ['gauge states: '], checkPhoneControls: ['phone controls: '], checkOverlaysBlocked: ['hosts blocked: '], checkGeomet: ['geomet: '] }
 const VIEWPORTS = ['desktop: ', 'phone: ']
 const mayReport = (fn, prefixes = PREFIXES[fn] || VIEWPORTS) => {
   const at = SOURCE.search(new RegExp(`^(?:async )?function ${fn}\\(`, 'm'))
@@ -156,6 +156,7 @@ export async function runBrowserChecks() {
       if (wants(checkReducedMotion)) await guarded(checkReducedMotion.name, () => checkReducedMotion(browser, base))
       if (wants(checkVesselRuleEnd)) await guarded(checkVesselRuleEnd.name, () => checkVesselRuleEnd(browser, base))
       if (wants(checkGaugeStates)) await guarded(checkGaugeStates.name, () => checkGaugeStates(browser, base))
+      if (wants(checkPhoneControls)) await guarded(checkPhoneControls.name, () => checkPhoneControls(browser, base, shots))
       if (wants(checkBasemapDown)) await guarded(checkBasemapDown.name, () => checkBasemapDown(browser, base, shots))
       if (wants(checkOverlaysBlocked)) await guarded(checkOverlaysBlocked.name, () => checkOverlaysBlocked(browser, base))
       if (wants(checkGeomet)) await guarded(checkGeomet.name, () => checkGeomet(browser, base))
@@ -3112,6 +3113,75 @@ async function checkGaugeStates(browser, base) {
     })
     report(st.state === 'empty' && st.text === '5 gauges, 40 to 57 km in a straight line from downtown Victoria, all outside the demo box. None gave a reading just now. 5 requests to Environment Canada failed.' && drawn.n === 5 && drawn.states.join() === 'missing' && !drawn.numbers && drawn.vis === 'visible', t('when every reading request fails the five gauges still show as missing, with no level or flow, and the status line says none gave a reading'), JSON.stringify({ st, drawn }))
   } finally { await all.ctx.close() }
+}
+
+// The map's zoom and compass buttons and the buttons above the map, on phones 320, 360 and 390 px wide, on two phones held sideways and on a
+// wide screen, with Layers closed and open. A button counts as uncovered when it, or something inside it, is the topmost element at each of
+// nine points inside it (3 px in from its edges), read with elementFromPoint and not from its box alone. Each is then tapped where a finger
+// would, at its middle (clicked on the wide screen), and must do what it says. The chat's request to its service is answered by nothing,
+// so opening the chat asks the service nothing.
+async function checkPhoneControls(browser, base, shots) {
+  const t = (s) => `phone controls: ${s}`
+  const SIZES = [[320, 640], [360, 740], [390, 780], [667, 375], [844, 390], [1280, 800]]
+  const NAV = ['.maplibregl-ctrl-zoom-in', '.maplibregl-ctrl-zoom-out', '.maplibregl-ctrl-compass'], BAR = ['#panel-details > summary', '#credits-btn', '#chat-btn']
+  for (const [width, height] of SIZES) {
+    const wide = width >= 700 && height >= 700, label = `${width} x ${height}${wide ? ' (wide screen)' : width > height ? ' (phone held sideways)' : ''}`
+    const { ctx, page } = await openPage(browser, base, { width, height, ...(wide ? {} : { device: { hasTouch: true, ...(BROWSER === 'firefox' ? {} : { isMobile: true }) } }) })
+    try {
+      await page.route(`https://${TILE_HOST}/chat`, (r) => r.abort())
+      const settle = () => page.waitForFunction(() => !window.__map.isMoving(), null, { timeout: 20000 }).catch(() => {})
+      const isOpen = () => page.evaluate(() => document.getElementById('panel-details').open)
+      // For each button, how many of its nine points it holds, and its box.
+      const reach = () => page.evaluate((sels) => sels.map((s) => {
+        const el = document.querySelector(s), b = el?.getBoundingClientRect()
+        if (!b) return { s, hit: 0, box: 'none' }
+        let hit = 0
+        for (const fx of [0, 0.5, 1]) for (const fy of [0, 0.5, 1]) {
+          const x = b.left + 3 + fx * (b.width - 6), y = b.top + 3 + fy * (b.height - 6)
+          const top = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight ? document.elementFromPoint(x, y) : null
+          if (top && el.contains(top)) hit++
+        }
+        return { s, hit, box: [b.left, b.top, b.width, b.height].map(Math.round).join(' ') }
+      }), [...NAV, ...BAR])
+      const tap = async (sel) => {
+        const at = await page.evaluate((s) => { const b = document.querySelector(s)?.getBoundingClientRect(); return b ? [b.left + b.width / 2, b.top + b.height / 2] : null }, sel)
+        if (!at) return
+        if (wide) await page.mouse.click(at[0], at[1]); else await page.touchscreen.tap(at[0], at[1])
+        await page.waitForTimeout(300)
+      }
+      // Zoom in, zoom out, then the compass once the map is turned 40 degrees: what each tap did.
+      const tapNav = async () => {
+        const zoom = () => page.evaluate(() => window.__map.getZoom())
+        const z0 = await zoom(); await tap(NAV[0]); await settle()
+        const z1 = await zoom(); await tap(NAV[1]); await settle()
+        const z2 = await zoom()
+        await page.evaluate(() => window.__map.setBearing(40)); await tap(NAV[2]); await settle()
+        const bearing = await page.evaluate(() => window.__map.getBearing())
+        return { zoomIn: z1 - z0 > 0.9, zoomOut: z1 - z2 > 0.9, north: Math.abs(bearing) < 1, zooms: [z0, z1, z2].map((z) => +z.toFixed(2)).join(' '), bearing: +bearing.toFixed(1) }
+      }
+      // The compass comes with 3D terrain, a moment after the page is ready.
+      await page.waitForSelector(NAV[2], { timeout: 30000 }).catch(() => {})
+      await settle()
+      // Layers as it opens (closed on a phone held upright), then the other way, then back.
+      const seen = {}
+      for (let i = 0; i < 2; i++) {
+        const state = (await isOpen()) ? 'open' : 'closed'
+        if (shots) await page.screenshot({ path: join(shots, `phone-controls-${width}x${height}-layers-${state}.png`) })
+        seen[state] = { reach: await reach(), taps: await tapNav() }
+        await tap(BAR[0])
+        seen[state].toggled = (await isOpen()) !== (state === 'open')
+      }
+      await tap(BAR[1]); const credits = await page.evaluate(() => !document.getElementById('credits').hidden); await tap('#credits-close')
+      await tap(BAR[2]); const chat = await page.evaluate(() => !document.getElementById('chat').hidden); await tap('#chat-close')
+      const states = Object.values(seen), both = states.length === 2
+      const all9 = (sels) => both && states.every((v) => v.reach.filter((x) => sels.includes(x.s)).every((x) => x.hit === 9))
+      const detail = Object.entries(seen).map(([state, v]) => `Layers ${state}: ${v.reach.map((x) => `${x.s} ${x.hit}/9 at ${x.box}`).join(', ')}; taps ${JSON.stringify(v.taps)}; Layers toggled ${v.toggled}`).join(' | ') + `; credits opened ${credits}, chat opened ${chat}`
+      report(all9(NAV), t(`${label}: zoom in, zoom out and the compass are uncovered at all nine points, with Layers closed and open`), detail)
+      report(all9(BAR), t(`${label}: Layers, Data and credits and Ask the map are uncovered at all nine points, with Layers closed and open`), detail)
+      report(both && states.every((v) => v.taps.zoomIn && v.taps.zoomOut && v.taps.north), t(`${label}: a tap on zoom in, zoom out and the compass zooms in, zooms out and turns the map north, with Layers closed and open`), detail)
+      report(both && states.every((v) => v.toggled) && credits && chat, t(`${label}: a tap on Layers opens and closes it, and a tap on Data and credits and on Ask the map opens each one`), detail)
+    } finally { await ctx.close() }
+  }
 }
 
 async function checkReducedMotion(browser, base) {
