@@ -2281,6 +2281,7 @@ async function checkTime(page, requests, t, name, shot) {
   const at = await page.evaluate(() => {
     const m = window.__map
     for (let y = 140; y < innerHeight - 220; y += 10) for (let x = 40; x < innerWidth - 60; x += 10) {
+      if (!document.elementFromPoint(x, y)?.classList.contains('maplibregl-canvas')) continue // under a button, as Ask the map is at 390 px
       const f = m.queryRenderedFeatures([[x - 3, y - 3], [x + 3, y + 3]], { layers: ['sei-2002-fill'] })
       if (f.length && f.every((g) => g.properties.class === 'NS')) return [x, y]
     }
@@ -2361,8 +2362,8 @@ async function checkTime(page, requests, t, name, shot) {
       const lng = w + (x + 0.5) / L.width * (e - w), lat = (360 / Math.PI) * Math.atan(Math.exp(merc(n) - (y + 0.5) / L.height * (merc(n) - merc(s)))) - 90
       if (!b.contains([lng, lat])) continue
       const p = m.project([lng, lat])
-      // Clear of the banner, the slider and, on a wide screen, the open layers panel.
-      if (p.y > 150 && p.y < innerHeight - 260 && p.x > (innerWidth > 700 ? 330 : 30) && p.x < innerWidth - 60) return [p.x, p.y]
+      // Clear of the banner, the slider and, on a wide screen, the open layers panel, and on the map itself, not under a button.
+      if (p.y > 150 && p.y < innerHeight - 260 && p.x > (innerWidth > 700 ? 330 : 30) && p.x < innerWidth - 60 && document.elementFromPoint(p.x, p.y)?.classList.contains('maplibregl-canvas')) return [p.x, p.y]
     }
     return null
   }, year)
